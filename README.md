@@ -51,7 +51,7 @@ Commandes REPL : `/tools` (liste), `/reset` (historique), `/quit`.
 | Server   | Outils | Source |
 |----------|--------|--------|
 | nettools | ping, dig, traceroute | local (binaires système) |
-| cve      | cve_info, search_cve, latest_cve | API NVD 2.0 |
+| cve      | cve_info, search_cve (filtre `days` optionnel), latest_cve | API NVD 2.0 |
 | echo     | ping | test du harnais uniquement |
 
 `cve` : sans clé API NVD, limité à 5 requêtes/30 s (throttle intégré côté
@@ -67,6 +67,22 @@ Mesure TTFT et tokens/s en streaming sur le serveur réel. Le bench distingue
 le raisonnement du contenu (modèles thinking type Qwen3.6) : pour la boucle
 vocale, le TTFT qui compte est celui du premier token de contenu — prévoir un
 budget max-tokens suffisant pour couvrir la phase de raisonnement.
+
+## Latence et modèles thinking
+
+Qwen3.6 réfléchit avant de répondre : à ~24 tok/s, une réponse longue avec
+raisonnement peut prendre plus d'une minute (mesuré : ~76 s pour un résumé
+CVE détaillé). Pour l'usage interactif, le thinking se coupe par requête dans
+la config — sans redémarrer llama-server :
+
+```toml
+[llm]
+chat_template_kwargs = { enable_thinking = false }
+```
+
+llama-server transmet ces kwargs au chat template du modèle. À retirer au cas
+par cas pour les tâches complexes ; en boucle vocale, le thinking sera à couper
+systématiquement.
 
 ## Tests (sans LLM réel)
 
@@ -85,7 +101,7 @@ src/jarvis/
   agent.py    # boucle tool-calling
   cli.py      # REPL
 mcp_servers/  # nettools (ping/dig/traceroute), cve (NVD 2.0 : détail CVE,
-              #  recherche par mots-clés, veille des N derniers jours), echo (test)
+              #  recherche par mots-clés + fenêtre de jours, veille), echo (test)
 bench/       # mesure tok/s / TTFT
 tests/       # mock LLM + test end-to-end
 ```

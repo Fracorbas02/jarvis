@@ -17,6 +17,10 @@ class LLMConfig:
     temperature: float = 0.3
     max_tokens: int = 4096
     timeout: float = 300.0
+    # Kwargs passés au chat template à chaque requête (llama-server).
+    # Ex : { enable_thinking = false } pour couper le raisonnement des modèles
+    # thinking (Qwen3.6) et gagner la latence en usage interactif.
+    chat_template_kwargs: dict = field(default_factory=dict)
 
 
 @dataclass

@@ -21,11 +21,12 @@ class LLMError(RuntimeError):
 class LLMClient:
     def __init__(self, base_url: str, model: str, api_key: str = "local",
                  temperature: float = 0.3, max_tokens: int = 4096,
-                 timeout: float = 300.0):
+                 timeout: float = 300.0, chat_template_kwargs: dict | None = None):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.chat_template_kwargs = chat_template_kwargs or {}
         self._http = httpx.AsyncClient(
             base_url=self.base_url,
             headers={"Authorization": f"Bearer {api_key}"},
@@ -41,6 +42,8 @@ class LLMClient:
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
         }
+        if self.chat_template_kwargs:
+            payload["chat_template_kwargs"] = self.chat_template_kwargs
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"

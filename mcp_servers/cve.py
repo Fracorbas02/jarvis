@@ -93,6 +93,18 @@ def _fmt_line(cve: dict, summary_len: int = 180) -> str:
     return f"{cve['id']} | {sev.split(' ')[0]} {sev.split(' ')[1]} | {pub} | {summary[:summary_len]}"
 
 
+def _date_window(days: int) -> dict:
+    """Paramètres pubStartDate/pubEndDate sur les N derniers jours (max 120)."""
+    days = max(1, min(days, 120))
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    start = now - timedelta(days=days)
+    fmt = "%Y-%m-%dT%H:%M:%S.000"
+    return {
+        "pubStartDate": start.strftime(fmt),
+        "pubEndDate": now.strftime(fmt),
+    }
+
+
 @mcp.tool()
 def cve_info(cve_id: str) -> str:
     """Détails complets d'une CVE précise (ex: CVE-2024-3094) : description,
@@ -143,17 +155,29 @@ def cve_info(cve_id: str) -> str:
 
 
 @mcp.tool()
-def search_cve(keywords: str, limit: int = 10) -> str:
-    """Recherche de CVEs par mots-clés (produit, technologie, editeur...).
-    Retourne les limit premiers résultats avec sévérité et résumé."""
+def search_cve(keywords: str, limit: int = 10, days: int = 0) -> str:
+    """Recherche de CVEs par mots-clés (produit, editeur, technologie...).
+    Si days > 0 : restreint aux CVEs publiées sur les N derniers jours (max 120),
+    pour la veille récente d'un produit. Résultats triés de la plus récente à
+    la plus ancienne."""
     limit = max(1, min(limit, 50))
-    data = _nvd_get({"keywordSearch": keywords.strip(), "resultsPerPage": limit})
+    params = {"keywordSearch": keywords.strip(), "resultsPerPage": limit}
+    recent = days > 0
+    if recent:
+        params.update(_date_window(days))
+    data = _nvd_get(params)
     total = data.get("totalResults", 0)
-    vulns = data.get("vulnerabilities", [])
+    vulns = [v["cve"] for v in data.get("vulnerabilities", [])]
+    vulns.sort(key=lambda c: c.get("published") or "", reverse=True)
     if not vulns:
+        if recent:
+            return (f"Aucune CVE publiée sur les {min(days, 120)} derniers jours "
+                    f"pour « {keywords} ».")
         return f"Aucune CVE trouvée pour « {keywords} »."
-    out = [f"{total} CVE(s) NVD pour « {keywords} » ({len(vulns)} affichées):"]
-    out.extend(f"- {_fmt_line(v['cve'])}" for v in vulns)
+    periode = f" publiées sur les {min(days, 120)} derniers jours" if recent else ""
+    out = [f"{total} CVE(s) NVD pour « {keywords} »{periode} "
+           f"({len(vulns)} affichées, de la plus récente à la plus ancienne):"]
+    out.extend(f"- {_fmt_line(v)}" for v in vulns)
     out.append("Utilise cve_info pour le détail d'une entrée.")
     return "\n".join(out)
 
@@ -161,17 +185,10 @@ def search_cve(keywords: str, limit: int = 10) -> str:
 @mcp.tool()
 def latest_cve(days: int = 7, limit: int = 20) -> str:
     """CVEs publiées au cours des N derniers jours (max 120), triées de la plus
-    récente à la plus ancienne. Utile pour la veille quotidienne."""
+    récente à la plus ancienne. Utile pour la veille quotidienne globale."""
     days = max(1, min(days, 120))
     limit = max(1, min(limit, 100))
-    now = datetime.now(timezone.utc).replace(microsecond=0)
-    start = now - timedelta(days=days)
-    fmt = "%Y-%m-%dT%H:%M:%S.000"
-    data = _nvd_get({
-        "pubStartDate": start.strftime(fmt),
-        "pubEndDate": now.strftime(fmt),
-        "resultsPerPage": limit,
-    })
+    data = _nvd_get({**_date_window(days), "resultsPerPage": limit})
     vulns = [v["cve"] for v in data.get("vulnerabilities", [])]
     vulns.sort(key=lambda c: c.get("published") or "", reverse=True)
     if not vulns:
