@@ -1,0 +1,25 @@
+# Configuration Jarvis — copier en config.toml et ajuster
+
+[llm]
+# llama-server (API OpenAI-compatible). Port par défaut 9931 depuis llama.cpp v0.7.0.
+base_url = "http://127.0.0.1:9931/v1"
+# Le nom n'est qu'une étiquette pour llama-server ; il n'affecte pas le modèle chargé.
+model = "qwen3.6-35b-a3b"
+api_key = "local"          # llama-server accepte n'importe quoi en mode local
+temperature = 0.3
+max_tokens = 4096
+timeout = 300.0             # premier chargement + prompt processing peuvent être longs
+
+[agent]
+system_prompt = """Tu es Jarvis, l'assistant local de Bastien, ingénieur réseau et infrastructure.
+Réponds en français, de façon directe et technique. Utilise les outils disponibles
+quand c'est pertinent plutôt que de deviner ; cite ce que les outils te retournent."""
+
+# MCP servers stdio : name = commande (list). Préfixe des outils : "<name>__<tool>".
+# C'est l'interface stable du projet : les serveurs évoluent, le harnais jamais.
+
+[mcp.servers.nettools]
+command = ["uv", "run", "python", "mcp_servers/nettools.py"]
+
+[mcp.servers.echo]
+command = ["uv", "run", "python", "mcp_servers/echo.py"]

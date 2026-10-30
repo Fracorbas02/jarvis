@@ -1,0 +1,11 @@
+# config locale (jamais commitée)
+config.toml
+
+# python
+__pycache__/
+*.pyc
+.venv/
+
+# modèles et datasets : jamais dans git
+*.gguf
+models/

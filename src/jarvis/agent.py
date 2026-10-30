@@ -1,0 +1,74 @@
+"""Boucle tool-calling : user -> LLM -> [tool call -> résultat -> LLM]* -> réponse finale."""
+
+from __future__ import annotations
+
+import json
+import logging
+from dataclasses import dataclass, field
+
+from .llm import LLMClient
+from .mcp import McpToolProvider
+
+log = logging.getLogger("jarvis.agent")
+
+
+@dataclass
+class TurnTrace:
+    """Observabilité du tour : ce qui a été appelé, combien d'itérations."""
+    tool_calls: list[tuple[str, str]] = field(default_factory=list)
+    iterations: int = 0
+    error: str | None = None
+
+
+class Agent:
+    def __init__(self, llm: LLMClient, tools: McpToolProvider,
+                 system_prompt: str, max_iterations: int = 8):
+        self.llm = llm
+        self.tools = tools
+        self.system_prompt = system_prompt
+        self.max_iterations = max_iterations
+
+    async def turn(self, history: list[dict], user_text: str,
+                   on_tool_call=None) -> tuple[str, list[dict], TurnTrace]:
+        """Exécute un tour complet. Retourne (réponse_texte, historique_maj, trace).
+
+        L'historique géré par l'appelant inclut ce tour ; il suffit de le passer
+        au tour suivant tel quel.
+        """
+        if not any(m.get("role") == "system" for m in history):
+            history = [{"role": "system", "content": self.system_prompt}, *history]
+        history = [*history, {"role": "user", "content": user_text}]
+
+        trace = TurnTrace()
+        tools = self.tools.schemas() if self.tools else None
+
+        for iteration in range(self.max_iterations):
+            trace.iterations = iteration + 1
+            msg = await self.llm.chat(history, tools=tools)
+
+            if not msg.get("tool_calls"):
+                history.append(msg)
+                return msg.get("content") or "", history, trace
+
+            history.append(msg)
+            for tc in msg["tool_calls"]:
+                fn = tc["function"]
+                name = fn["name"]
+                try:
+                    args = json.loads(fn.get("arguments") or "{}")
+                except json.JSONDecodeError as exc:
+                    result = f"ERREUR: arguments JSON invalides: {exc}"
+                else:
+                    log.info("outil %s args=%s", name, args)
+                    if on_tool_call:
+                        on_tool_call(name, args)
+                    result = await self.tools.call(name, args)
+                trace.tool_calls.append((name, json.dumps(args, ensure_ascii=False)))
+                history.append({
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": result,
+                })
+
+        trace.error = "max_iterations atteint"
+        return ("(arrêt: trop d'itérations d'outils)", history, trace)
