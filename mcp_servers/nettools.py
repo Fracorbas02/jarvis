@@ -4,13 +4,15 @@ Interface stable : ajouter/retirer des outils ici ne change jamais le harnais.
 Étendu plus tard par les vrais outils CyberLLM (scan, CVE, logs...).
 """
 
-from mcp.server.fastmcp import FastMCP
+try:
+    from mcp.server.mcpserver import MCPServer as Server  # SDK MCP >= 2
+except ImportError:
+    from mcp.server.fastmcp import FastMCP as Server      # SDK MCP 1.x
 
-import asyncio
 import shutil
 import subprocess
 
-mcp = FastMCP("nettools")
+mcp = Server("nettools")
 
 
 def _run(cmd: list[str], timeout: float = 15.0) -> str:

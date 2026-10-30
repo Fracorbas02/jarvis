@@ -51,12 +51,14 @@ class McpToolProvider:
         """Schémas OpenAI "tools" pour l'ensemble des outils agrégés."""
         out = []
         for full_name, (_srv, tool) in self._tools.items():
+            # SDK MCP >= 2 : champs snake_case ; <= 1.x : camelCase
+            schema = getattr(tool, "input_schema", None) or getattr(tool, "inputSchema", None)
             out.append({
                 "type": "function",
                 "function": {
                     "name": full_name,
                     "description": tool.description or "",
-                    "parameters": tool.inputSchema or {"type": "object", "properties": {}},
+                    "parameters": schema or {"type": "object", "properties": {}},
                 },
             })
         return out
@@ -74,4 +76,7 @@ class McpToolProvider:
         texts = [b.text for b in result.content if getattr(b, "type", "") == "text"]
         if texts:
             return "\n".join(texts)
+        # is_error (v2) / isError (v1) : on remonte le détail si présent
+        if getattr(result, "is_error", None) or getattr(result, "isError", None):
+            return f"ERREUR outil: {json.dumps([getattr(b, 'model_dump', lambda: str(b))() for b in result.content])[:2000]}"
         return json.dumps([getattr(b, "model_dump", lambda: str(b))() for b in result.content])
