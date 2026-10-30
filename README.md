@@ -20,19 +20,21 @@ carve-out UMA dans le BIOS (32G recommandé pour un 24B Q4).
 
 Exemple MoE (recommandé sur bande passante mémoire partagée : 3B actifs/token) :
 ```sh
-llama-server -m Qwen3.6-35B-A3B.Q4_K_M.gguf -ngl 99 --jinja -fa --port 9931 --ctx-size 16384
+llama-server -m ~/models/Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf \
+  -ngl 99 --jinja -fa on --port 9931 --ctx-size 16384
 ```
 
 Exemple dense (comparaison bench) :
 ```sh
 llama-server -m Mistral-Small-3.3-24B-Instruct.Q4_K_M.gguf \
-  -ngl 99 --jinja -fa --port 9931 --ctx-size 16384
+  -ngl 99 --jinja -fa on --port 9931 --ctx-size 16384
 ```
 
-Qwen3.6-35B-A3B Q4_K_M ≈ 20,4 Go : carve-out UMA 32G dans le BIOS, tout le
+Qwen3.6-35B-A3B Q4_K_M ≈ 21 Go : carve-out UMA 32G dans le BIOS, tout le
 modèle tient côté GPU.
 
-Note : depuis llama.cpp v0.7.0 le port par défaut de `llama-server` est 9931.
+Note : depuis llama.cpp v0.7.0 le port par défaut de `llama-server` est 9931,
+et `-fa` requiert une valeur explicite (`on|off|auto`).
 
 ## Installation et lancement
 
@@ -44,13 +46,27 @@ uv run jarvis
 
 Commandes REPL : `/tools` (liste), `/reset` (historique), `/quit`.
 
+## Outils MCP
+
+| Server   | Outils | Source |
+|----------|--------|--------|
+| nettools | ping, dig, traceroute | local (binaires système) |
+| cve      | cve_info, search_cve, latest_cve | API NVD 2.0 |
+| echo     | ping | test du harnais uniquement |
+
+`cve` : sans clé API NVD, limité à 5 requêtes/30 s (throttle intégré côté
+server). Clé gratuite : https://nvd.nist.gov/developers/request-key puis
+`export NVD_API_KEY=...` (50 req/30 s).
+
 ## Benchmark
 
 ```sh
-uv run python bench/bench_llm.py --prompt "Résous step by step 17*23+5" --max-tokens 512
+uv run python bench/bench_llm.py --max-tokens 2048 -n 3
 ```
-Mesure TTFT et tokens/s en streaming sur le serveur réel : c'est la donnée qui
-décide du modèle final (dense 24B vs MoE) sur ta cible.
+Mesure TTFT et tokens/s en streaming sur le serveur réel. Le bench distingue
+le raisonnement du contenu (modèles thinking type Qwen3.6) : pour la boucle
+vocale, le TTFT qui compte est celui du premier token de contenu — prévoir un
+budget max-tokens suffisant pour couvrir la phase de raisonnement.
 
 ## Tests (sans LLM réel)
 
@@ -68,7 +84,8 @@ src/jarvis/
   mcp.py      # agrégation d'MCP servers stdio -> schémas outils
   agent.py    # boucle tool-calling
   cli.py      # REPL
-mcp_servers/  # exemples : nettools (ping/dig), echo (test)
+mcp_servers/  # nettools (ping/dig/traceroute), cve (NVD 2.0 : détail CVE,
+              #  recherche par mots-clés, veille des N derniers jours), echo (test)
 bench/       # mesure tok/s / TTFT
 tests/       # mock LLM + test end-to-end
 ```

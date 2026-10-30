@@ -21,5 +21,10 @@ quand c'est pertinent plutôt que de deviner ; cite ce que les outils te retourn
 [mcp.servers.nettools]
 command = ["uv", "run", "python", "mcp_servers/nettools.py"]
 
+[mcp.servers.cve]
+command = ["uv", "run", "python", "mcp_servers/cve.py"]
+# API NVD 2.0. Sans clé : 5 req/30s (throttle géré dans le server).
+# Clé optionnelle (50 req/30s) : export NVD_API_KEY=... avant de lancer jarvis.
+
 [mcp.servers.echo]
 command = ["uv", "run", "python", "mcp_servers/echo.py"]
