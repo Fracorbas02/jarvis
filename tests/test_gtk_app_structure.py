@@ -62,6 +62,10 @@ def main() -> int:
                         "_dispatch", "_on_server_status", "_on_turn_done",
                         "_replay_history", "_fill_tools_group"):
             assert hasattr(gtk_app.JarvisWindow, handler), handler
+        import inspect
+        src = inspect.getsource(gtk_app.JarvisWindow._fill_tools_group)
+        assert "self.tools_group.remove(" not in src, "remove() sur AdwPreferencesGroup plante (non-child)"
+        assert "box.remove(child)" in src
 
         # rendu Markdown des réponses : MessageBox.set_markdown / append_text
         import jarvis.gtk.widgets as gtk_widgets
