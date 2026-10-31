@@ -9,8 +9,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import readline
 import signal
 import sys
+import time
 import tomllib
 from pathlib import Path
 
@@ -28,13 +30,46 @@ from .tui import Display
 
 HELP = """\
 [bold]commandes[/]
-  /help        cette aide
-  /tools       liste les outils MCP avec leur description
-  /thinking    réaffiche le raisonnement du dernier tour
-  /tool N      résultat complet du N-ième outil du dernier tour
-  /reset       efface l'historique de conversation
-  /verbose     bascule les logs console en DEBUG (fichier: ~/.cache/jarvis/jarvis.log)
-  /quit        quitte"""
+  /help            cette aide
+  /tools           liste les outils MCP avec leur description
+  /thinking        réaffiche le raisonnement du dernier tour
+  /tool N          résultat complet du N-ième outil du dernier tour
+  /history         liste les derniers messages envoyés
+  /undo            retire le dernier échange de l'historique
+  /copy            copie la dernière réponse dans le presse-papier
+  /save [fichier]  exporte la conversation en Markdown
+  /reset           efface l'historique de conversation
+  /verbose         bascule les logs console en DEBUG (fichier: ~/.cache/jarvis/jarvis.log)
+  /quit            quitte (ou Ctrl+D)"""
+
+COMMANDS = ["/help", "/tools", "/thinking", "/tool", "/history", "/undo",
+            "/copy", "/save", "/reset", "/verbose", "/quit"]
+
+
+def _state_dir() -> Path:
+    return Path(os.environ.get("JARVIS_LOG_DIR", Path.home() / ".cache" / "jarvis"))
+
+
+def _setup_readline() -> Path | None:
+    """Historique persistant des saisies + complétion Tab des commandes /."""
+    hist = _state_dir() / "history"
+    try:
+        _state_dir().mkdir(parents=True, exist_ok=True)
+        readline.read_history_file(hist)
+    except (FileNotFoundError, OSError):
+        pass
+    readline.set_history_length(1000)
+
+    def completer(text: str, state: int):
+        matches = [c for c in COMMANDS if c.startswith(text)]
+        return matches[state] if state < len(matches) else None
+
+    readline.set_completer(completer)
+    try:
+        readline.parse_and_bind("tab: complete")          # GNU readline
+    except Exception:                                     # libedit (macOS)
+        readline.parse_and_bind("bind ^I rl_complete")
+    return hist
 
 
 def _make_console() -> Console:
@@ -120,6 +155,7 @@ async def amain() -> int:
     console = _make_console()
     display = Display(console)
     display.set_header(_banner(cfg, tools))
+    hist_file = _setup_readline()
     loop = asyncio.get_running_loop()
     try:
         loop.add_signal_handler(signal.SIGWINCH, display.on_resize)
@@ -127,12 +163,22 @@ async def amain() -> int:
         pass  # Windows / pas de signaux : le repaint suivra au prochain token
     history: list[dict] = []
     verbose = False
+    last_interrupt = 0.0
     try:
         while True:
             try:
                 user = console.input("\n[bold cyan][toi] › [/]").strip()
-            except (EOFError, KeyboardInterrupt):
+            except EOFError:
                 break
+            except KeyboardInterrupt:
+                # Ctrl+C : annule la saisie en cours ; deux Ctrl+C rapprochés quittent
+                now = time.monotonic()
+                if now - last_interrupt < 1.0:
+                    break
+                last_interrupt = now
+                console.print("^C")
+                continue
+            last_interrupt = 0.0
             if not user:
                 continue
             if user == "/quit":
@@ -201,6 +247,11 @@ async def amain() -> int:
             if trace.error:
                 console.print(f"[bold yellow]warn:[/] {trace.error}")
     finally:
+        if hist_file is not None:
+            try:
+                readline.write_history_file(hist_file)
+            except OSError:
+                pass
         await tools.stop()
         await llm.aclose()
     return 0
