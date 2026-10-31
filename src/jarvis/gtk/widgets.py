@@ -73,7 +73,7 @@ def _css() -> None:
     .jarvis-error { color: @error_color; }
     .jarvis-msg-user .jarvis-bubble { border-radius: 14px 14px 4px 14px; }
     .jarvis-msg-assistant .jarvis-bubble { border-radius: 14px 14px 14px 4px; }
-    .jarvis-bubble { border-radius: 14px; }
+    .jarvis-bubble { border-radius: 14px; max-width: 80%; }
     .jarvis-meta { font-size: 0.8em; color: alpha(@window_fg_color, 0.45); }
     .jarvis-home-title { font-size: 44px; font-weight: 700; }
     .jarvis-notif-badge {
@@ -460,6 +460,7 @@ class MessageBox(Gtk.Box):
     def __init__(self, role: str):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.role = role
+        self.set_hexpand(True)  # sinon halign START/END n'a aucun effet (box pleine largeur)
         self.add_css_class(f"jarvis-msg-{role}")
         self.set_margin_start(48)
         self.set_margin_end(48)
@@ -495,6 +496,11 @@ class MessageBox(Gtk.Box):
         self.content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         if role == "user":
             self.content_box.add_css_class("jarvis-text")
+        bubble.set_hexpand(False)
+        bubble.set_halign(Gtk.Align.FILL)
+        # la bulle ne fait pas toute la largeur : max ~80%
+        bubble.set_size_request(-1, -1)
+        self.content_box.set_hexpand(False)
         bubble.append(self.content_box)
         self._md_buffer = ""
         self.webview = None

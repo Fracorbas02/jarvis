@@ -76,6 +76,9 @@ def main() -> int:
         import inspect
         init_src = inspect.getsource(gtk_widgets.MessageBox.__init__)
         assert "self.tools_box" in init_src and "self.meta_label" in init_src
+        # hexpand sur la MessageBox : sinon halign START/END (bulles user/assistant) n'a
+        # aucun effet et toutes les bulles s'étalent pleine largeur
+        assert "self.set_hexpand(True)" in init_src
         # webview assistant : cachée à la création (sinon bulle fantôme), affichée au rendu
         assert "self.webview.set_visible(False)" in init_src
         render_src = inspect.getsource(gtk_widgets.MessageBox._render_md)
