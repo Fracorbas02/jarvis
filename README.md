@@ -111,11 +111,16 @@ uv run jarvis-app --config /chemin/config.toml
 UI native GTK4, qui ne touche à rien d'autre que la partie graphique
 (le cœur LLM + MCP + voix + sessions est réutilisé tel quel) :
 
-- **Accueil** : un seul gros bouton micro « Parler à Jarvis ». Si aucun
-  llama-server ne répond, il en démarre un avec le GGUF choisi (sélecteur dans
-  le popover statut, `--ctx-size` réglable) puis ouvre la conversation ;
-  sinon il ouvre directement la conversation. Le prompt texte est dans le
-  **menu (Ctrl+P)**, avec les conversations (Ctrl+O) et la lecture TTS.
+- **Accueil épurée** : un seul gros bouton micro « Parler à Jarvis » (anneau
+  pulsant pendant l'enregistrement). Aucun élément grisé : le statut du
+  serveur, le GPU choisi et le contexte demandé sont dans **Réglages >
+  Système (local)** et dans le popover statut (icône réseau). Si aucun
+  llama-server ne répond, le bouton en démarre un (GGUF choisi dans le
+  popover, `--ctx-size` réglable) puis ouvre la conversation. Le prompt
+  texte est dans le **menu (Ctrl+P)**, conversations en Ctrl+O.
+- **Notifications en cloche** : plus de toasts qui poppent en bas de
+  fenêtre — une cloche dans le header avec badge (compteur), clic =
+  popover listant les notifications + « Tout effacer ».
 - **Conversation** : centrée sur l'échange — barre du bas avec micro (STT
   local : record → transcribe → tour LLM) + champ texte + envoyer ; réponses
   en streaming **rendues en Markdown** (titres, **gras**, *italique*, `code`,

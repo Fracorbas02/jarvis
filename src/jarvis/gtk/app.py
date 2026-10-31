@@ -121,6 +121,21 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.mic_button.connect("clicked", self._on_mic)
         header.pack_end(self.mic_button)
 
+        # cloche de notifications (badge avec le nombre de non lues)
+        self._notifs: list[str] = []
+        self._notif_badge = Gtk.Label(label="", halign=Gtk.Align.CENTER,
+                                      valign=Gtk.Align.CENTER)
+        self._notif_badge.add_css_class("jarvis-notif-badge")
+        self._notif_badge.set_visible(False)
+        bell_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+        bell_box.append(Gtk.Image(icon_name="notifications-symbolic"))
+        bell_box.append(self._notif_badge)
+        self.bell_button = Gtk.Button(tooltip_text="Notifications")
+        self.bell_button.set_child(bell_box)
+        self.bell_button.connect("clicked", self._on_bell_clicked)
+        header.pack_end(self.bell_button)
+        self._build_notif_popover()
+
         # pages
         self.stack.add_titled_with_icon(self._build_home(), "home", "Accueil",
                                         "go-home-symbolic")
@@ -129,10 +144,7 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.stack.add_titled_with_icon(self._build_settings(), "settings", "R\u00e9glages",
                                         "emblem-system-symbolic")
         toolbar.set_content(self.stack)
-
-        self.toast_overlay = Adw.ToastOverlay()
-        self.toast_overlay.set_child(toolbar)
-        self.set_content(self.toast_overlay)
+        self.set_content(toolbar)
 
     def _build_home(self) -> Gtk.Widget:
         clamp = Adw.Clamp(maximum_size=640, tightening_threshold=480)
@@ -150,11 +162,6 @@ class JarvisWindow(Adw.ApplicationWindow):
                         halign=Gtk.Align.CENTER)
         sub.add_css_class("dim-label")
         page.append(sub)
-
-        self.home_status = Gtk.Label(label="Vérification du serveur…",
-                                     halign=Gtk.Align.CENTER, wrap=True)
-        self.home_status.add_css_class("dim-label")
-        page.append(self.home_status)
 
         # Accueil : un seul gros bouton micro. Si le serveur LLM est hors
         # ligne, il est d'abord démarré (modèle choisi dans le popover
@@ -267,6 +274,20 @@ class JarvisWindow(Adw.ApplicationWindow):
         g_model.add(info)
         page.add(g_model)
 
+        # --- Système / infos locales (déplacées hors de l'accueil) ---
+        g_sys = Adw.PreferencesGroup(title="Système (local)")
+        self.sys_server_row = Adw.ActionRow(title="Serveur LLM",
+                                            subtitle="vérification…")
+        g_sys.add(self.sys_server_row)
+        self.sys_gpu_row = Adw.ActionRow(title="GPU choisi",
+                                         subtitle=load_gpu_choice().get("device", "(aucun)"))
+        g_sys.add(self.sys_gpu_row)
+        ctx = int(self.settings.get("ctx_size", 16384))
+        self.sys_ctx_row = Adw.ActionRow(title="Contexte demandé",
+                                         subtitle=f"{ctx} tokens (--ctx-size)")
+        g_sys.add(self.sys_ctx_row)
+        page.add(g_sys)
+
         # --- Outils MCP (peuplé quand backend_ready arrive) ---
         self.tools_group = Adw.PreferencesGroup(title="Outils MCP disponibles")
         page.add(self.tools_group)
@@ -363,6 +384,54 @@ class JarvisWindow(Adw.ApplicationWindow):
             except Exception:  # noqa: BLE001
                 continue
         self._toast("Ouvre manuellement : Paramètres > Confidentialité")
+
+    def _build_notif_popover(self) -> None:
+        self.notif_popover = Gtk.Popover()
+        self.notif_popover.set_parent(self.bell_button)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
+                      margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
+        box.set_size_request(320, -1)
+        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        head.append(Gtk.Label(label="Notifications", xalign=0, hexpand=True))
+        clear_btn = Gtk.Button(label="Tout effacer")
+        clear_btn.connect("clicked", lambda b: self._clear_notifs())
+        head.append(clear_btn)
+        box.append(head)
+        self.notif_list = Gtk.ListBox()
+        self.notif_list.add_css_class("boxed-list")
+        self.notif_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        scroll = Gtk.ScrolledWindow(vexpand=True, min_content_height=80,
+                                    max_content_height=360, propagate_natural_height=True)
+        scroll.set_child(self.notif_list)
+        box.append(scroll)
+        self.notif_empty = Gtk.Label(label="Aucune notification", halign=Gtk.Align.CENTER)
+        self.notif_empty.add_css_class("dim-label")
+        box.append(self.notif_empty)
+        self.notif_popover.set_child(box)
+        self._refresh_notif_ui()
+
+    def _on_bell_clicked(self, _btn) -> None:
+        self.notif_popover.popup()
+
+    def _clear_notifs(self) -> None:
+        self._notifs.clear()
+        self._refresh_notif_ui()
+
+    def _refresh_notif_ui(self) -> None:
+        child = self.notif_list.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            self.notif_list.remove(child)
+            child = nxt
+        for text in reversed(self._notifs[-30:]):
+            row = Gtk.Label(label=text, xalign=0, wrap=True, selectable=True,
+                            margin_top=6, margin_bottom=6,
+                            margin_start=8, margin_end=8)
+            self.notif_list.append(row)
+        n = len(self._notifs)
+        self._notif_badge.set_text(str(n) if n < 100 else "99+")
+        self._notif_badge.set_visible(n > 0)
+        self.notif_empty.set_visible(n == 0)
 
     def _build_status_popover(self) -> None:
         self.status_popover = Gtk.Popover()
@@ -465,7 +534,7 @@ class JarvisWindow(Adw.ApplicationWindow):
             if not model_path and self.backend.models_llm:
                 model_path = str(self.backend.models_llm[0].path)
             if model_path:
-                self.home_status.set_text("Démarrage du modèle (peut être long)…")
+                self._toast("Démarrage du modèle (peut être long)…")
                 self.backend.start_server(model_path, ctx_size=int(self._ctx))
             else:
                 self._toast("Aucun modèle GGUF trouvé "
@@ -502,6 +571,8 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.chat_mic.set_sensitive(False)
         self.mic_button.set_sensitive(False)
         self.chat_entry.set_sensitive(False)
+        self.chat_mic.add_css_class("jarvis-recording")
+        self.home_mic_button.add_css_class("jarvis-recording")
         self._set_chat_hint("Enregistrement…")
         self.backend.stt_record_and_transcribe(6.0, device=getattr(self, "mic_device", "default"))
 
@@ -688,9 +759,10 @@ class JarvisWindow(Adw.ApplicationWindow):
         host = event.get("host", "")
         port = event.get("port", "")
         txt = f"{state_txt} — {host}:{port} — {models}{ctx_txt}"
-        self.home_status.set_text(txt)
         self.pop_status_label.set_text(txt + (f"\n{event.get('detail') or ''}"
                                               if event.get("detail") else ""))
+        if hasattr(self, "sys_server_row"):
+            self.sys_server_row.set_subtitle(txt)
         if self._status_state == "offline":
             self.pop_button.set_label("Démarrer le serveur")
         else:
@@ -752,12 +824,17 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.chat_mic.set_sensitive(not busy)
         self.mic_button.set_sensitive(not busy)
         self.chat_entry.set_sensitive(not busy)
+        if not busy:
+            self.chat_mic.remove_css_class("jarvis-recording")
+            self.home_mic_button.remove_css_class("jarvis-recording")
 
     def _set_chat_hint(self, text: str) -> None:
         self.chat_hint.set_text(text)
 
     def _toast(self, text: str) -> None:
-        self.toast_overlay.add_toast(Adw.Toast(title=text, timeout=4))
+        """Notification : empilée dans la cloche (badge + popover), jamais en bas."""
+        self._notifs.append(text)
+        self._refresh_notif_ui()
 
     def do_close_request(self) -> bool:
         self.backend.stop()
