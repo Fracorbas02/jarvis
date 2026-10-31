@@ -47,6 +47,7 @@ class VoiceServerStatus:
     host: str
     port: int
     detail: str = ""
+    healthy: bool = False  # /health a répondu 200 (sinon le proc peut être mort)
 
 
 def host_port(base_url: str) -> tuple[str, int]:
@@ -56,12 +57,15 @@ def host_port(base_url: str) -> tuple[str, int]:
 
 
 def resolve_model_path(model: str | Path, models_root: Path | None = None) -> Path:
-    """Résout un chemin de modèle : ~ expansé, relatif -> models_root (~/models)."""
+    """Résout un chemin de modèle : ~ expansé ; relatif -> d'abord le cwd s'il
+    existe, sinon models_root (~/models)."""
     p = Path(str(model)).expanduser()
-    if not p.is_absolute():
-        root = models_root or (Path.home() / "models")
-        p = root / p
-    return p
+    if p.is_absolute():
+        return p
+    if p.is_file():
+        return p.resolve()
+    root = models_root or (Path.home() / "models")
+    return root / p
 
 
 # ---------- gestion des processus serveurs voix ----------
@@ -88,7 +92,12 @@ def _argv_for(name: str, vcfg: VoiceServerConfig, model_path: Path) -> list[str]
 
 async def voice_server_status(name: str, vcfg: VoiceServerConfig,
                               timeout: float = 2.0) -> VoiceServerStatus:
-    """GET /health sur le serveur voix. Ne lève jamais : offline si rien ne répond."""
+    """GET /health sur le serveur voix. Ne lève jamais : offline si rien ne répond.
+
+    `healthy` = /health a répondu 200. `state` vaut "managed" dès qu'un
+    processus lancé par jarvis tourne, MÊME si /health ne répond pas encore
+    (chargement) — ne pas confondre avec healthy.
+    """
     host, port = host_port(vcfg.base_url)
     proc = _procs.get(name)
     state = "managed" if proc is not None and proc.poll() is None else "offline"
@@ -98,7 +107,7 @@ async def voice_server_status(name: str, vcfg: VoiceServerConfig,
             resp = await http.get("/health")
             if resp.status_code == 200:
                 return VoiceServerStatus(name, "online" if state == "offline" else "managed",
-                                         host, port)
+                                         host, port, healthy=True)
             return VoiceServerStatus(name, state, host, port, detail=f"HTTP {resp.status_code}")
     except (httpx.TransportError, httpx.HTTPError) as exc:
         return VoiceServerStatus(name, state, host, port,
@@ -140,10 +149,18 @@ async def start_voice_server(name: str, vcfg: VoiceServerConfig,
             _procs.pop(name, None)
             return VoiceServerStatus(name, "offline", host, port,
                                      detail=f"{vcfg.binary} mort (code {proc.returncode}), voir {log_path}")
+        # /health répond ? -> prêt. (state "managed" seul ne suffit pas :
+        # le proc peut être vivant mais le modèle pas encore chargé)
         st = await voice_server_status(name, vcfg, timeout=1.0)
-        if st.state != "offline":
+        if st.healthy:
             return st
         await asyncio.sleep(1.0)
+        # le processus peut mourir pendant l'attente (mauvais args, port pris…)
+        # sans que /health l'ait vu : re-vérifie après chaque tour
+        if proc.poll() is not None:
+            _procs.pop(name, None)
+            return VoiceServerStatus(name, "offline", host, port,
+                                     detail=f"{vcfg.binary} mort (code {proc.returncode}), voir {log_path}")
     return VoiceServerStatus(name, "managed", host, port,
                              detail="démarrage en cours (chargement long)")
 

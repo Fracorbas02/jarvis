@@ -130,6 +130,46 @@ def test_voice_config_defaults():
     assert cfg.record_cmd and cfg.play_cmd
 
 
+def test_start_voice_server_erreurs():
+    """Les 3 échecs de start_voice_server doivent retourner un statut offline
+    avec un detail explicite (jamais d'exception, jamais de blocage)."""
+    from jarvis.voice import start_voice_server
+    import socket
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    base = f"http://127.0.0.1:{port}"
+
+    # 1. binaire introuvable
+    vcfg = VoiceServerConfig(binary="binaire-qui-nexiste-pas-xyz",
+                             base_url=base, model="~/models/stt/x.gguf")
+    st = _run(start_voice_server("stt", vcfg))
+    assert st.state == "offline" and "binaire introuvable" in st.detail
+
+    # 2. modèle introuvable (binaire = /bin/true qui existe)
+    vcfg = VoiceServerConfig(binary="/bin/true", base_url=base,
+                             model="/chemin/inexistant/gguf.gguf")
+    st = _run(start_voice_server("stt", vcfg))
+    assert st.state == "offline" and "modèle introuvable" in st.detail
+
+    # 3. processus qui meurt immédiatement (/bin/false), ready_timeout court
+    vcfg = VoiceServerConfig(binary="/bin/false", base_url=base,
+                             model=str(Path(__file__).resolve()), ready_timeout=5.0)
+    st = _run(start_voice_server("stt", vcfg))
+    assert st.state == "offline" and "mort (code" in st.detail, st
+
+
+def test_start_voice_server_deja_en_ligne():
+    """Si /health répond déjà, start_voice_server ne relance rien."""
+    from jarvis.voice import start_voice_server
+    with _Mock("stt") as m:
+        vcfg = VoiceServerConfig(binary="/bin/false",
+                                 base_url=f"http://127.0.0.1:{m.port}",
+                                 model=str(Path(__file__).resolve()))
+        st = _run(start_voice_server("stt", vcfg))
+        assert st.state == "online"
+
+
 if __name__ == "__main__":
     test_host_port_and_model_path()
     test_wav_helpers(Path("/tmp"))
@@ -139,6 +179,8 @@ if __name__ == "__main__":
     test_voice_server_status_offline()
     test_voice_server_status_online()
     test_voice_config_defaults()
+    test_start_voice_server_erreurs()
+    test_start_voice_server_deja_en_ligne()
     print("OK")
 
 def test_voice_device_env() -> None:

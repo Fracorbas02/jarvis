@@ -87,13 +87,13 @@ async def test_tools_expansion_and_mode_switch(user: User):
     # ouvrir l'expansion -> les outils apparaissent
     user.find(f"Outils MCP ({n})").click()
     await user.should_see("echo__ping")
-    # switch de mode via les boutons segmentés
+    # switch de mode via les boutons segmentés (le nombre de modèles détectés
+    # dépend de la machine / de JARVIS_MODEL_DIRS : on ne teste que le titre)
     user.find(kind=ui.button, content="TTS").click()
     await user.should_see("Synthèse vocale locale")
-    await user.should_see("Modèles détectés (0)")
-    await user.should_see("Aucun modèle TTS détecté")
+    await user.should_see("Modèles détectés")
     user.find(kind=ui.button, content="STT").click()
     await user.should_see("Reconnaissance vocale locale")
-    await user.should_see("Aucun modèle STT détecté")
+    await user.should_see("Modèles détectés")
     user.find(kind=ui.button, content="Chat LLM").click()
     await user.should_see("Discute avec Jarvis")
