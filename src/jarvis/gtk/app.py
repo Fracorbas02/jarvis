@@ -344,8 +344,14 @@ class JarvisWindow(Adw.ApplicationWindow):
         if detail and self._stt_state == "offline":
             txt += f" ({detail})"
             if "unknown model architecture" in detail.lower():
-                txt += (" — llama-server trop ancien pour ce modèle : "
-                        "il faut llama.cpp >= b11675 (release v0.8.0)")
+                arch = detail.split("'")[1] if "'" in detail else "?"
+                if "mmproj" in arch or arch == "?":
+                    pass
+                txt += (f" — le binaire ne connaît pas l'arch '{arch}' : "
+                        "llama.cpp >= b11675 (v0.8.0) requis, et pour un modèle "
+                        "Voxtral Realtime le GGUF texte (mistral3) doit être "
+                        "accompagné de son mmproj*.gguf (auto-ajouté s'il est "
+                        "dans le même dossier que le modèle)")
         self.stt_status_row.set_subtitle(txt)
         self.stt_cfg_row.set_subtitle(
             f"protocole {event.get('protocol', '?')} · binaire "

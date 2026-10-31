@@ -48,11 +48,19 @@ whisper-server --host 127.0.0.1 --port 8178 -m ~/models/stt/Q4_K_M.gguf -ngl 99
 
 # STT alternatif : llama-server + modèle audio llama.cpp (ex. Voxtral Mini
 # 4B Realtime), sert POST /v1/audio/transcriptions (OpenAI-compatible).
-# Nécessite llama.cpp >= b11675 (architecture voxtral_realtime, livrée dans
-# la release v0.8.0) : un build plus ancien échoue au chargement avec
-# « unknown model architecture: 'voxtral_realtime' » (l'app remonte cette
-# erreur dans le statut du serveur STT).
-llama-server -m ~/models/stt/Q4_K_M.gguf \
+# Nécessite llama.cpp >= b11675 (release v0.8.0) : un build plus ancien
+# échoue avec « unknown model architecture: 'voxtral_realtime' » (l'app
+# remonte cette erreur dans le statut du serveur STT).
+#
+# Voxtral Realtime = DEUX GGUF : le décodeur texte (arch mistral3) en -m,
+# plus l'encodeur audio mmproj (arch voxtral_realtime) en --mmproj. Si le
+# mmproj*.gguf est dans le même dossier que le modèle, jarvis l'ajoute
+# automatiquement ; sinon : extra_args = ["--mmproj", "~/models/stt/mmproj-...-BF16.gguf"]
+# ex. : huggingface-cli download ggml-org/Voxtral-Mini-4B-Realtime-2602-GGUF \
+#         Voxtral-Mini-4B-Realtime-2602-Q4_K_M.gguf mmproj-Voxtral-Mini-4B-Realtime-2602-BF16.gguf \
+#         --local-dir ~/models/stt/
+llama-server -m ~/models/stt/Voxtral-Mini-4B-Realtime-2602-Q4_K_M.gguf \
+  --mmproj ~/models/stt/mmproj-Voxtral-Mini-4B-Realtime-2602-BF16.gguf \
   --host 127.0.0.1 --port 8178 -ngl 99 --jinja --ctx-size 8192
 ```
 

@@ -130,6 +130,22 @@ def _log_path(name: str) -> Path:
     return log_dir / f"voice-{name}.log"
 
 
+def _find_mmproj(model_path: Path) -> Path | None:
+    """Retourne le mmproj*.gguf du même répertoire que `model_path`
+    (BF16 préféré, puis Q8_0, puis le 1er trouvé), ou None."""
+    try:
+        cands = sorted(model_path.parent.glob("mmproj*.gguf"))
+    except OSError:
+        return None
+    if not cands:
+        return None
+    for pref in ("bf16", "q8_0", "f16"):
+        for c in cands:
+            if pref in c.name.lower():
+                return c
+    return cands[0]
+
+
 def _argv_for(name: str, vcfg: VoiceServerConfig, model_path: Path,
               gpu_args: list[str] | None = None) -> list[str]:
     host, port = host_port(vcfg.base_url)
@@ -146,6 +162,15 @@ def _argv_for(name: str, vcfg: VoiceServerConfig, model_path: Path,
             # llama-server + modèle audio (Voxtral Mini 4B Realtime, ...) :
             # sert POST /v1/audio/transcriptions. Pas de -fa (flash-attention)
             # par défaut sur ces architectures audio.
+            # Le décodeur texte (arch mistral3) a besoin de son encodeur
+            # audio (mmproj, arch voxtral_realtime) : s'il n'est pas déjà
+            # dans extra_args, on prend le mmproj*.gguf du même répertoire
+            # que le modèle (convention ggml-org : Voxtral-...-Q4_K_M.gguf
+            # + mmproj-Voxtral-...-BF16.gguf).
+            if "--mmproj" not in extra:
+                mmproj = _find_mmproj(model_path)
+                if mmproj is not None:
+                    extra = [*extra, "--mmproj", str(mmproj)]
             return [vcfg.binary, "-m", str(model_path), "--host", host,
                     "--port", str(port), "-ngl", "99", "--jinja",
                     "--ctx-size", "8192", *extra]

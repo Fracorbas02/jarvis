@@ -155,6 +155,38 @@ def test_argv_for_stt_voxtral():
     assert "--jinja" not in argv2 and "-ngl" not in argv2
 
 
+def test_find_mmproj_and_argv_voxtral(tmp_path):
+    """_find_mmproj trouve le mmproj du même dossier (BF16 préféré) et
+    _argv_for l'ajoute en --mmproj pour le protocole voxtral."""
+    from jarvis.voice import _argv_for, _find_mmproj
+    model = tmp_path / "Voxtral-Mini-4B-Realtime-2602-Q4_K_M.gguf"
+    model.write_bytes(b"GGUF")
+    (tmp_path / "mmproj-Voxtral-Mini-4B-Realtime-2602-Q8_0.gguf").write_bytes(b"MM")
+    mm = tmp_path / "mmproj-Voxtral-Mini-4B-Realtime-2602-BF16.gguf"
+    mm.write_bytes(b"MM")
+    assert _find_mmproj(model) == mm  # BF16 préféré au Q8_0
+    vcfg = VoiceServerConfig(binary="llama-server",
+                             base_url="http://127.0.0.1:8178",
+                             model=str(model), protocol="voxtral")
+    argv = _argv_for("stt", vcfg, model)
+    assert argv[argv.index("--mmproj") + 1] == str(mm)
+    # extra_args avec --mmproj explicite : on ne le double pas
+    vcfg2 = VoiceServerConfig(binary="llama-server",
+                              base_url="http://127.0.0.1:8178",
+                              model=str(model), protocol="voxtral",
+                              extra_args=["--mmproj", "/chemin/explicite.gguf"])
+    argv2 = _argv_for("stt", vcfg2, model)
+    assert argv2.count("--mmproj") == 1
+    assert argv2[argv2.index("--mmproj") + 1] == "/chemin/explicite.gguf"
+    # pas de mmproj dans le dossier -> pas de --mmproj
+    alone = tmp_path / "sous" / "Q4_K_M.gguf"
+    alone.parent.mkdir()
+    alone.write_bytes(b"GGUF")
+    assert _find_mmproj(alone) is None
+    argv3 = _argv_for("stt", vcfg, alone)
+    assert "--mmproj" not in argv3
+
+
 def test_voice_config_protocol_default():
     cfg = VoiceConfig()
     assert cfg.stt.protocol == "whisper"
