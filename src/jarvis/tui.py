@@ -130,6 +130,19 @@ class Display:
         self.tool_results: list[ToolResult] = []
         self.last_tool_results: list[ToolResult] = []
         self._tool_line = ""
+        # tout ce qui a été imprimé (pour redessiner proprement au SIGWINCH)
+        self._header = None
+        self._blocks: list = []
+
+    def set_header(self, renderable) -> None:
+        """Bannière affichée en haut, réimprimée en premier au redraw."""
+        self._header = renderable
+        self.console.print(renderable)
+
+    def _emit(self, renderable) -> None:
+        """Imprime un bloc définitif et le mémorise pour le redraw au resize."""
+        self._blocks.append(renderable)
+        self.console.print(renderable)
 
     # -- raisonnement -------------------------------------------------------
     def reasoning(self, chunk: str) -> None:
@@ -158,7 +171,7 @@ class Display:
         self._reasoning.clear()  # efface le panneau live
         self._reasoning_parts = []
         self.last_reasoning = Reasoning(text=text, duration=duration, tokens=tokens)
-        self.console.print(
+        self._emit(
             f"[{DIM}]↯ réflexion · {duration:.1f}s · ~{tokens} tok "
             f"(/thinking pour revoir)[/]"
         )
@@ -181,7 +194,7 @@ class Display:
     def print_content(self, text: str) -> None:
         """Mode non-stream : affiche la réponse d'un bloc."""
         self.content_started = True
-        self.console.print(self._panel(text))
+        self._emit(self._panel(text))
 
     def _render_content(self) -> Panel:
         return self._panel("".join(self._content_parts))
@@ -204,7 +217,7 @@ class Display:
         mark = "[green]✓[/]" if ok else "[red]✗[/]"
         raw_args = json.dumps(args, ensure_ascii=False)
         shown = raw_args if len(raw_args) <= 60 else raw_args[:57] + "…"
-        self.console.print(f"{mark} {name}({shown})  [{DIM}]{duration:.2f}s[/]")
+        self._emit(f"{mark} {name}({shown})  [{DIM}]{duration:.2f}s[/]")
         n = len(self.tool_results) + 1
         self.tool_results.append(ToolResult(name, args, ok, duration, result))
         if result:
@@ -212,7 +225,7 @@ class Display:
             preview = "\n".join(lines[:3])
             if len(lines) > 3 or len(result) > 200:
                 preview += f"\n… ({len(result)} car. au total — /tool {n})"
-            self.console.print(Text("  └─ " + preview.replace("\n", "\n  "), style=DIM))
+            self._emit(Text("  └─ " + preview.replace("\n", "\n  "), style=DIM))
 
     def show_tool(self, n: int) -> None:
         """Réaffiche le résultat complet du n-ième outil du dernier tour."""
@@ -234,14 +247,16 @@ class Display:
             with self.console.pager(styles=True):
                 self.console.print(panel)
         else:
-            self.console.print(panel)
+            self._emit(panel)
 
     # -- frontières de stream / tour ------------------------------------------
     def end_llm_stream(self) -> None:
         """Appelé à chaque fin de réponse LLM (stream terminé)."""
         self._close_reasoning()
         if self._content_parts:
-            self._content.keep(self._render_content())  # version finale, laissée affichée
+            panel = self._render_content()
+            self._content.keep(panel)  # version finale, laissée affichée
+            self._blocks.append(panel)  # mémorisée pour le redraw au resize
             self._content_parts = []
 
     def end_turn(self) -> None:
@@ -253,10 +268,31 @@ class Display:
 
     # -- redimensionnement ------------------------------------------------------
     def on_resize(self) -> None:
-        """Re-rend les zones live actives avec la nouvelle taille (SIGWINCH)."""
-        for region in (self._reasoning, self._content, self._tool):
-            if region.height and region._last is not None:
-                region.repaint(region._last)
+        """Redessine proprement au SIGWINCH pendant un streaming.
+
+        Au resize, le terminal peut re-wrappER ou faire scroller le contenu
+        existant : le nombre de lignes physiques de la zone live n'est plus
+        fiable, donc remonter de `height` lignes ne retomberait pas au début
+        de la zone (d'où l'affichage buggé). Tant qu'une zone live est active,
+        on efface tout l'écran et on réimprime proprement : header, blocs déjà
+        affichés (re-rendus à la nouvelle largeur), puis la zone live courante.
+        Hors streaming (attente au prompt), on ne touche à rien.
+        """
+        if not self.console.is_terminal:
+            return
+        active = [r for r in (self._reasoning, self._content, self._tool) if r.height]
+        if not active:
+            return
+        f = self.console.file
+        f.write("\x1b[2J\x1b[H")  # clear screen + curseur home
+        f.flush()
+        if self._header is not None:
+            self.console.print(self._header)
+        for block in self._blocks:
+            self.console.print(block)
+        for region in active:
+            region.height = 0
+            region.repaint(region._last)
 
     # -- consultation ----------------------------------------------------------
     def show_reasoning(self) -> None:
@@ -272,4 +308,4 @@ class Display:
             with self.console.pager(styles=True):
                 self.console.print(panel)
         else:
-            self.console.print(panel)
+            self._emit(panel)

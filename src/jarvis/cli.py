@@ -55,7 +55,7 @@ def _make_console() -> Console:
     return Console()
 
 
-def _banner(console: Console, cfg, tools: McpToolProvider) -> None:
+def _banner(cfg, tools: McpToolProvider) -> Panel:
     n = len(tools.names())
     servers = ", ".join(sorted(cfg.mcp_servers)) or "aucun"
     body = Text.from_markup(
@@ -64,8 +64,8 @@ def _banner(console: Console, cfg, tools: McpToolProvider) -> None:
         f"[dim]outils[/]  {n} chargés ({servers})\n"
         f"[dim]/help[/] pour les commandes"
     )
-    console.print(Panel(body, title="[bold cyan]JARVIS[/]", border_style="cyan",
-                        box=box.ROUNDED, padding=(0, 1)))
+    return Panel(body, title="[bold cyan]JARVIS[/]", border_style="cyan",
+                 box=box.ROUNDED, padding=(0, 1))
 
 
 def _setup_logging(verbose: bool = False) -> None:
@@ -111,8 +111,8 @@ async def amain() -> int:
                   stream=True)
 
     console = _make_console()
-    _banner(console, cfg, tools)
     display = Display(console)
+    display.set_header(_banner(cfg, tools))
     loop = asyncio.get_running_loop()
     try:
         loop.add_signal_handler(signal.SIGWINCH, display.on_resize)
