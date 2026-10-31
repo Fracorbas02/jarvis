@@ -695,7 +695,18 @@ class GtkBackend:
 
     def apply_gpu(self, device: str) -> dict:
         """Persiste le choix GPU (gpu.json, appliqué aux serveurs locaux au
-        prochain démarrage) et dans ui.json. Retourne le choix effectif."""
+        prochain démarrage) et dans ui.json. Retourne le choix effectif.
+
+        Si le device choisi n'existe plus dans `llama-server --list-devices`
+        (GPU débranché), on persiste le 1er device ggml disponible à la place."""
+        from ..gpu import device_is_available, list_llama_devices
+        if not device_is_available(device):
+            devs = list_llama_devices()
+            if devs:
+                import logging
+                logging.getLogger("jarvis.gtk.backend").warning(
+                    "GPU %s indisponible, choix forcé sur %s", device, devs[0][0])
+                device = devs[0][0]
         env = env_for_device(device)
         data = save_gpu_choice(device, env)
         save_ui_settings({"gpu": device})

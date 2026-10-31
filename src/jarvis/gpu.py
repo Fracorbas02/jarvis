@@ -190,6 +190,16 @@ def _backend_index(device: str) -> tuple[str, str]:
     b, _, i = device.partition(":")
     return b.lower(), i
 
+def device_is_available(device: str) -> bool:
+    """True si `device` (nom ggml type "Vulkan1") est dans `llama-server
+    --list-devices`. False si llama-server absent (on laisse passer, best-effort)
+    ou si le device n'existe plus (GPU débranché)."""
+    devs = list_llama_devices()
+    if not devs:
+        return True  # pas moyen de vérifier -> on tente tel quel
+    return any(d == device for d, _ in devs)
+
+
 def args_for_device(device: str) -> list[str]:
     """Arguments CLI pour forcer ce device quand l'env ne suffit pas.
 
@@ -204,7 +214,19 @@ def args_for_device(device: str) -> list[str]:
     if backend != "vulkan":
         return []
     if re.fullmatch(r"[A-Za-z]+\d+", device):  # déjà un nom ggml "Vulkan1"
-        return ["--device", device]
+        if device_is_available(device):
+            return ["--device", device]
+        # le GPU choisi a disparu (débranché, 2e GPU HS…) : on retombe sur le
+        # 1er device ggml disponible plutôt que de faire planter llama-server
+        # ("invalid device: Vulkan1")
+        devs = list_llama_devices()
+        if devs:
+            fallback = devs[0][0]
+            import logging
+            logging.getLogger("jarvis.gpu").warning(
+                "device GPU enregistré %s indisponible, fallback sur %s", device, fallback)
+            return ["--device", fallback]
+        return []
     # ancien format "vulkan:N" : N = index vulkaninfo -> nom via vulkaninfo,
     # puis nom ggml correspondant dans --list-devices
     try:

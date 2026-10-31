@@ -154,6 +154,23 @@ def test_stt_fallback_404_voxtral_to_whisper():
         assert "transcription de" in text
 
 
+def test_args_for_device_fallback_quand_gpu_absent(monkeypatch) -> None:
+    """Le device enregistré (Vulkan1) n'existe plus (2e GPU HS) : args_for_device
+    retombe sur le 1er device ggml dispo au lieu de renvoyer un --device invalide."""
+    import jarvis.gpu as gpu
+    monkeypatch.setattr(gpu, "list_llama_devices",
+                        lambda: [("Vulkan0", "AMD Radeon 890M Graphics (RADV STRIX1) (48701 MiB)")])
+    assert gpu.args_for_device("Vulkan1") == ["--device", "Vulkan0"]
+    # device toujours présent -> inchangé
+    monkeypatch.setattr(gpu, "list_llama_devices",
+                        lambda: [("Vulkan0", "dGPU"), ("Vulkan1", "iGPU 890M")])
+    assert gpu.args_for_device("Vulkan1") == ["--device", "Vulkan1"]
+    # llama-server absent (list_llama_devices vide) -> on tente tel quel
+    monkeypatch.setattr(gpu, "list_llama_devices", lambda: [])
+    assert gpu.args_for_device("Vulkan1") == ["--device", "Vulkan1"]
+    print("OK  args_for_device fallback GPU absent")
+
+
 def test_argv_for_stt_voxtral():
     """protocol=voxtral -> llama-server avec -ngl 99 --jinja (sans -fa),
     comme un serveur audio llama.cpp."""
