@@ -58,6 +58,32 @@ def _css() -> None:
     }
     .jarvis-mic-level { margin-top: 2px; }
     .jarvis-ctx-bar { min-height: 6px; }
+    /* page d'accueil en mode enregistrement : le dégradé pulse sur TOUTE la page */
+    .jarvis-home-bg.jarvis-recording-page {
+        animation: jarvis-bg-pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes jarvis-bg-pulse {
+        0%, 100% { opacity: 1; }
+        50%      { opacity: 0.55; }
+    }
+    /* vague de niveau en bas de la fenêtre, en accord avec la voix */
+    .jarvis-wave-bar {
+        min-height: 10px;
+        border-radius: 6px;
+        background: linear-gradient(90deg,
+            alpha(@accent_bg_color, 0.15),
+            @accent_bg_color,
+            alpha(@accent_bg_color, 0.15));
+        background-size: 200% 100%;
+        transition: none;
+    }
+    .jarvis-wave-bar.jarvis-wave-live {
+        animation: jarvis-wave-slide 1.6s linear infinite;
+    }
+    @keyframes jarvis-wave-slide {
+        0%   { background-position: 0% 0; }
+        100% { background-position: 200% 0; }
+    }
     """
     )
     display = Gdk.Display.get_default()
