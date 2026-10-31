@@ -148,7 +148,7 @@ class JarvisWindow(Adw.ApplicationWindow):
         self._notif_badge.add_css_class("jarvis-notif-badge")
         self._notif_badge.set_visible(False)
         bell_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
-        bell_box.append(Gtk.Image(icon_name="notifications-symbolic"))
+        bell_box.append(Gtk.Image(icon_name="alarm-symbolic"))
         bell_box.append(self._notif_badge)
         self.bell_button = Gtk.Button(tooltip_text="Notifications")
         self.bell_button.set_child(bell_box)
@@ -173,9 +173,9 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.stack.add_titled_with_icon(self._build_home(), "home", "Accueil",
                                         "go-home-symbolic")
         self.stack.add_titled_with_icon(self._build_chat(), "chat", "Conversation",
-                                        "emblem-chat-symbolic")
+                                        "user-available-symbolic")
         self.stack.add_titled_with_icon(self._build_settings(), "settings", "R\u00e9glages",
-                                        "emblem-system-symbolic")
+                                        "preferences-system-symbolic")
         toolbar.set_content(self.stack)
         self.set_content(toolbar)
 
@@ -227,19 +227,52 @@ class JarvisWindow(Adw.ApplicationWindow):
         return clamp
 
     def _build_chat(self) -> Gtk.Widget:
+        # vue split : sidebar des conversations (repliable) + contenu
+        self.split = Adw.OverlaySplitView()
+        self.split.set_show_sidebar(False)  # repliée par défaut
+        self.split.set_collapsed(True)
+        self.split.set_sidebar_width_fraction(0.28)
+        self.split.set_min_sidebar_width(220)
+        self.split.set_max_sidebar_width(320)
+        self.split.set_sidebar(self._build_conv_sidebar())
+        self.split.set_content(self._build_chat_content())
+        return self.split
+
+    def _build_conv_sidebar(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
+                      margin_top=10, margin_bottom=10, margin_start=10, margin_end=10)
+        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        head.append(Gtk.Label(label="Conversations", xalign=0, hexpand=True))
+        btn_new = Gtk.Button(icon_name="list-add-symbolic", tooltip_text="Nouvelle conversation")
+        btn_new.connect("clicked", lambda b: self._on_new_session())
+        head.append(btn_new)
+        box.append(head)
+        scroll = Gtk.ScrolledWindow(vexpand=True)
+        self.conv_list = Gtk.ListBox()
+        self.conv_list.add_css_class("boxed-list")
+        self.conv_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.conv_list.connect("row-activated", self._on_conv_row_activated)
+        scroll.set_child(self.conv_list)
+        box.append(scroll)
+        self.conv_empty = Gtk.Label(label="Aucune conversation", halign=Gtk.Align.CENTER)
+        self.conv_empty.add_css_class("dim-label")
+        box.append(self.conv_empty)
+        return box
+
+    def _build_chat_content(self) -> Gtk.Widget:
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, vexpand=True)
 
-        # barre d'actions de la conversation : nouvelle / ouvrir / reset contexte
+        # barre d'actions de la conversation : toggle sidebar / nouvelle / reset
         conv_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8,
                            halign=Gtk.Align.CENTER, margin_top=8)
+        self.btn_toggle_sidebar = Gtk.ToggleButton(icon_name="sidebar-show-symbolic",
+                                                   tooltip_text="Afficher/masquer les conversations")
+        self.btn_toggle_sidebar.connect("toggled", self._on_toggle_sidebar)
+        conv_bar.append(self.btn_toggle_sidebar)
         btn_new = Gtk.Button(label="Nouvelle", icon_name="list-add-symbolic",
                              tooltip_text="Nouvelle conversation (Ctrl+N)")
         btn_new.connect("clicked", lambda b: self._on_new_session())
         conv_bar.append(btn_new)
-        btn_open = Gtk.Button(label="Ouvrir…", icon_name="document-open-symbolic",
-                              tooltip_text="Ouvrir une conversation passée (Ctrl+O)")
-        btn_open.connect("clicked", lambda b: self._on_sessions())
-        conv_bar.append(btn_open)
         self.btn_reset = Gtk.Button(label="Reset contexte",
                                     icon_name="view-refresh-symbolic",
                                     tooltip_text="Redémarre le llama-server géré par Jarvis "
@@ -811,6 +844,38 @@ class JarvisWindow(Adw.ApplicationWindow):
     def _on_new_session(self, *_args) -> None:
         self.backend.new_session()
 
+    def _on_toggle_sidebar(self, btn) -> None:
+        self.split.set_show_sidebar(btn.get_active())
+        if btn.get_active():
+            self.backend.list_sessions()  # refresh à l'ouverture
+
+    def _fill_conv_list(self, sessions: list[dict]) -> None:
+        child = self.conv_list.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            self.conv_list.remove(child)
+            child = nxt
+        self.conv_empty.set_visible(not sessions)
+        for s in sessions:
+            row = Gtk.ListBoxRow()
+            inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2,
+                            margin_top=6, margin_bottom=6, margin_start=8, margin_end=8)
+            inner.append(Gtk.Label(label=s.get("title", "?"), xalign=0,
+                                   ellipsize=3))  # Pango.EllipsizeMode.END
+            sub = Gtk.Label(label=f"{s.get('updated', '')}  ·  {s.get('count', 0)} msg",
+                            xalign=0)
+            sub.add_css_class("dim-label")
+            sub.add_css_class("caption")
+            inner.append(sub)
+            row.set_child(inner)
+            row.sid = s.get("id")
+            if s.get("id") == self.backend.session_id:
+                self.conv_list.select_row(row)
+            self.conv_list.append(row)
+
+    def _on_conv_row_activated(self, _listbox, row) -> None:
+        self.backend.load_session(row.sid)
+
     def _on_reset_context(self, _btn) -> None:
         which = self.reset_target.get_active_id() or "llm"
         d = Adw.AlertDialog.new(
@@ -877,6 +942,7 @@ class JarvisWindow(Adw.ApplicationWindow):
                 self.tools_group.add(Adw.ActionRow(title=name))
             if event.get("session_id"):
                 self._replay_history()
+            self.backend.list_sessions()
         elif t == "backend_error":
             self._toast(f"Erreur : {event['message']}")
         elif t == "server_status":
@@ -965,12 +1031,14 @@ class JarvisWindow(Adw.ApplicationWindow):
             self.messages.clear()
             self._assistant_box = None
             self._toast("Nouvelle conversation")
+            self.backend.list_sessions()
         elif t == "session_loaded":
             self.messages.clear()
             self._replay_history()
             self.stack.set_visible_child_name("chat")
+            self.backend.list_sessions()
         elif t == "sessions_list":
-            self._show_sessions_dialog(event["sessions"])
+            self._fill_conv_list(event["sessions"])
         elif t == "context_reset":
             self.btn_reset.set_sensitive(True)
             mark = "✓" if event.get("ok") else "✗"

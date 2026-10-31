@@ -169,8 +169,11 @@ UI native GTK4, qui ne touche à rien d'autre que la partie graphique
   le popover statut, `--ctx-size` réglable) puis ouvre la conversation ;
   sinon il ouvre directement la conversation. Le prompt texte est dans le
   **menu (Ctrl+P)**, avec les conversations (Ctrl+O) et la lecture TTS.
-- **Conversation** : barre d'actions en haut — **Nouvelle** (Ctrl+N),
-  **Ouvrir…** (Ctrl+O, liste des conversations passées) et **Reset contexte**
+- **Conversation** : **sidebar repliable** (bouton toggle en haut à gauche,
+  `Adw.OverlaySplitView`) listant les conversations passées (titre + date +
+  nb messages, clic = reprise, conversation active surlignée, bouton + pour
+  une nouvelle) ; barre d'actions en haut avec **Nouvelle** (Ctrl+N) et
+  **Reset contexte**
   avec choix de la cible (LLM / STT / TTS) : redémarre le serveur **géré par
   Jarvis** (jamais un serveur externe) pour repartir sur un contexte vierge.
 - **Conversation** : centrée sur l'échange — barre du bas avec micro (STT
