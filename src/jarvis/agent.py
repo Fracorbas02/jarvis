@@ -21,16 +21,42 @@ class TurnTrace:
     error: str | None = None
 
 
+@dataclass
+class InternalTool:
+    """Outil interne (hors MCP), exposé au modèle comme les outils MCP.
+
+    fn: async (agent, history, args) -> (result: str, new_history: list | None).
+    Si new_history est retourné, il remplace l'historique (ex. compactage).
+    """
+    description: str
+    fn: object  # Callable[..., Awaitable[tuple[str, list | None]]]
+
+
 class Agent:
     def __init__(self, llm: LLMClient, tools: McpToolProvider,
                  system_prompt: str, max_iterations: int = 8,
-                 stream: bool = True):
+                 stream: bool = True,
+                 internal_tools: dict[str, InternalTool] | None = None):
         self.llm = llm
         self.tools = tools
         self.system_prompt = system_prompt
         self.max_iterations = max_iterations
         # streaming par défaut : le raisonnement s'affiche en direct
         self.stream = stream
+        self.internal_tools = internal_tools or {}
+
+    def _tools_schemas(self) -> list[dict] | None:
+        schemas = self.tools.schemas() if self.tools else []
+        for name, t in self.internal_tools.items():
+            schemas.append({
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": t.description,
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            })
+        return schemas or None
 
     async def turn(self, history: list[dict], user_text: str,
                    on_tool_call=None, on_tool_result=None,
@@ -51,7 +77,7 @@ class Agent:
         history = [*history, {"role": "user", "content": user_text}]
 
         trace = TurnTrace()
-        tools = self.tools.schemas() if self.tools else None
+        tools = self._tools_schemas()
 
         for iteration in range(self.max_iterations):
             trace.iterations = iteration + 1
@@ -79,7 +105,14 @@ class Agent:
                         on_tool_call(name, args)
                     start = time.perf_counter()
                     try:
-                        result = await self.tools.call(name, args)
+                        if name in self.internal_tools:
+                            # outil interne (ex. jarvis__compact) : peut remplacer l'historique
+                            result, new_history = await self.internal_tools[name].fn(
+                                self, history, args)
+                            if new_history is not None:
+                                history = new_history
+                        else:
+                            result = await self.tools.call(name, args)
                     except Exception as exc:  # noqa: BLE001 — serveur MCP mort, timeout...
                         # le tour ne doit pas mourir : le modèle voit l'erreur
                         # comme résultat d'outil et peut réagir

@@ -30,7 +30,7 @@ def _assistant(message: dict) -> dict:
 def _scenario(messages: list[dict]) -> list[dict]:
     """Retourne la liste des deltas SSE pour la requête reçue."""
     has_tool_result = any(m.get("role") == "tool" for m in messages)
-    last_user = next((m["content"] for m in messages
+    last_user = next((m["content"] for m in reversed(messages)
                       if m.get("role") == "user"), "") or ""
 
     def delta(d: dict, finish: str | None = None) -> dict:
@@ -58,6 +58,13 @@ def _scenario(messages: list[dict]) -> list[dict]:
                                    "function": {"name": "ping", "arguments": "{\"target\": "}}]}),
             delta({"tool_calls": [{"index": 0,
                                    "function": {"arguments": "\"127.0.0.1\"}"}}]}),
+            delta({}, finish="stop"),
+        ]
+    if "compact" in last_user.lower():
+        return [
+            delta({"tool_calls": [{"index": 0, "id": "call_compact", "type": "function",
+                                   "function": {"name": "jarvis__compact",
+                                                "arguments": "{}"}}]}),
             delta({}, finish="stop"),
         ]
     return [
@@ -92,7 +99,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_json(self, messages: list[dict]) -> None:
         has_tool_result = any(m.get("role") == "tool" for m in messages)
-        last_user = next((m["content"] for m in messages
+        last_user = next((m["content"] for m in reversed(messages)
                           if m.get("role") == "user"), "") or ""
         if has_tool_result:
             tool_msg = next(m["content"] for m in messages if m.get("role") == "tool")
@@ -100,6 +107,10 @@ class Handler(BaseHTTPRequestHandler):
                    "content": f"Résultat du ping : {tool_msg}"}
         elif "ping" in last_user.lower():
             msg = {"role": "assistant", "content": None, "tool_calls": [TOOL_CALL]}
+        elif "compact" in last_user.lower():
+            msg = {"role": "assistant", "content": None, "tool_calls": [{
+                "id": "call_compact", "type": "function",
+                "function": {"name": "jarvis__compact", "arguments": "{}"}}]}
         else:
             msg = {"role": "assistant",
                    "content": "réponse directe sans outil"}

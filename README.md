@@ -49,12 +49,48 @@ Commandes REPL : `/help` (liste complète), `/tools` (table outil/description),
 complet du N-ième outil du dernier tour), `/history` (derniers messages),
 `/undo` (retirer le dernier échange), `/copy` (dernière réponse dans le
 presse-papier), `/save [fichier]` (exporter la conversation en Markdown),
-`/reset`, `/verbose` (logs console en DEBUG ; le log complet est toujours
-dans `~/.cache/jarvis/jarvis.log`), `/quit`. Tab complète les commandes `/` ;
-l'historique des saisies persiste dans `~/.cache/jarvis/history`. Ctrl+C
-annule la saisie, double Ctrl+C quitte. Une ligne de métriques (tok, tok/s,
-durée) suit chaque réponse streamée ; la bannière affiche le statut du
-serveur (GET /v1/models au démarrage).
+`/sessions` (conversations passées), `/load N`, `/new`, `/compact` (résume
+l'historique via le LLM pour libérer du contexte — le modèle peut aussi
+appeler seul l'outil interne `jarvis__compact`), `/reset`, `/verbose`,
+`/quit`. Tab complète les commandes `/` ; l'historique des saisies persiste
+dans `~/.cache/jarvis/history`. Ctrl+C annule la saisie, double Ctrl+C quitte.
+Une ligne de métriques (tok, tok/s, durée) suit chaque réponse streamée ; la
+bannière affiche le statut du serveur (GET /v1/models) et la taille du
+contexte max (GET /slots, dynamique — 32k si relancé avec `--ctx-size 32768`),
+et le prompt affiche l'usage réel du contexte (`n_prompt_tokens` de /slots).
+Notification desktop (OSC 777/9) en fin de tour long (> 3 s).
+
+**Sessions persistantes** (globales, pas par dossier) : chaque conversation
+est sauvegardée en JSON dans `~/.cache/jarvis/sessions/` après chaque tour ;
+au démarrage la dernière est reprise automatiquement, `/sessions` liste les
+passées, `/load N` en reprend une, `/new` démarre frais.
+
+## Interface graphique
+
+```sh
+uv run jarvis-gui            # http://127.0.0.1:8080 (ouvre le navigateur)
+uv run jarvis-gui --port 9000 --no-open-browser
+```
+
+UI web locale (NiceGUI, thème sombre) :
+
+- **Sélecteur de mode** : Chat LLM (boucle agent complète avec outils MCP),
+  TTS, STT — les panneaux voix listent les modèles détectés pour le mode.
+- **Modèles installés** : découverts automatiquement (`~/models`, cache
+  HuggingFace, `$JARVIS_MODEL_DIRS`) et classés par mode (LLM / TTS / STT)
+  par heuristique de nom (`whisper`/`ggml-` → STT, `piper`/`kokoro`/`xtts`… →
+  TTS, sinon LLM).
+- **Serveur LLM** : statut live de llama-server (`GET /v1/models`), modèle
+  servi, et si aucun serveur ne répond : bouton pour en lancer un avec le
+  GGUF sélectionné (`llama-server -m … -ngl 99 --jinja -fa on`).
+- **Chat** : streaming identique au CLI — raisonnement du modèle en direct
+  (expansion grisée), réponse en markdown, appels d'outils en chips.
+
+Tests GUI (sans navigateur, via le plugin pytest de NiceGUI) :
+
+```sh
+uv run pytest tests/ -v
+```
 
 ## Outils MCP
 
@@ -117,6 +153,9 @@ src/jarvis/
   tui.py      # couche d'affichage rich : panneau thinking repliable, réponse
               #  en Markdown (live), statut des outils, /thinking et /tool N
   cli.py      # REPL (bannière, prompt, commandes /help /tools /verbose ...)
+  gui/        # interface web locale (NiceGUI) : app, sidebar, chat_view,
+              #  voice_views, models (découverte), server (statut llama-server),
+              #  backend (pont agent + streaming) -> `uv run jarvis-gui`
 mcp_servers/  # nettools (ping/dig/traceroute), cve (NVD 2.0 : détail CVE,
               #  recherche par mots-clés + fenêtre de jours, veille), echo (test)
 bench/       # mesure tok/s / TTFT

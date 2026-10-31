@@ -89,6 +89,40 @@ async def run_case_failing_tool() -> bool:
         thread.join(timeout=5)
 
 
+async def run_case_compact_tool() -> bool:
+    """L'outil interne jarvis__compact est exposé au modèle et, quand il
+    l'appelle, remplace l'historique par le résumé."""
+    from jarvis.compact import compact_tool
+
+    srv, thread = start_mock(18080)
+    try:
+        llm = LLMClient("http://127.0.0.1:18080/v1", model="mock")
+        tools = McpToolProvider({"echo": [sys.executable, str(ECHO_SERVER)]})
+        await tools.start()
+        agent = Agent(llm, tools, "system de test", max_iterations=4,
+                      internal_tools={"jarvis__compact": compact_tool})
+        names = [s["function"]["name"] for s in agent._tools_schemas()]
+        assert "jarvis__compact" in names, "outil interne non exposé au LLM"
+        history = [
+            {"role": "system", "content": "system de test"},
+            {"role": "user", "content": "question 1"},
+            {"role": "assistant", "content": "réponse 1"},
+            {"role": "user", "content": "question 2"},
+            {"role": "assistant", "content": "réponse 2"},
+        ]
+        reply, history, trace = await agent.turn(history, "compacte stp")
+        ok = ("compacté" in reply and len(history) <= 5
+              and any("résumé automatiquement" in str(m.get("content")) for m in history))
+        status = "OK " if ok else "FAIL"
+        print(f"[{status}] compact: reply={reply!r} history_len={len(history)}")
+        await tools.stop()
+        await llm.aclose()
+        return ok
+    finally:
+        srv.shutdown()
+        thread.join(timeout=5)
+
+
 async def main() -> int:
     results = [
         await run_case("tour avec outil", "fais un ping vers 127.0.0.1",
@@ -96,6 +130,7 @@ async def main() -> int:
         await run_case("tour sans outil", "dis simplement bonjour",
                        "réponse directe", expect_tool=False),
         await run_case_failing_tool(),
+        await run_case_compact_tool(),
     ]
     print(f"\n{sum(results)}/{len(results)} tests OK")
     return 0 if all(results) else 1

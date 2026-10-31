@@ -27,6 +27,7 @@ from rich.table import Table
 from rich.text import Text
 
 from .agent import Agent
+from .compact import compact_history, compact_tool
 from .config import load_config
 from .llm import LLMClient
 from .mcp import McpToolProvider
@@ -46,13 +47,15 @@ HELP = """\
   /sessions        liste les conversations passées (reprise auto au démarrage)
   /load N          reprend la conversation n°N de /sessions
   /new             démarre une nouvelle conversation (archive l'actuelle)
+  /compact         résume l'historique via le LLM pour libérer du contexte
+                   (le modèle peut aussi appeler l'outil jarvis__compact seul)
   /reset           efface l'historique de conversation
   /verbose         bascule les logs console en DEBUG (fichier: ~/.cache/jarvis/jarvis.log)
   /quit            quitte (ou Ctrl+D)"""
 
 COMMANDS = ["/help", "/tools", "/thinking", "/tool", "/history", "/undo",
-            "/copy", "/save", "/sessions", "/load", "/new", "/reset",
-            "/verbose", "/quit"]
+            "/copy", "/save", "/sessions", "/load", "/new", "/compact",
+            "/reset", "/verbose", "/quit"]
 
 
 def _state_dir() -> Path:
@@ -276,7 +279,7 @@ async def amain() -> int:
     if cfg.mcp_servers:
         await tools.start()
     agent = Agent(llm, tools, cfg.agent.system_prompt, cfg.agent.max_iterations,
-                  stream=True)
+                  stream=True, internal_tools={"jarvis__compact": compact_tool})
 
     console = _make_console()
     display = Display(console)
@@ -427,6 +430,16 @@ async def amain() -> int:
                 history = []
                 display.reset_blocks()
                 console.print("[dim]nouvelle conversation démarrée[/]")
+                continue
+            if user == "/compact":
+                t0 = time.monotonic()
+                try:
+                    result, history = await compact_history(agent, history)
+                except Exception as exc:  # noqa: BLE001
+                    console.print(f"[bold red]erreur:[/] {exc}")
+                    continue
+                store.save(sid, history)
+                console.print(f"[dim]{result} ({time.monotonic() - t0:.1f}s)[/]")
                 continue
             if user.startswith("/tool"):
                 parts = user.split()
