@@ -176,23 +176,35 @@ class GtkBackend:
             self.events.put({"type": "backend_error", "message": str(exc)})
 
     def stop(self) -> None:
+        """Arrêt rapide (fermeture fenêtre) : la sauvegarde de session est
+        synchrone (ms) ; la fermeture des transports MCP/HTTP part en tâche de
+        fond sur la boucle (elle peut prendre des secondes, on ne bloque pas
+        le thread GTK). Le processus s'arrête de toute façon à la fermeture."""
+        if self.session_id and self.history:
+            try:
+                self.sessions.save(self.session_id, self.history)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("sauvegarde session: %s", exc)
+
         async def _astop() -> None:
-            if self.session_id and self.history:
-                try:
-                    self.sessions.save(self.session_id, self.history)
-                except Exception as exc:  # noqa: BLE001
-                    log.debug("sauvegarde session: %s", exc)
             try:
                 await self.tools.stop()
-            except RuntimeError as exc:
+            except Exception as exc:  # noqa: BLE001 — best-effort à la fermeture
                 log.debug("fermeture MCP dégradée: %s", exc)
-            await self.llm.aclose()
+            try:
+                await self.llm.aclose()
+            except Exception as exc:  # noqa: BLE001
+                log.debug("fermeture HTTP dégradée: %s", exc)
+            self.loop.call_soon_threadsafe(self.loop.stop)
+
         try:
-            asyncio.run_coroutine_threadsafe(_astop(), self.loop).result(timeout=15)
-        except Exception as exc:  # noqa: BLE001
+            if self.loop is not None and self.loop.is_running():
+                asyncio.run_coroutine_threadsafe(_astop(), self.loop)
+        except Exception as exc:  # noqa: BLE001 — boucle déjà arrêtée
             log.debug("arrêt backend: %s", exc)
-        self.loop.call_soon_threadsafe(self.loop.stop)
-        self._thread.join(timeout=5)
+        # join très court : on ne bloque pas la fermeture de la fenêtre
+        if self._thread.is_alive():
+            self._thread.join(timeout=0.5)
 
     # ---------- appels depuis le thread GTK ----------
 

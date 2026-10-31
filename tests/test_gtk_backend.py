@@ -170,6 +170,19 @@ async def amain() -> int:
         usage = await server_ctx_usage("http://127.0.0.1:18091/v1")
         assert usage["n_ctx"] is None  # le mock ne sert pas /props ni /slots
 
+        # stop() rapide : sauvegarde synchrone + tâche de fond, join <= 0.5 s.
+        # (ici la boucle n'est pas lancée -> run_coroutine_threadsafe échoue,
+        #  ce qui est le chemin "boucle déjà arrêtée" ; on vérifie juste que
+        #  stop() ne bloque pas et sauvegarde la session)
+        import time as _t
+        t0 = _t.time()
+        import threading as _th
+        backend._thread = _th.Thread(target=lambda: None)  # jamais démarré
+        backend.stop()  # boucle du test en cours de run -> tâche de fond lancée normalement
+        elapsed = _t.time() - t0
+        assert elapsed < 2.0, f"stop() a pris {elapsed:.2f}s (bloquant)"
+        assert backend.sessions.list(limit=5)  # session persistée (synchrone)
+
         await backend.tools.stop()
         await backend.llm.aclose()
         print("OK  gtk backend:", " -> ".join(types))
