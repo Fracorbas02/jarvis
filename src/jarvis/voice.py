@@ -749,6 +749,40 @@ async def transcribe_file(voice_cfg: VoiceConfig, wav_path: str | Path,
         await client.aclose()
 
 
+async def transcribe_vad(voice_cfg: VoiceConfig, device: str | None = None,
+                         language: str | None = "fr", max_seconds: float = 60.0,
+                         on_chunk=None, on_status=None) -> tuple[str, Path, float]:
+    """Enregistrement VAD (fin de parole auto) + transcription via le serveur
+    STT (même cascade que transcribe_file). Retourne (texte, wav, rms)."""
+    from dataclasses import replace
+    vcfg = voice_cfg
+    if device and device != "default":
+        if device.startswith("pulse:"):
+            source = device[len("pulse:"):]
+            vcfg = replace(voice_cfg, record_cmd=[
+                "ffmpeg", "-loglevel", "error", "-f", "pulse", "-i", source,
+                "-ar", str(SAMPLE_RATE), "-ac", "1", "-f", "s16le", "-"])
+        else:
+            vcfg = replace(voice_cfg, record_cmd=[
+                "arecord", "-q", "-t", "raw", "-D", device,
+                "-f", "S16_LE", "-r", "16000", "-c", "1", "-"])
+    if on_status:
+        on_status("recording")
+    path = await record_wav_vad(vcfg, max_seconds=max_seconds, on_chunk=on_chunk)
+    rms = _pcm_rms(path.read_bytes()[44:])  # saute le header WAV
+    st = await ensure_voice_server("stt", voice_cfg.stt)
+    if st.state == "offline":
+        raise VoiceError(f"serveur STT indisponible : {st.detail}")
+    client = STTClient(voice_cfg.stt.base_url, protocol=voice_cfg.stt.protocol)
+    try:
+        text = await client.transcribe(path, language=language)
+    finally:
+        await client.aclose()
+    if on_status:
+        on_status("done")
+    return text, path, rms
+
+
 async def transcribe_bytes(voice_cfg: VoiceConfig, data: bytes, filename: str = "upload.wav",
                            language: str | None = "fr") -> str:
     """Transcription d'un upload navigateur (wav, webm, mp3…) : conversion
@@ -925,6 +959,104 @@ async def record_wav(seconds: float, voice_cfg: VoiceConfig,
         if not out_path.is_file():
             raise VoiceError(f"{cmd[0]} a échoué : {err.decode(errors='replace')[:300]}")
     return out_path
+
+
+async def record_wav_vad(voice_cfg: VoiceConfig, out_path: Path | None = None,
+                         max_seconds: float = 60.0,
+                         silence_seconds: float = 1.2,
+                         silence_rms: float = 300.0,
+                         min_seconds: float = 0.8,
+                         on_chunk=None) -> Path:
+    """Enregistre le micro jusqu'à la fin de parole (VAD par seuil RMS),
+    puis écrit le WAV 16 kHz mono. Utilisé par l'UI pour le "parler et
+    attendre" : plus de durée fixe.
+
+    - lit le PCM s16le 16 kHz mono sur stdout du record_cmd (arecord -t raw ou
+      ffmpeg -f s16le -) bloc par bloc de 100 ms ;
+    - garde les blocs ; dès que `silence_seconds` consécutives ont un RMS
+      < silence_rms (et qu'on a au moins min_seconds d'audio), on arrête ;
+    - plafond max_seconds (on tue alors le process proprement).
+    - on_chunk(pcm_bytes) est appelé à chaque bloc (pour du streaming WS live).
+    """
+    import time as _time
+    if out_path is None:
+        cache = Path(os.environ.get("JARVIS_LOG_DIR", Path.home() / ".cache" / "jarvis"))
+        try:
+            cache.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            import tempfile
+            cache = Path(tempfile.gettempdir())
+        out_path = cache / f"rec-{os.getpid()}-{_time.time_ns() // 1000}.wav"
+
+    cmd = list(voice_cfg.record_cmd)
+    if not cmd:
+        raise VoiceError("record_cmd vide : pas de binaire d'enregistrement configuré")
+    binary = shutil.which(cmd[0])
+    if binary is None and cmd[0] == "arecord" and shutil.which("ffmpeg"):
+        cmd = ["ffmpeg", "-loglevel", "error", "-f", "alsa", "-i", "default",
+               "-ar", str(SAMPLE_RATE), "-ac", "1", "-f", "s16le", "-"]
+        binary = "ffmpeg"
+    if binary is None:
+        raise VoiceError(f"binaire d'enregistrement introuvable : {cmd[0]}")
+    argv = [binary, *cmd[1:]]
+    if argv[-1] != "-":
+        raise VoiceError("record_wav_vad exige un record_cmd avec '-' en sortie (PCM stdout)")
+    # ffmpeg : -t max comme plafond de sécurité (placé avant la sortie)
+    if binary.endswith("ffmpeg") and "-t" not in argv:
+        out_idx = argv.index("-")
+        argv = argv[:out_idx] + ["-t", str(max_seconds + 5)] + argv[out_idx:]
+
+    proc = await asyncio.create_subprocess_exec(
+        *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    block = SAMPLE_RATE * 2 // 10  # 100 ms de PCM 16-bit mono
+    buf = bytearray()
+    silent = 0.0
+    total = 0.0
+    try:
+        deadline = asyncio.get_running_loop().time() + max_seconds
+        while asyncio.get_running_loop().time() < deadline:
+            chunk = await proc.stdout.read(block)
+            if not chunk:
+                break  # le process s'est arrêté
+            buf += chunk
+            if on_chunk is not None:
+                try:
+                    on_chunk(bytes(chunk))
+                except Exception:  # noqa: BLE001 — le callback ne doit pas tuer l'enregistrement
+                    pass
+            rms = _pcm_rms(chunk)
+            total += len(chunk) / 2 / SAMPLE_RATE
+            if rms < silence_rms:
+                silent += len(chunk) / 2 / SAMPLE_RATE
+            else:
+                silent = 0.0
+            if total >= min_seconds and silent >= silence_seconds:
+                break  # fin de parole détectée
+    finally:
+        if proc.returncode is None:
+            proc.terminate()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except TimeoutError:
+                proc.kill()
+                await proc.wait()
+    if not buf:
+        _, err = await proc.communicate()
+        raise VoiceError(f"{cmd[0]} a échoué : {err.decode(errors='replace')[:300]}")
+    write_wav(out_path, bytes(buf))
+    return out_path
+
+
+def _pcm_rms(chunk: bytes) -> float:
+    """RMS d'un bloc de PCM 16-bit little-endian mono."""
+    import math
+    if not chunk:
+        return 0.0
+    n = len(chunk) // 2
+    total = 0
+    for i in range(0, len(chunk) - 1, 2):
+        total += int.from_bytes(chunk[i:i + 2], "little", signed=True) ** 2
+    return math.sqrt(total / max(1, n))
 
 
 _PLAY_CANDIDATES = [

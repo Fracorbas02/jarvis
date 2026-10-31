@@ -40,8 +40,9 @@ from .llm import LLMClient
 from .mcp import McpToolProvider
 from .sessions import SessionStore
 from .tui import Display
-from .voice import (VoiceError, play_wav, record_wav, stop_all_voice_servers,
-                    synthesize, transcribe_file, voice_server_status)
+from .voice import (VoiceError, play_wav, record_wav, record_wav_vad,
+                    stop_all_voice_servers, synthesize, transcribe_file,
+                    voice_server_status)
 
 HELP = """\
 [bold]commandes[/]
@@ -407,9 +408,9 @@ async def _cmd_stt(cfg, console, args: str) -> None:
     """/stt [fichier.wav] : transcription ; sans argument, enregistre 5 s de micro."""
     path = Path(args.strip()).expanduser() if args.strip() else None
     if path is None:
-        console.print("[dim]enregistrement 5 s depuis le micro…[/]")
+        console.print("[dim]enregistrement depuis le micro, jusqu'à la fin de parole (VAD)…[/]")
         try:
-            path = await record_wav(5.0, cfg.voice)
+            path = await record_wav_vad(cfg.voice, max_seconds=60.0)
         except VoiceError as exc:
             console.print(f"[bold red]erreur enregistrement:[/] {exc}")
             return

@@ -323,6 +323,20 @@ class GtkBackend:
 
     # ---------- voix ----------
 
+    async def _transcribe_path(self, path) -> str:
+        """Transcription d'un WAV via le serveur STT, toujours par la même
+        cascade (STTClient : route batch -> chat multimodal -> WS /v1/realtime)."""
+        from ..voice import STTClient, ensure_voice_server, VoiceError
+        st = await ensure_voice_server("stt", self.cfg.voice.stt)
+        if st.state == "offline":
+            raise VoiceError(f"serveur STT indisponible : {st.detail}")
+        client = STTClient(self.cfg.voice.stt.base_url,
+                           protocol=self.cfg.voice.stt.protocol)
+        try:
+            return await client.transcribe(path, language="fr")
+        finally:
+            await client.aclose()
+
     def stt_record_and_transcribe(self, seconds: float = 6.0,
                                   device: str | None = None) -> None:
         self._run(self._arecord_stt(seconds, device))
@@ -365,15 +379,26 @@ class GtkBackend:
         return self.cfg.voice
 
     async def _arecord_stt(self, seconds: float, device: str | None) -> None:
-        from ..voice import VoiceError, record_wav, transcribe_file
+        """Page Conversation : micro -> transcription -> tour LLM.
+
+        seconds > 0 : durée fixe (record_wav). seconds <= 0 : VAD, on enregistre
+        jusqu'à la fin de parole détectée (record_wav_vad)."""
+        from ..voice import VoiceError, record_wav, record_wav_vad
         vcfg = self._record_cfg(device)
         try:
             self.events.put({"type": "stt_recording", "seconds": seconds})
-            path = await record_wav(seconds, vcfg)
-            text = await transcribe_file(self.cfg.voice, path, language="fr")
+            if seconds and seconds > 0:
+                path = await record_wav(seconds, vcfg)
+            else:
+                path = await record_wav_vad(vcfg, max_seconds=60.0)
+            text = await self._transcribe_path(path)
             self.events.put({"type": "stt_done", "text": text})
         except VoiceError as exc:
             self.events.put({"type": "voice_error", "message": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            log.exception("stt record/transcribe en erreur")
+            self.events.put({"type": "voice_error",
+                             "message": f"erreur interne STT : {type(exc).__name__}: {exc}"})
 
     def refresh_stt_status(self) -> None:
         """Statut du serveur STT -> événement stt_server_status."""
@@ -426,14 +451,17 @@ class GtkBackend:
 
     async def _astt_test(self, seconds: float, device: str | None) -> None:
         import time
-        from ..voice import VoiceError, ensure_voice_server, record_wav, STTClient
+        from ..voice import VoiceError, ensure_voice_server, record_wav, record_wav_vad
         vcfg = self._record_cfg(device)
         try:
             st = await ensure_voice_server("stt", self.cfg.voice.stt)
             if st.state == "offline":
                 raise VoiceError(f"serveur STT indisponible : {st.detail}")
             self.events.put({"type": "stt_test_recording", "seconds": seconds})
-            path = await record_wav(seconds, vcfg)
+            if seconds and seconds > 0:
+                path = await record_wav(seconds, vcfg)
+            else:
+                path = await record_wav_vad(vcfg, max_seconds=60.0)
             # copie de diagnostic stable (le rec-* est horodaté) :
             import shutil as _shutil
             stable = self._state_dir() / "stt-test-last.wav" if hasattr(self, "_state_dir") else None
@@ -446,12 +474,7 @@ class GtkBackend:
                 pass
             audio_rms = _wav_rms(path)
             t0 = time.monotonic()
-            client = STTClient(self.cfg.voice.stt.base_url,
-                               protocol=self.cfg.voice.stt.protocol)
-            try:
-                text = await client.transcribe(path, language="fr")
-            finally:
-                await client.aclose()
+            text = await self._transcribe_path(path)
             self.events.put({"type": "stt_test_done", "text": text,
                              "seconds": seconds,
                              "elapsed": time.monotonic() - t0,

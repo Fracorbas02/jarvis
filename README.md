@@ -109,7 +109,11 @@ base64 (bloc `input_audio`), et enfin le websocket
 puis `commit`) — c'est le seul chemin supporté par llama-server pour les
 modèles ASR streaming comme Voxtral Mini 4B Realtime, qui n'ont pas de route
 batch. Le mmproj est auto-ajouté en `--mmproj` s'il est dans le même dossier
-que le GGUF texte (sinon `extra_args`). Dans l'app GTK, une page **Test STT**
+que le GGUF texte (sinon `extra_args`). Dans l'app GTK, le bouton micro de la **Conversation** et la page **Test STT**
+enregistrent avec **VAD** (détection de fin de parole par seuil RMS sur le flux
+live, plafond 60 s ; la page Test STT permet de repasser en durée fixe avec 0 =
+auto). Toutes les transcriptions passent par la même cascade (route batch ->
+chat multimodal -> websocket /v1/realtime). Une page **Test STT**
 (onglet dédié) permet de parler au micro et de voir la transcription sans
 envoyer de tour au LLM, avec statut/démarrage du serveur STT.
 
@@ -129,8 +133,9 @@ sinon par heuristique de nom (`whisper`/`ggml-` → STT,
 Commandes CLI :
 
 - `/tts <texte>` : synthétise en WAV (écrit dans `~/.cache/jarvis/`) et le joue ;
-- `/stt [fichier.wav]` : transcrit le fichier, ou enregistre 5 s de micro
-  (arecord, fallback ffmpeg) s'il n'y a pas d'argument ;
+- `/stt [fichier.wav]` : transcrit le fichier, ou enregistre le micro
+  **jusqu'à la fin de parole** (VAD par seuil RMS, plafond 60 s) s'il n'y a
+  pas d'argument ;
 - `/voice` : statut des deux serveurs voix.
 
 Dans l'app GTK4 (`jarvis-app`), la conversation se fait au micro (STT :
