@@ -180,7 +180,7 @@ def ensure_fonts(root) -> None:
         dst_dir.mkdir(parents=True, exist_ok=True)
         copied = False
         if assets.is_dir():
-            for ttf in assets.glob("*.ttf"):
+            for ttf in assets.rglob("*.ttf"):
                 dst = dst_dir / ttf.name
                 if not dst.exists() or dst.stat().st_size != ttf.stat().st_size:
                     shutil.copy2(ttf, dst)
