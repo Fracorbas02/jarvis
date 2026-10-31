@@ -131,14 +131,21 @@ async def amain() -> int:
         assert gpu_json["device"] == "cpu", gpu_json
         assert gtk_backend.load_ui_settings()["gpu"] == "cpu"
 
-        # parsing de la réponse du portail PermissionStore.Lookup
+        # parsing de la réponse du portail PermissionStore.Lookup, scopé APP_ID
         import re
+        APP_ID = gtk_backend.APP_ID
         def parse_lookup(out: str) -> str:
-            m = re.search(r"'(yes|no)'", out)
+            m = re.search(rf"['\"]{re.escape(APP_ID)}['\"]:\s*<\[['\"](yes|no)['\"]", out)
             return m.group(1) if m else "unknown"
         assert parse_lookup("(<{'io.github.Fracorbas02.Jarvis': <['yes']>},)") == "yes"
         assert parse_lookup("(<{'io.github.Fracorbas02.Jarvis': <['no']>},)") == "no"
         assert parse_lookup("(<{},>)") == "unknown"
+        # réplique exacte du rapport de revue : une autre app ne doit pas l'emporter
+        assert parse_lookup(
+            "(<{'autre.app': <['yes']>, 'io.github.Fracorbas02.Jarvis': <['no']>},)") == "no"
+        assert parse_lookup("(<{'autre.app': <['yes']>},)") == "unknown"
+        assert parse_lookup("(<{'io.github.Fracorbas02.JarvisX': <['yes']>},)") == "unknown"
+        assert parse_lookup('(<{"io.github.Fracorbas02.Jarvis": <["yes"]>},)') == "yes"
 
         # flag de 1er lancement : le dialogue d'autorisation ne se montre qu'une fois
         gtk_backend.save_ui_settings({"mic_permission_asked": True})

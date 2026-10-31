@@ -65,7 +65,10 @@ def load_ui_settings() -> dict:
 def save_ui_settings(patch: dict) -> dict:
     data = load_ui_settings()
     data.update(patch)
-    ui_settings_path().write_text(json.dumps(data, indent=2), encoding="utf-8")
+    path = ui_settings_path()
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    tmp.replace(path)  # écriture atomique
     return data
 
 
@@ -342,8 +345,9 @@ class GtkBackend:
                  "--method", "org.freedesktop.portal.PermissionStore.Lookup",
                  "microphone", "microphone"],
                 capture_output=True, text=True, timeout=5).stdout
-            # (<{'io.github.Fracorbas02.Jarvis': <['yes']>},) ou vide si jamais demandé
-            m = re.search(r"'(yes|no)'", out)
+            # (<{'autre.app': <['yes']>, 'io.github.Fracorbas02.Jarvis': <['no']>},)
+            # -> on ancre sur NOTRE app-id, pas sur le 1er 'yes'/'no' venu
+            m = re.search(rf"['\"]{re.escape(APP_ID)}['\"]:\s*<\[['\"](yes|no)['\"]", out)
             if m:
                 state = m.group(1)
         except Exception as exc:  # noqa: BLE001 — portail absent (pas GNOME/Flatpak)

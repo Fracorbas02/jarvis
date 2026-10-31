@@ -43,6 +43,7 @@ class JarvisWindow(Adw.ApplicationWindow):
         self._busy = False
         self._status_state = "unknown"
         self._ctx = self.settings.get("ctx_size", 16384)
+        self.mic_device = self.settings.get("mic", "default")
 
         _css()
         self._build_actions()
@@ -348,7 +349,7 @@ class JarvisWindow(Adw.ApplicationWindow):
 
     def _on_test_mic(self, _btn) -> None:
         self._toast("Test du micro…")
-        self.backend.test_mic(self.mic_device)
+        self.backend.test_mic(getattr(self, "mic_device", "default"))
 
     def _on_open_gnome_privacy(self, _btn) -> None:
         import subprocess
@@ -451,7 +452,7 @@ class JarvisWindow(Adw.ApplicationWindow):
             # test réel : enregistre 0,5 s pour déclencher la vraie demande
             # d'autorisation système et vérifier que ça marche
             self._toast("Test du micro…")
-            self.backend.test_mic(self.mic_device)
+            self.backend.test_mic(getattr(self, "mic_device", "default"))
 
     # ---------- page d'accueil ----------
 
@@ -502,7 +503,7 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.mic_button.set_sensitive(False)
         self.chat_entry.set_sensitive(False)
         self._set_chat_hint("Enregistrement…")
-        self.backend.stt_record_and_transcribe(6.0, device=self.mic_device)
+        self.backend.stt_record_and_transcribe(6.0, device=getattr(self, "mic_device", "default"))
 
     def _on_entry_activate(self, _widget) -> None:
         text = self.chat_entry.get_text().strip()
