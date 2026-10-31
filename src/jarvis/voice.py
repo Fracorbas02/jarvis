@@ -837,8 +837,16 @@ async def record_wav(seconds: float, voice_cfg: VoiceConfig,
     écrit l'en-tête WAV nous-mêmes.
     """
     if out_path is None:
-        import tempfile
-        out_path = Path(tempfile.gettempdir()) / f"jarvis-rec-{os.getpid()}.wav"
+        # on garde le WAV dans le cache jarvis (pas /tmp, effacé au reboot) pour
+        # pouvoir l'inspecter après coup : ~/.cache/jarvis/rec-<pid>-<ts>.wav
+        cache = Path(os.environ.get("JARVIS_LOG_DIR", Path.home() / ".cache" / "jarvis"))
+        try:
+            cache.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            import tempfile
+            cache = Path(tempfile.gettempdir())
+        import time as _time
+        out_path = cache / f"rec-{os.getpid()}-{_time.time_ns() // 1000}.wav"
     cmd = list(voice_cfg.record_cmd)
     if not cmd:
         raise VoiceError("record_cmd vide : pas de binaire d'enregistrement configuré")

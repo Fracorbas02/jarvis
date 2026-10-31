@@ -417,6 +417,16 @@ class GtkBackend:
                 raise VoiceError(f"serveur STT indisponible : {st.detail}")
             self.events.put({"type": "stt_test_recording", "seconds": seconds})
             path = await record_wav(seconds, vcfg)
+            # copie de diagnostic stable (le rec-* est horodaté) :
+            import shutil as _shutil
+            stable = self._state_dir() / "stt-test-last.wav" if hasattr(self, "_state_dir") else None
+            try:
+                from .backend import state_dir as _sd
+                stable = _sd() / "stt-test-last.wav"
+                _shutil.copyfile(path, stable)
+                path = stable
+            except Exception:  # noqa: BLE001
+                pass
             audio_rms = _wav_rms(path)
             t0 = time.monotonic()
             client = STTClient(self.cfg.voice.stt.base_url,
