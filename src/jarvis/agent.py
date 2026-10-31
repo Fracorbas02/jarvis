@@ -95,6 +95,7 @@ class Agent:
             for tc in msg["tool_calls"]:
                 fn = tc["function"]
                 name = fn["name"]
+                args: dict = {}
                 try:
                     args = json.loads(fn.get("arguments") or "{}")
                 except json.JSONDecodeError as exc:

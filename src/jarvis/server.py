@@ -53,8 +53,12 @@ async def get_status(base_url: str, timeout: float = 2.0) -> ServerStatus:
             if resp.status_code != 200:
                 return ServerStatus(state, host, port, detail=f"HTTP {resp.status_code}")
             data = resp.json()
+            # llama-server (OpenAI-compatible) renvoie {"object": "list", "data": [...]}
+            items = data.get("data") if isinstance(data, dict) else data
+            if items is None:
+                items = data.get("models", []) if isinstance(data, dict) else []
             models = [m.get("id") or m.get("model") or m.get("name", "?")
-                      for m in data.get("models", [])]
+                      for m in (items or []) if isinstance(m, dict)]
             return ServerStatus("online" if state == "offline" else "managed",
                                 host, port, models=models)
     except (httpx.TransportError, httpx.HTTPError) as exc:
@@ -96,13 +100,16 @@ async def start_server(model_path: str | Path, base_url: str,
         *(extra_args or []),
     ]
     log = open(_log_path, "ab", buffering=0)
-    log.write(f"\n--- {argv} ---\n".encode())
-    if env:
-        log.write(f"--- env: {env} ---\n".encode())
-    _proc = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT,
-                             start_new_session=True, env=env)
-    deadline = asyncio.get_event_loop().time() + ready_timeout
-    while asyncio.get_event_loop().time() < deadline:
+    try:
+        log.write(f"\n--- {argv} ---\n".encode())
+        if env:
+            log.write(f"--- env: {env} ---\n".encode())
+        _proc = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT,
+                                 start_new_session=True, env=env)
+    finally:
+        log.close()
+    deadline = asyncio.get_running_loop().time() + ready_timeout
+    while asyncio.get_running_loop().time() < deadline:
         if _proc.poll() is not None:
             return ServerStatus("offline", host, port,
                                 detail=f"llama-server mort (code {_proc.returncode}), voir {_log_path}")

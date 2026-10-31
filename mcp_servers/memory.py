@@ -10,7 +10,6 @@ injecté dans le prompt système pour que le LLM se souvienne entre sessions.
 from __future__ import annotations
 
 import os
-import re
 from datetime import datetime, timezone
 from pathlib import Path
 

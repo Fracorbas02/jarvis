@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import subprocess
+from pathlib import Path
 
 try:
     from mcp.server.mcpserver import MCPServer as Server  # SDK MCP >= 2
@@ -65,28 +66,92 @@ def load() -> str:
 
 @mcp.tool()
 def gpu_status() -> str:
-    """État des GPU : nvidia-smi si présent, sinon rocminfo, sinon vulkaninfo,
-    sinon lspci (liste des cartes graphiques)."""
-    for cmd in (["nvidia-smi", "--query-gpu=name,memory.total,memory.used,"
+    """État des GPU : rocm-smi (AMD ROCm) / nvidia-smi, sinon sysfs amdgpu
+    (iGPU/dGPU AMD sans ROCm, ex. Radeon 890M), sinon rocminfo, vulkaninfo,
+    lspci (liste des cartes graphiques)."""
+    for cmd in (["rocm-smi", "--showproductname", "--showmeminfo", "vram",
+                 "--showtemp", "--showuse"],
+                ["nvidia-smi", "--query-gpu=name,memory.total,memory.used,"
                  "temperature.gpu,utilization.gpu", "--format=csv,noheader"],
                 ["nvidia-smi"],
                 ["rocminfo"]):
         if shutil.which(cmd[0]):
-            return _run(cmd, timeout=30.0)
+            out = _run(cmd, timeout=30.0)
+            if out and not out.startswith("ERREUR"):
+                amd = _amdgpu_sysfs()
+                return out + (("\n\n== amdgpu (sysfs) ==\n" + amd) if amd else "")
+    amd = _amdgpu_sysfs()
+    if amd:
+        return "== amdgpu (sysfs) ==\n" + amd
     if shutil.which("vulkaninfo"):
         return _run(["vulkaninfo", "--summary"], timeout=30.0)
     if shutil.which("lspci"):
         return _run(["lspci", "-k"], timeout=15.0)
-    return "ERREUR: aucun outil GPU trouvé (nvidia-smi, rocminfo, vulkaninfo, lspci)"
+    return ("ERREUR: aucun outil GPU trouvé (rocm-smi, nvidia-smi, rocminfo, "
+            "vulkaninfo, lspci, /sys/class/drm)")
+
+
+def _amdgpu_sysfs(base: Path = Path("/sys/class/drm")) -> str:
+    """Lecture directe du driver amdgpu (sysfs) : fonctionne sans ROCm ni outil
+    externe, typiquement sur un iGPU/dGPU AMD sous Linux (Radeon 890M, RX...)."""
+    base = Path(base)
+    lines: list[str] = []
+    try:
+        cards = sorted(d for d in base.iterdir()
+                       if d.name.startswith("card") and d.name[4:].isdigit()
+                       and (d / "device" / "gpu_busy_percent").exists())
+    except OSError:
+        return ""
+    for card in cards:
+        dev = card / "device"
+        try:
+            name = (dev / "product_name").read_text().strip()
+        except OSError:
+            try:
+                uevent = (dev / "uevent").read_text()
+                name = next((l.split("=", 1)[1].strip() for l in uevent.splitlines()
+                             if l.startswith("PCI_NAME=")), card.name)
+            except OSError:
+                name = card.name
+        try:
+            busy = (dev / "gpu_busy_percent").read_text().strip()
+        except OSError:
+            busy = "?"
+        try:
+            vram_total = int((dev / "mem_info_vram_total").read_text().strip()) / 1024**2
+            vram_used = int((dev / "mem_info_vram_used").read_text().strip()) / 1024**2
+            vram = f"{vram_used:.0f}/{vram_total:.0f} Mo"
+        except OSError:
+            vram = "?"
+        temp_txt = ""
+        try:
+            for h in (dev / "hwmon").iterdir():
+                try:
+                    t = int((h / "temp1_input").read_text().strip()) / 1000
+                    temp_txt = f" | temp {t:.0f} °C"
+                    break
+                except OSError:
+                    continue
+        except OSError:
+            pass
+        lines.append(f"{name} [{card.name}] | VRAM {vram} | busy {busy}%{temp_txt}")
+    return "\n".join(lines)
+
 
 
 @mcp.tool()
 def temperatures() -> str:
-    """Températures (CPU/GPU) via sensors (lm-sensors) ou /sys/class/thermal."""
+    """Températures (CPU/GPU) via sensors (lm-sensors), sinon /sys/class/thermal,
+    sinon les hwmon /sys/class/hwmon (k10temp AMD, coretemp Intel, amdgpu...)."""
     if shutil.which("sensors"):
-        return _run(["sensors"], timeout=10.0)
+        out = _run(["sensors"], timeout=10.0)
+        if out and not out.startswith("ERREUR"):
+            return out
     lines = []
-    zones = sorted(os.listdir("/sys/class/thermal"))
+    try:
+        zones = sorted(os.listdir("/sys/class/thermal"))
+    except OSError:
+        zones = []
     for zone in zones:
         if not zone.startswith("thermal_zone"):
             continue
@@ -97,11 +162,38 @@ def temperatures() -> str:
             with open(f"{base}/temp") as f:
                 millideg = int(f.read().strip())
             lines.append(f"{name}: {millideg / 1000:.1f} °C")
-        except OSError:
+        except (OSError, ValueError):
             continue
+    if not lines:
+        try:
+            for hw in sorted(os.listdir("/sys/class/hwmon")):
+                hbase = f"/sys/class/hwmon/{hw}"
+                try:
+                    with open(f"{hbase}/name") as f:
+                        hname = f.read().strip()
+                except OSError:
+                    continue
+                for tf in sorted(os.listdir(hbase)):
+                    if not (tf.startswith("temp") and tf.endswith("_input")):
+                        continue
+                    try:
+                        with open(f"{hbase}/{tf}") as f:
+                            millideg = int(f.read().strip())
+                    except (OSError, ValueError):
+                        continue
+                    label = tf[:-6]
+                    try:
+                        with open(f"{hbase}/{label}_label") as f:
+                            label = f.read().strip()
+                    except OSError:
+                        pass
+                    lines.append(f"{hname} {label}: {millideg / 1000:.1f} °C")
+        except OSError:
+            pass
     if lines:
         return "\n".join(lines)
-    return "ERREUR: ni 'sensors' ni /sys/class/thermal lisible"
+    return "ERREUR: ni 'sensors' ni /sys/class/thermal ni /sys/class/hwmon lisible"
+
 
 
 @mcp.tool()
