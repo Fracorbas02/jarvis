@@ -119,6 +119,38 @@ class DesktopApp:
         self.root.destroy()
 
 
+def _debug_scale(root, scale: float) -> None:
+    """Dump de diagnostic du scaling (JARVIS_DEBUG_SCALE=1) : toujours sur
+    stderr + /tmp/jarvis-debug.log, jamais bloquant (try/except)."""
+    import sys
+    import traceback
+    import customtkinter as _ctk
+    lines: list[str] = []
+    try:
+        lbl = _ctk.CTkLabel(root, text="x", font=_ctk.CTkFont(size=13))
+        root.update_idletasks()
+        lines.append(
+            f"[jarvis] debug: scale={scale} "
+            f"widget_scaling={_ctk.get_widget_scaling()} "
+            f"window_scaling={_ctk.get_window_scaling()} "
+            f"screen={root.winfo_screenwidth()}x{root.winfo_screenheight()} "
+            f"dpi={root.winfo_fpixels('1i'):.1f} "
+            f"tk_scaling={root.tk.call('tk', 'scaling')} "
+            f"label13_font={lbl._label.cget('font')}")
+        lbl.destroy()
+    except Exception:
+        lines.append("[jarvis] debug: ERREUR dans le dump:")
+        lines.extend(traceback.format_exc().splitlines())
+    text = "\n".join(lines)
+    sys.stderr.write(text + "\n")
+    sys.stderr.flush()
+    try:
+        with open("/tmp/jarvis-debug.log", "w", encoding="utf-8") as f:
+            f.write(text + "\n")
+    except OSError:
+        pass
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="jarvis-app",
                                      description="Application desktop de Jarvis")
@@ -148,19 +180,7 @@ def main() -> None:
     root.configure(fg_color=BG)
 
     if os.environ.get("JARVIS_DEBUG_SCALE"):
-        import sys
-        import customtkinter as _ctk
-        lbl = _ctk.CTkLabel(root, text="x", font=_ctk.CTkFont(size=13))
-        root.update_idletasks()
-        print("[jarvis] debug: "
-              f"widget_scaling={_ctk.get_widget_scaling()} "
-              f"window_scaling={_ctk.get_window_scaling()} "
-              f"screen={root.winfo_screenwidth()}x{root.winfo_screenheight()} "
-              f"dpi={root.winfo_fpixels('1i'):.1f} "
-              f"tk_scaling={root.tk.call('tk', 'scaling')} "
-              f"label13_font={lbl._label.cget('font')}",
-              file=sys.stderr)
-        lbl.destroy()
+        _debug_scale(root, scale)
 
     app = DesktopApp(root, args.config, scale=scale)
     try:
