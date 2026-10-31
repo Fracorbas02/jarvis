@@ -433,6 +433,10 @@ class GtkBackend:
                              "audio_rms": audio_rms})
         except VoiceError as exc:
             self.events.put({"type": "voice_error", "message": str(exc)})
+        except Exception as exc:  # noqa: BLE001 — JAMAIS laisser la coroutine mourir en silence
+            log.exception("stt_test en erreur")
+            self.events.put({"type": "voice_error",
+                             "message": f"erreur interne STT : {type(exc).__name__}: {exc}"})
 
     def test_mic(self, device: str | None = None) -> None:
         """Enregistrement de test (0.5 s) pour v\u00e9rifier l'autorisation micro."""

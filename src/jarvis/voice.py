@@ -441,8 +441,13 @@ class RealtimeSTTClient:
             with wave.open(str(fixed), "rb") as w2:
                 pcm = w2.readframes(w2.getnframes())
 
-        reader, writer, pending = await asyncio.wait_for(
-            self._ws_connect(), timeout=min(30.0, self.timeout))
+        try:
+            reader, writer, pending = await asyncio.wait_for(
+                self._ws_connect(), timeout=min(30.0, self.timeout))
+        except VoiceError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise VoiceError(f"/v1/realtime connexion impossible : {type(exc).__name__}: {exc}") from exc
         try:
             async def send(obj: dict) -> None:
                 await self._ws_send_text(writer, _json.dumps(obj))
