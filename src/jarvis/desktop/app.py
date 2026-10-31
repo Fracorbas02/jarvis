@@ -16,11 +16,11 @@ from pathlib import Path
 
 import customtkinter as ctk
 
-from ..gui.models import MODES
 from .chat_panel import ChatPanel
 from .controller import DesktopController, default_repo_root
 from .sidebar import Sidebar
-from .theme import ACCENT, BG, PANEL_2, TEXT_DIM
+from .theme import BG
+from .voice_panel import VoicePanel
 
 
 class DesktopApp:
@@ -42,17 +42,12 @@ class DesktopApp:
         self.main.grid_rowconfigure(0, weight=1)
         self.main.grid_columnconfigure(0, weight=1)
 
-        # panneaux par mode : chat LLM branché, TTS/STT en placeholder
+        # panneaux par mode
         self.panels: dict[str, ctk.CTkFrame] = {}
         self.chat = ChatPanel(self.main, self.ctrl)
         self.panels["llm"] = self.chat
         for mode in ("tts", "stt"):
-            meta = MODES[mode]
-            f = ctk.CTkFrame(self.main, fg_color=BG, corner_radius=0)
-            ctk.CTkLabel(f, text=f"{meta['label']} — {meta['description']}",
-                         font=ctk.CTkFont(size=16), text_color=TEXT_DIM).place(
-                relx=0.5, rely=0.5, anchor="center")
-            self.panels[mode] = f
+            self.panels[mode] = VoicePanel(self.main, self.ctrl, mode)
         for f in self.panels.values():
             f.grid(row=0, column=0, sticky="nsew")
         self.show_mode(self.ctrl.mode)

@@ -58,10 +58,23 @@ def main() -> int:
             content = app.chat.text.get("1.0", "end")
             if "Résultat du ping" in content:
                 ok = "réflexion" in content and "echo__ping" in content
+                # switch de mode vers le panneau TTS
+                app.show_mode("tts")
+                root.update_idletasks()
+                tts_visible = app.panels["tts"].winfo_ismapped()
+                def all_labels(w):
+                    out = [w.cget("text")] if isinstance(w, ctk.CTkLabel) else []
+                    for c in w.winfo_children():
+                        out.extend(all_labels(c))
+                    return out
+                labels = all_labels(app.panels["tts"])
+                has_empty_state = any("Modèles détectés" in str(t) for t in labels)
+                ok = ok and tts_visible and has_empty_state
                 finish(0 if ok else 1,
                        f"reçu: réflexion={'réflexion' in content} "
                        f"outil={'echo__ping' in content} "
-                       f"réponse={'Résultat du ping' in content}")
+                       f"réponse={'Résultat du ping' in content} "
+                       f"tts_visible={tts_visible} empty_state={has_empty_state}")
                 return
             if time.time() - state["t0"] > 60:
                 finish(1, f"timeout, contenu={content[-400:]!r}")
