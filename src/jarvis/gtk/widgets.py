@@ -41,15 +41,8 @@ def _css() -> None:
         padding: 1px 5px;
         min-width: 16px;
     }
-    .jarvis-recording {
-        animation: jarvis-pulse 1.2s ease-in-out infinite;
-        border: 2px solid @accent_bg_color;
-    }
-    @keyframes jarvis-pulse {
-        0%   { box-shadow: 0 0 0 0 alpha(@accent_bg_color, 0.5); }
-        70%  { box-shadow: 0 0 0 14px alpha(@accent_bg_color, 0); }
-        100% { box-shadow: 0 0 0 0 alpha(@accent_bg_color, 0); }
-    }
+    /* bouton micro en recording : juste l'icône en couleur d'accent */
+    .jarvis-recording image { color: @accent_bg_color; }
     .jarvis-home-bg {
         background: linear-gradient(160deg,
             alpha(@accent_bg_color, 0.10) 0%,
@@ -58,13 +51,23 @@ def _css() -> None:
     }
     .jarvis-mic-level { margin-top: 2px; }
     .jarvis-ctx-bar { min-height: 6px; }
-    /* page d'accueil en mode enregistrement : le dégradé pulse sur TOUTE la page */
-    .jarvis-home-bg.jarvis-recording-page {
-        animation: jarvis-bg-pulse 1.2s ease-in-out infinite;
+    /* mode enregistrement : TOUTE la fenêtre pulse (classe sur la window) */
+    window.jarvis-recording-page {
+        animation: jarvis-win-pulse 1.2s ease-in-out infinite;
     }
-    @keyframes jarvis-bg-pulse {
-        0%, 100% { opacity: 1; }
-        50%      { opacity: 0.55; }
+    @keyframes jarvis-win-pulse {
+        0%, 100% {
+            background: linear-gradient(160deg,
+                alpha(@accent_bg_color, 0.10) 0%,
+                @window_bg_color 45%,
+                alpha(@accent_bg_color, 0.06) 100%);
+        }
+        50% {
+            background: linear-gradient(160deg,
+                alpha(@accent_bg_color, 0.22) 0%,
+                alpha(@window_bg_color, 0.97) 45%,
+                alpha(@accent_bg_color, 0.16) 100%);
+        }
     }
     /* vague de niveau en bas de la fenêtre, en accord avec la voix */
     .jarvis-wave-bar {

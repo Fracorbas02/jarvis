@@ -709,8 +709,10 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.chat_entry.set_sensitive(False)
         self.chat_mic.add_css_class("jarvis-recording")
         self.home_mic_button.add_css_class("jarvis-recording")
+        self.add_css_class("jarvis-recording-page")  # toute la fenêtre pulse
         self._set_chat_hint("Enregistrement…")
         self.mic_level_bar.set_visible(True)
+        self.mic_level_bar.add_css_class("jarvis-wave-live")
         self.backend.record_levels(6.0, device=getattr(self, "mic_device", "default"))
 
     def _on_entry_activate(self, _widget) -> None:
@@ -981,8 +983,7 @@ class JarvisWindow(Adw.ApplicationWindow):
         if not busy:
             self.chat_mic.remove_css_class("jarvis-recording")
             self.home_mic_button.remove_css_class("jarvis-recording")
-            if hasattr(self, "home_page"):
-                self.home_page.remove_css_class("jarvis-recording-page")
+            self.remove_css_class("jarvis-recording-page")
             self.mic_level_bar.remove_css_class("jarvis-wave-live")
             self.mic_level_bar.set_visible(False)
             self.mic_level_bar.set_value(0)
