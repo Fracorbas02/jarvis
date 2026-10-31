@@ -84,6 +84,83 @@ def test_stt_transcribe():
         assert "transcription de" in text and "octets audio" in text
 
 
+def test_stt_transcribe_voxtral():
+    """Protocole voxtral : POST /v1/audio/transcriptions (multipart OpenAI)."""
+    with _Mock("voxtral") as m:
+        async def go():
+            client = STTClient(f"http://127.0.0.1:{m.port}", protocol="voxtral",
+                               model="voxtral-mini-4b-realtime")
+            wav = pcm_to_wav_bytes(b"\x00\x00" * 16000)
+            tmp = Path("/tmp/jarvis-test-voxtral.wav")
+            tmp.write_bytes(wav)
+            text = await client.transcribe(tmp, language="fr")
+            await client.aclose()
+            return text
+        text = _run(go())
+        assert "transcription de" in text and "octets audio" in text
+
+
+def test_stt_fallback_404_whisper_to_voxtral():
+    """Un serveur whisper (protocole voxtral configuré) répond 404 sur
+    /v1/audio/transcriptions : le client retombe sur /inference."""
+    with _Mock("stt") as m:
+        async def go():
+            client = STTClient(f"http://127.0.0.1:{m.port}", protocol="voxtral")
+            wav = pcm_to_wav_bytes(b"\x00\x00" * 8000)
+            tmp = Path("/tmp/jarvis-test-fallback.wav")
+            tmp.write_bytes(wav)
+            text = await client.transcribe(tmp)
+            await client.aclose()
+            return text
+        text = _run(go())
+        assert "transcription de" in text
+
+
+def test_stt_fallback_404_voxtral_to_whisper():
+    """Un serveur voxtral (protocole whisper configuré) répond 404 sur
+    /inference : le client retombe sur /v1/audio/transcriptions."""
+    with _Mock("voxtral") as m:
+        async def go():
+            client = STTClient(f"http://127.0.0.1:{m.port}", protocol="whisper")
+            wav = pcm_to_wav_bytes(b"\x00\x00" * 8000)
+            tmp = Path("/tmp/jarvis-test-fallback2.wav")
+            tmp.write_bytes(wav)
+            text = await client.transcribe(tmp)
+            await client.aclose()
+            return text
+        text = _run(go())
+        assert "transcription de" in text
+
+
+def test_argv_for_stt_voxtral():
+    """protocol=voxtral -> llama-server avec -ngl 99 --jinja (sans -fa),
+    comme un serveur audio llama.cpp."""
+    from jarvis.voice import _argv_for
+    vcfg = VoiceServerConfig(binary="llama-server",
+                             base_url="http://127.0.0.1:8178",
+                             model="~/models/stt/Q4_K_M.gguf",
+                             protocol="voxtral")
+    argv = _argv_for("stt", vcfg, Path("/tmp/m.gguf"))
+    assert argv[0] == "llama-server"
+    assert "-ngl" in argv and "99" in argv
+    assert "--jinja" in argv
+    assert "-fa" not in argv
+    assert argv[argv.index("-m") + 1] == "/tmp/m.gguf"
+    # protocole whisper (défaut) : whisper-server inchangé, pas de --jinja
+    vcfg2 = VoiceServerConfig(binary="whisper-server",
+                              base_url="http://127.0.0.1:8178",
+                              model="~/models/stt/Q4_K_M.gguf")
+    argv2 = _argv_for("stt", vcfg2, Path("/tmp/m.gguf"))
+    assert argv2[0] == "whisper-server"
+    assert "--jinja" not in argv2 and "-ngl" not in argv2
+
+
+def test_voice_config_protocol_default():
+    cfg = VoiceConfig()
+    assert cfg.stt.protocol == "whisper"
+    assert VoiceServerConfig().protocol == "whisper"
+
+
 def test_tts_synthesize_speech_endpoint():
     with _Mock("tts") as m:
         async def go():
@@ -123,6 +200,23 @@ def test_voice_server_status_online():
         assert st.state == "online"
 
 
+def test_load_config_protocol(tmp_path):
+    """[voice.stt] protocol = "voxtral" est bien chargé depuis le TOML."""
+    from jarvis.config import load_config
+    cfg_file = tmp_path / "config.toml"
+    cfg_file.write_text(
+        "[voice.stt]\n"
+        'binary = "llama-server"\n'
+        'base_url = "http://127.0.0.1:8178"\n'
+        'model = "~/models/stt/Q4_K_M.gguf"\n'
+        'protocol = "voxtral"\n',
+        encoding="utf-8")
+    cfg = load_config(cfg_file)
+    assert cfg.voice.stt.protocol == "voxtral"
+    assert cfg.voice.stt.binary == "llama-server"
+    assert cfg.voice.tts.protocol == "whisper"  # défaut inchangé
+
+
 def test_voice_config_defaults():
     cfg = VoiceConfig()
     assert cfg.stt.binary == "whisper-server"
@@ -134,11 +228,18 @@ if __name__ == "__main__":
     test_host_port_and_model_path()
     test_wav_helpers(Path("/tmp"))
     test_stt_transcribe()
+    test_stt_transcribe_voxtral()
+    test_stt_fallback_404_whisper_to_voxtral()
+    test_stt_fallback_404_voxtral_to_whisper()
+    test_argv_for_stt_voxtral()
+    test_voice_config_protocol_default()
     test_tts_synthesize_speech_endpoint()
     test_tts_fallback_tts_route()
     test_voice_server_status_offline()
     test_voice_server_status_online()
     test_voice_config_defaults()
+    import tempfile
+    test_load_config_protocol(Path(tempfile.mkdtemp()))
     print("OK")
 
 def test_gpu_choice_persistence(tmp_path, monkeypatch) -> None:

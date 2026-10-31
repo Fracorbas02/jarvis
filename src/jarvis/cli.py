@@ -338,7 +338,12 @@ async def _voice_status_lines(cfg) -> list[str]:
     lines = []
     for name, vcfg in (("stt", cfg.voice.stt), ("tts", cfg.voice.tts)):
         st = await voice_server_status(name, vcfg)
-        label = "STT whisper-server" if name == "stt" else "TTS llama-server"
+        if name == "stt":
+            proto = getattr(vcfg, "protocol", "whisper")
+            label = ("STT llama-server (voxtral)" if proto == "voxtral"
+                     else "STT whisper-server")
+        else:
+            label = "TTS llama-server"
         lines.append(f"[dim]{label}[/] {st.host}:{st.port} — "
                      f"{'en ligne' if st.state == 'online' else 'géré par jarvis' if st.state == 'managed' else 'hors ligne'}"
                      + (f" ({st.detail})" if st.detail and st.state == "offline" else ""))

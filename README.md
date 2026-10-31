@@ -46,6 +46,21 @@ CLI et les interfaces les lancent automatiquement avec le GGUF choisi :
 # STT : whisper.cpp (ggml), sert POST /inference
 whisper-server --host 127.0.0.1 --port 8178 -m ~/models/stt/Q4_K_M.gguf -ngl 99
 
+# STT alternatif : llama-server + modèle audio llama.cpp (ex. Voxtral Mini
+# 4B Realtime), sert POST /v1/audio/transcriptions (OpenAI-compatible)
+llama-server -m ~/models/stt/Q4_K_M.gguf   --host 127.0.0.1 --port 8178 -ngl 99 --jinja --ctx-size 8192
+```
+
+Le protocole STT se choisit dans `config.toml` (`[voice.stt] protocol =
+"whisper"` par défaut, ou `"voxtral"` avec `binary = "llama-server"` et le
+GGUF audio en `model`). Le client essaie l'endpoint du protocole configuré
+puis retombe sur l'autre en cas de 404, donc un serveur lancé à la main
+avec l'autre binaire fonctionne aussi. Dans l'app GTK, une page **Test STT**
+(onglet dédié) permet de parler au micro et de voir la transcription sans
+envoyer de tour au LLM, avec statut/démarrage du serveur STT.
+
+```sh
+
 # TTS : llama-server avec un modèle de synthèse, sert POST /v1/audio/speech
 # (et POST /tts sur les builds récents)
 llama-server -m ~/models/tts/voxtral-4b-tts-q4_k.gguf \

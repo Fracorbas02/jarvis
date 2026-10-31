@@ -1,15 +1,26 @@
-"""Voix locale : STT (whisper.cpp server) et TTS (llama-server avec un modèle
-de synthèse, ex. Voxtral 4B TTS).
+"""Voix locale : STT (whisper.cpp server ou llama-server + modèle audio type
+Voxtral Mini 4B Realtime) et TTS (llama-server avec un modèle de synthese,
+ex. Voxtral 4B TTS).
 
 Deux serveurs HTTP indépendants du llama-server principal :
 
-- STT : `whisper-server -m <ggml whisper> --host H --port P` expose
-  POST /inference (multipart: file=<wav>, response_format=json) et
-  GET /health. Transcription d'un fichier audio en texte.
+- STT, protocole "whisper" (défaut) : `whisper-server -m <ggml whisper>
+  --host H --port P` expose POST /inference (multipart: file=<wav>,
+  response_format=json) et GET /health.
+- STT, protocole "voxtral" : `llama-server -m <gguf audio> --host H --port P`
+  expose POST /v1/audio/transcriptions (multipart OpenAI-compatible :
+  file=<wav>, model, response_format=json, éventuellement language) et
+  GET /health. C'est le chemin des modèles audio de llama.cpp (Voxtral
+  Mini 4B Realtime, Qwen3-ASR, etc.).
 - TTS : `llama-server -m <tts gguf> --host H --port P` expose
   POST /v1/audio/speech (JSON OpenAI-compatible: input/voice/response_format)
   et, sur les builds récents, POST /tts (JSON {"input": ...} -> WAV).
   Le client essaie /v1/audio/speech puis retombe sur /tts.
+
+Le protocole STT se règle dans config.toml ([voice.stt] protocol =
+"whisper"|"voxtral") ; le client essaie l'endpoint du protocole configuré,
+puis retombe sur l'autre si le serveur répond 404 (serveur déjà lancé
+à la main avec l'autre binaire).
 
 Si aucun serveur ne répond sur base_url, start_voice_server() lance le
 binaire configuré avec le GGUF choisi (résolu depuis ~/models si le chemin
@@ -91,6 +102,13 @@ def _argv_for(name: str, vcfg: VoiceServerConfig, model_path: Path,
             dev = device_index(dev)
         extra += ["--device", dev]
     if name == "stt":
+        if (vcfg.protocol or "whisper") == "voxtral":
+            # llama-server + modèle audio (Voxtral Mini 4B Realtime, ...) :
+            # sert POST /v1/audio/transcriptions. Pas de -fa (flash-attention)
+            # par défaut sur ces architectures audio.
+            return [vcfg.binary, "-m", str(model_path), "--host", host,
+                    "--port", str(port), "-ngl", "99", "--jinja",
+                    "--ctx-size", "8192", *extra]
         return [vcfg.binary, "--host", host, "--port", str(port),
                 "-m", str(model_path), *extra]
     return [vcfg.binary, "-m", str(model_path), "--host", host, "--port", str(port),
@@ -217,29 +235,58 @@ async def stop_all_voice_servers(voice_cfg: VoiceConfig) -> None:
 # ---------- clients ----------
 
 class STTClient:
-    """Transcription via whisper-server : POST /inference (multipart)."""
+    """Transcription d'un fichier audio.
 
-    def __init__(self, base_url: str, timeout: float = 300.0):
-        self.base_url = base_url.rstrip("/")
-        self._http = httpx.AsyncClient(base_url=self.base_url,
+    Deux protocoles, choisis par `protocol` (config [voice.stt]) :
+    - "whisper" (défaut) : whisper-server, POST /inference (multipart) ;
+    - "voxtral" : llama-server + modèle audio (Voxtral Mini 4B Realtime...),
+      POST /v1/audio/transcriptions (multipart OpenAI-compatible).
+    Si l'endpoint du protocole configuré répond 404, on retombe sur
+    l'autre (le serveur peut avoir été lancé à la main avec l'autre
+    binaire). Les deux renvoient {"text": ...} avec response_format=json.
+    """
+
+    def __init__(self, base_url: str, timeout: float = 300.0,
+                 protocol: str = "whisper", model: str = "stt"):
+        self.root = base_url.rstrip("/").removesuffix("/v1")
+        self.protocol = (protocol or "whisper").lower()
+        self.model = model
+        self._http = httpx.AsyncClient(base_url=self.root,
                                        timeout=httpx.Timeout(timeout, connect=10.0))
+
+    async def _post_transcription(self, path: Path, language: str | None,
+                                  endpoint: str, extra: dict[str, str]):
+        data: dict[str, str] = {"response_format": "json", "temperature": "0.0",
+                                **extra}
+        if language:
+            data["language"] = language
+        with open(path, "rb") as fh:
+            files = {"file": (path.name, fh, "audio/wav")}
+            return await self._http.post(endpoint, data=data, files=files)
 
     async def transcribe(self, wav_path: str | Path, language: str | None = None) -> str:
         path = Path(wav_path)
         if not path.is_file():
             raise VoiceError(f"fichier audio introuvable : {path}")
-        data: dict[str, str] = {"response_format": "json", "temperature": "0.0"}
-        if language:
-            data["language"] = language
-        with open(path, "rb") as fh:
-            files = {"file": (path.name, fh, "audio/wav")}
-            resp = await self._http.post("/inference", data=data, files=files)
+        # endpoint prioritaire selon le protocole, l'autre en fallback 404
+        if self.protocol == "voxtral":
+            endpoints = [("/v1/audio/transcriptions", {"model": self.model}),
+                         ("/inference", {})]
+        else:
+            endpoints = [("/inference", {}),
+                         ("/v1/audio/transcriptions", {"model": self.model})]
+        resp = None
+        for endpoint, extra in endpoints:
+            resp = await self._post_transcription(path, language, endpoint, extra)
+            if resp.status_code != 404:
+                break
+        assert resp is not None
         if resp.status_code != 200:
-            raise VoiceError(f"whisper-server HTTP {resp.status_code}: {resp.text[:500]}")
+            raise VoiceError(f"serveur STT HTTP {resp.status_code}: {resp.text[:500]}")
         payload = resp.json()
         text = payload.get("text") if isinstance(payload, dict) else None
         if text is None:
-            raise VoiceError(f"réponse inattendue de /inference : {str(payload)[:500]}")
+            raise VoiceError(f"réponse inattendue du serveur STT : {str(payload)[:500]}")
         return text.strip()
 
     async def aclose(self) -> None:
@@ -317,7 +364,7 @@ async def transcribe_file(voice_cfg: VoiceConfig, wav_path: str | Path,
     st = await ensure_voice_server("stt", voice_cfg.stt)
     if st.state == "offline":
         raise VoiceError(f"serveur STT indisponible : {st.detail}")
-    client = STTClient(voice_cfg.stt.base_url)
+    client = STTClient(voice_cfg.stt.base_url, protocol=voice_cfg.stt.protocol)
     try:
         return await client.transcribe(wav_path, language=language)
     finally:

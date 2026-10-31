@@ -42,6 +42,7 @@ class JarvisWindow(Adw.ApplicationWindow):
         self._tool_lines: dict[str, Gtk.Label] = {}
         self._busy = False
         self._status_state = "unknown"
+        self._stt_state = "unknown"
         self._ctx = self.settings.get("ctx_size", 16384)
         self.mic_device = self.settings.get("mic", "default")
 
@@ -126,8 +127,11 @@ class JarvisWindow(Adw.ApplicationWindow):
                                         "go-home-symbolic")
         self.stack.add_titled_with_icon(self._build_chat(), "chat", "Conversation",
                                         "emblem-chat-symbolic")
+        self.stack.add_titled_with_icon(self._build_stt_test(), "stt-test", "Test STT",
+                                        "audio-input-microphone-symbolic")
         self.stack.add_titled_with_icon(self._build_settings(), "settings", "R\u00e9glages",
                                         "emblem-system-symbolic")
+        self.stack.connect("notify::visible-child", self._on_stack_changed)
         toolbar.set_content(self.stack)
 
         self.toast_overlay = Adw.ToastOverlay()
@@ -211,6 +215,155 @@ class JarvisWindow(Adw.ApplicationWindow):
         hint_row.append(self.chat_hint)
         outer.append(hint_row)
         return outer
+
+    def _build_stt_test(self) -> Gtk.Widget:
+        """Page de test STT : parler -> transcription affichée, sans tour LLM."""
+        scroll = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        clamp = Adw.Clamp(maximum_size=720, tightening_threshold=560)
+        clamp.set_margin_top(24)
+        clamp.set_margin_bottom(24)
+        clamp.set_margin_start(16)
+        clamp.set_margin_end(16)
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16,
+                       vexpand=True, valign=Gtk.Align.START)
+        clamp.set_child(page)
+        scroll.set_child(clamp)
+
+        title = Gtk.Label(label="Test STT", halign=Gtk.Align.CENTER)
+        title.add_css_class("title-2")
+        page.append(title)
+        sub = Gtk.Label(label="Parle dans le micro : le modèle transcrit et le texte "
+                             "s'affiche ici. Rien n'est envoyé au LLM.",
+                        halign=Gtk.Align.CENTER, wrap=True)
+        sub.add_css_class("dim-label")
+        page.append(sub)
+
+        # statut + start/stop du serveur STT
+        g_stt = Adw.PreferencesGroup(title="Serveur STT")
+        self.stt_status_row = Adw.ActionRow(title="Statut", subtitle="interrogation…")
+        self.stt_start_btn = Gtk.Button(label="Démarrer le serveur STT",
+                                        valign=Gtk.Align.CENTER)
+        self.stt_start_btn.connect("clicked", self._on_stt_start_stop)
+        refresh_btn = Gtk.Button(icon_name="view-refresh-symbolic",
+                                 valign=Gtk.Align.CENTER,
+                                 tooltip_text="Rafraîchir le statut")
+        refresh_btn.connect("clicked", lambda b: self.backend.refresh_stt_status())
+        self.stt_status_row.add_suffix(self.stt_start_btn)
+        self.stt_status_row.add_suffix(refresh_btn)
+        g_stt.add(self.stt_status_row)
+        self.stt_cfg_row = Adw.ActionRow(title="Configuration ([voice.stt] de config.toml)",
+                                         subtitle="…")
+        g_stt.add(self.stt_cfg_row)
+        page.append(g_stt)
+
+        # durée d'enregistrement
+        g_test = Adw.PreferencesGroup(title="Test de transcription")
+        row_dur = Adw.SpinRow(title="Durée d'enregistrement (s)",
+                              adjustment=Gtk.Adjustment(
+                                  value=float(self.settings.get("stt_test_seconds", 6)),
+                                  lower=2, upper=60, step_increment=1,
+                                  page_increment=5))
+        row_dur.connect("notify::value", self._on_stt_test_seconds_changed)
+        g_test.add(row_dur)
+        page.append(g_test)
+
+        # gros bouton micro
+        self.stt_test_mic = Gtk.Button(halign=Gtk.Align.CENTER,
+                                       tooltip_text="Enregistrer puis transcrire "
+                                                    "(sans envoyer au LLM)")
+        self.stt_test_mic.add_css_class("suggested-action")
+        self.stt_test_mic.add_css_class("pill")
+        mic_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
+                          halign=Gtk.Align.CENTER)
+        mic_box.append(Gtk.Image(icon_name="audio-input-microphone-symbolic",
+                                 pixel_size=32))
+        mic_box.append(Gtk.Label(label="Parler (test STT)"))
+        self.stt_test_mic.set_child(mic_box)
+        self.stt_test_mic.connect("clicked", self._on_stt_test_mic)
+        mic_wrap = Gtk.Box(halign=Gtk.Align.CENTER)
+        mic_wrap.append(self.stt_test_mic)
+        page.append(mic_wrap)
+
+        # résultat de la transcription
+        res_title = Gtk.Label(label="Résultat", halign=Gtk.Align.START)
+        res_title.add_css_class("title-4")
+        page.append(res_title)
+        box = Gtk.ListBox()
+        box.add_css_class("boxed-list")
+        box.set_selection_mode(Gtk.SelectionMode.NONE)
+        row = Gtk.ListBoxRow()
+        row.set_activatable(False)
+        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4,
+                        margin_top=10, margin_bottom=10, margin_start=12, margin_end=12)
+        self.stt_result_label = Gtk.Label(
+            xalign=0, wrap=True, selectable=True,
+            label="(rien pour l'instant — parle dans le micro)")
+        inner.append(self.stt_result_label)
+        self.stt_result_meta = Gtk.Label(xalign=0, wrap=True, label="")
+        self.stt_result_meta.add_css_class("dim-label")
+        self.stt_result_meta.add_css_class("caption")
+        inner.append(self.stt_result_meta)
+        row.set_child(inner)
+        box.append(row)
+        page.append(box)
+        return scroll
+
+    def _on_stack_changed(self, stack, _pspec) -> None:
+        if stack.get_visible_child_name() == "stt-test":
+            self.backend.refresh_stt_status()
+
+    def _on_stt_test_seconds_changed(self, row, _pspec) -> None:
+        val = int(row.get_value())
+        save_ui_settings({"stt_test_seconds": val})
+        self.settings["stt_test_seconds"] = val
+
+    def _on_stt_start_stop(self, _btn) -> None:
+        if self._stt_state == "managed":
+            self.backend.stop_stt_server()
+        elif self._stt_state == "online":
+            self._toast("Serveur STT externe — arrêt impossible depuis Jarvis")
+        else:
+            self.backend.start_stt_server()
+
+    def _on_stt_test_mic(self, _btn) -> None:
+        self.stt_test_mic.set_sensitive(False)
+        secs = float(self.settings.get("stt_test_seconds", 6))
+        self.stt_result_label.set_text("")
+        self.stt_result_meta.set_text(f"Enregistrement… {secs:.0f}s")
+        self.backend.stt_test_transcribe(secs,
+                                         device=getattr(self, "mic_device", "default"))
+
+    def _on_stt_server_status(self, event: dict) -> None:
+        self._stt_state = event.get("state", "unknown")
+        labels = {"online": "en ligne", "managed": "géré par Jarvis",
+                  "offline": "hors ligne"}
+        state_txt = labels.get(self._stt_state, self._stt_state)
+        txt = f"{state_txt} — {event.get('host', '')}:{event.get('port', '')}"
+        if event.get("detail") and self._stt_state == "offline":
+            txt += f" ({event['detail']})"
+        self.stt_status_row.set_subtitle(txt)
+        self.stt_cfg_row.set_subtitle(
+            f"protocole {event.get('protocol', '?')} · binaire "
+            f"{event.get('binary', '?')} · modèle {event.get('model', '?')}")
+        if self._stt_state == "managed":
+            self.stt_start_btn.set_label("Arrêter le serveur STT")
+            self.stt_start_btn.set_sensitive(True)
+        elif self._stt_state == "online":
+            self.stt_start_btn.set_label("Serveur externe")
+            self.stt_start_btn.set_sensitive(False)
+        else:
+            self.stt_start_btn.set_label("Démarrer le serveur STT")
+            self.stt_start_btn.set_sensitive(True)
+
+    def _on_stt_test_done(self, event: dict) -> None:
+        self.stt_test_mic.set_sensitive(True)
+        text = (event.get("text") or "").strip()
+        self.stt_result_label.set_text(text or "(aucune parole transcrite)")
+        self.stt_result_meta.set_text(
+            f"{event.get('elapsed', 0):.1f}s de transcription · "
+            f"{event.get('seconds', 0):.0f}s d'audio · protocole "
+            f"{event.get('protocol', '?')} · serveur {event.get('server', '?')}")
 
     def _build_settings(self) -> Gtk.Widget:
         scroll = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
@@ -640,7 +793,19 @@ class JarvisWindow(Adw.ApplicationWindow):
         elif t == "voice_error":
             self._set_chat_hint("")
             self._set_busy_ui(False)
+            if hasattr(self, "stt_test_mic"):
+                self.stt_test_mic.set_sensitive(True)
+                if hasattr(self, "stt_result_meta"):
+                    self.stt_result_meta.set_text("")
             self._toast(event["message"])
+        elif t == "stt_server_status":
+            self._on_stt_server_status(event)
+        elif t == "stt_test_recording":
+            if hasattr(self, "stt_result_meta"):
+                self.stt_result_meta.set_text(
+                    f"Enregistrement… {event['seconds']:.0f}s")
+        elif t == "stt_test_done":
+            self._on_stt_test_done(event)
         elif t == "mic_devices":
             self._fill_mic_devices(event.get("devices") or [], event.get("error") or "")
         elif t == "mic_test":

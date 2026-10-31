@@ -313,6 +313,68 @@ class GtkBackend:
         except VoiceError as exc:
             self.events.put({"type": "voice_error", "message": str(exc)})
 
+    def refresh_stt_status(self) -> None:
+        """Statut du serveur STT -> événement stt_server_status."""
+        self._run(self._astt_status())
+
+    def _stt_status_event(self, st) -> dict:
+        return {"type": "stt_server_status", "state": st.state, "host": st.host,
+                "port": st.port, "detail": st.detail, "healthy": st.healthy,
+                "protocol": self.cfg.voice.stt.protocol,
+                "model": self.cfg.voice.stt.model, "binary": self.cfg.voice.stt.binary}
+
+    async def _astt_status(self) -> None:
+        from ..voice import voice_server_status
+        st = await voice_server_status("stt", self.cfg.voice.stt)
+        self.events.put(self._stt_status_event(st))
+
+    def start_stt_server(self) -> None:
+        self._run(self._astt_start())
+
+    async def _astt_start(self) -> None:
+        from ..voice import start_voice_server
+        st = await start_voice_server("stt", self.cfg.voice.stt)
+        self.events.put(self._stt_status_event(st))
+
+    def stop_stt_server(self) -> None:
+        self._run(self._astt_stop())
+
+    async def _astt_stop(self) -> None:
+        from ..voice import stop_voice_server
+        st = await stop_voice_server("stt", self.cfg.voice.stt)
+        self.events.put(self._stt_status_event(st))
+
+    def stt_test_transcribe(self, seconds: float = 6.0,
+                            device: str | None = None) -> None:
+        """Phase de test STT : enregistre puis transcrit, SANS lancer de tour
+        LLM. Événements : stt_test_recording -> stt_test_done / voice_error."""
+        self._run(self._astt_test(seconds, device))
+
+    async def _astt_test(self, seconds: float, device: str | None) -> None:
+        import time
+        from ..voice import VoiceError, ensure_voice_server, record_wav, STTClient
+        vcfg = self._record_cfg(device)
+        try:
+            st = await ensure_voice_server("stt", self.cfg.voice.stt)
+            if st.state == "offline":
+                raise VoiceError(f"serveur STT indisponible : {st.detail}")
+            self.events.put({"type": "stt_test_recording", "seconds": seconds})
+            path = await record_wav(seconds, vcfg)
+            t0 = time.monotonic()
+            client = STTClient(self.cfg.voice.stt.base_url,
+                               protocol=self.cfg.voice.stt.protocol)
+            try:
+                text = await client.transcribe(path, language="fr")
+            finally:
+                await client.aclose()
+            self.events.put({"type": "stt_test_done", "text": text,
+                             "seconds": seconds,
+                             "elapsed": time.monotonic() - t0,
+                             "protocol": self.cfg.voice.stt.protocol,
+                             "server": f"{st.host}:{st.port}"})
+        except VoiceError as exc:
+            self.events.put({"type": "voice_error", "message": str(exc)})
+
     def test_mic(self, device: str | None = None) -> None:
         """Enregistrement de test (0.5 s) pour v\u00e9rifier l'autorisation micro."""
         self._run(self._atest_mic(device))
