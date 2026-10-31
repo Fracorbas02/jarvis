@@ -323,7 +323,7 @@ class GtkBackend:
 
     # ---------- voix ----------
 
-    async def _transcribe_path(self, path) -> str:
+    async def _transcribe_path(self, path, on_status=None) -> str:
         """Transcription d'un WAV via le serveur STT, toujours par la même
         cascade (STTClient : route batch -> chat multimodal -> WS /v1/realtime)."""
         from ..voice import STTClient, ensure_voice_server, VoiceError
@@ -333,7 +333,7 @@ class GtkBackend:
         client = STTClient(self.cfg.voice.stt.base_url,
                            protocol=self.cfg.voice.stt.protocol)
         try:
-            return await client.transcribe(path, language="fr")
+            return await client.transcribe(path, language="fr", on_status=on_status)
         finally:
             await client.aclose()
 
@@ -386,12 +386,15 @@ class GtkBackend:
         from ..voice import VoiceError, record_wav, record_wav_vad
         vcfg = self._record_cfg(device)
         try:
+            def _phase(msg: str) -> None:
+                self.events.put({"type": "stt_phase", "message": msg})
+
             self.events.put({"type": "stt_recording", "seconds": seconds})
             if seconds and seconds > 0:
                 path = await record_wav(seconds, vcfg)
             else:
-                path = await record_wav_vad(vcfg, max_seconds=60.0)
-            text = await self._transcribe_path(path)
+                path = await record_wav_vad(vcfg, max_seconds=60.0, on_status=_phase)
+            text = await self._transcribe_path(path, on_status=_phase)
             self.events.put({"type": "stt_done", "text": text})
         except VoiceError as exc:
             self.events.put({"type": "voice_error", "message": str(exc)})
@@ -457,11 +460,14 @@ class GtkBackend:
             st = await ensure_voice_server("stt", self.cfg.voice.stt)
             if st.state == "offline":
                 raise VoiceError(f"serveur STT indisponible : {st.detail}")
+            def _phase(msg: str) -> None:
+                self.events.put({"type": "stt_test_phase", "message": msg})
+
             self.events.put({"type": "stt_test_recording", "seconds": seconds})
             if seconds and seconds > 0:
                 path = await record_wav(seconds, vcfg)
             else:
-                path = await record_wav_vad(vcfg, max_seconds=60.0)
+                path = await record_wav_vad(vcfg, max_seconds=60.0, on_status=_phase)
             # copie de diagnostic stable (le rec-* est horodaté) :
             import shutil as _shutil
             stable = self._state_dir() / "stt-test-last.wav" if hasattr(self, "_state_dir") else None
@@ -474,7 +480,7 @@ class GtkBackend:
                 pass
             audio_rms = _wav_rms(path)
             t0 = time.monotonic()
-            text = await self._transcribe_path(path)
+            text = await self._transcribe_path(path, on_status=_phase)
             self.events.put({"type": "stt_test_done", "text": text,
                              "seconds": seconds,
                              "elapsed": time.monotonic() - t0,

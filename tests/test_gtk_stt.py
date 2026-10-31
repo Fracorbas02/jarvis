@@ -77,7 +77,9 @@ async def _amain() -> int:
         while not backend.events.empty():
             events.append(backend.events.get_nowait())
         types = [e["type"] for e in events]
-        assert types == ["stt_test_recording", "stt_test_done"], types
+        # stt_test_phase (remontée des phases VAD/transcription) peut s'intercaler
+        assert types[0] == "stt_test_recording" and types[-1] == "stt_test_done", types
+        assert all(t in ("stt_test_recording", "stt_test_phase", "stt_test_done") for t in types), types
         done = events[-1]
         assert "transcription de" in done["text"], done
         assert done["protocol"] == "voxtral", done

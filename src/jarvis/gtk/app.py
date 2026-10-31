@@ -704,7 +704,6 @@ class JarvisWindow(Adw.ApplicationWindow):
         self._mic_perm_dialog.connect("response", self._on_mic_perm_response)
         self._mic_perm_dialog.present(self)
         return GLib.SOURCE_REMOVE
-
     def _on_mic_perm_response(self, dialog, response: str) -> None:
         save_ui_settings({"mic_permission_asked": True})
         self.settings["mic_permission_asked"] = True
@@ -942,6 +941,8 @@ class JarvisWindow(Adw.ApplicationWindow):
             self._set_busy_ui(False)
         elif t == "stt_recording":
             self._set_chat_hint("Parle…" if not event.get("seconds") else f"Enregistrement… {event['seconds']:.0f}s")
+        elif t == "stt_phase":
+            self._set_chat_hint(event["message"])
         elif t == "stt_done":
             self._set_chat_hint("")
             self._set_busy_ui(False)
@@ -968,6 +969,9 @@ class JarvisWindow(Adw.ApplicationWindow):
             if hasattr(self, "stt_result_meta"):
                 self.stt_result_meta.set_text(
                     f"Enregistrement… {event['seconds']:.0f}s")
+        elif t == "stt_test_phase":
+            if hasattr(self, "stt_result_meta"):
+                self.stt_result_meta.set_text(event["message"])
         elif t == "stt_test_done":
             self._on_stt_test_done(event)
         elif t == "mic_devices":
@@ -1006,7 +1010,6 @@ class JarvisWindow(Adw.ApplicationWindow):
         elif t == "sessions_list":
             self._show_sessions_dialog(event["sessions"])
         return GLib.SOURCE_REMOVE
-
     def _on_turn_done(self, event: dict) -> None:
         box = self._assistant_box
         trace = event.get("trace") or {}

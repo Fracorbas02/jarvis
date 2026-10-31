@@ -613,7 +613,8 @@ class STTClient:
             return None
         return None
 
-    async def transcribe(self, wav_path: str | Path, language: str | None = None) -> str:
+    async def transcribe(self, wav_path: str | Path, language: str | None = None,
+                         on_status=None) -> str:
         path = Path(wav_path)
         if not path.is_file():
             raise VoiceError(f"fichier audio introuvable : {path}")
@@ -629,6 +630,8 @@ class STTClient:
         else:
             endpoints = [("/inference", {}),
                          ("/v1/audio/transcriptions", {"model": self.model})]
+        if on_status:
+            on_status("transcription en cours…")
         last_err = ""
         for endpoint, extra in endpoints:
             resp = await self._post_transcription(path, language, endpoint, extra)
@@ -652,6 +655,8 @@ class STTClient:
         # tenté en protocole voxtral, même si les endpoints HTTP ont répondu.
         if self.protocol == "voxtral" or last_err:
             try:
+                if on_status:
+                    on_status("transcription en cours (websocket /v1/realtime)…")
                 ws = RealtimeSTTClient(self.root, timeout=self._timeout,
                                        model=self.model)
                 text = await ws.transcribe_wav(path, language=language)
@@ -936,9 +941,14 @@ async def record_wav(seconds: float, voice_cfg: VoiceConfig,
                 # -> ffmpeg ne s'arrête jamais -> on le tue -> buffer perdu
                 out_idx = argv.index("-")
                 argv = argv[:out_idx] + ["-t", str(seconds)] + argv[out_idx:]
+            # ffmpeg s'arrête seul à `seconds` : on attend juste un peu plus,
+            # PAS seconds+10 (un micro muet ou un -t ignoré ne doit pas bloquer)
+            wait_secs = seconds + 2.0
+        else:
+            wait_secs = seconds  # arecord : on coupe nous-mêmes à `seconds`
         proc = await asyncio.create_subprocess_exec(
             *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        pcm, err = await _stop_after(proc, seconds + 10.0)  # marge : laisse ffmpeg finir seul
+        pcm, err = await _stop_after(proc, wait_secs)
         # arecord/ffmpeg coupés par SIGTERM renvoient un code non nul : ce n'est
         # pas une erreur tant qu'on a du PCM exploitable.
         if not pcm:
@@ -966,7 +976,7 @@ async def record_wav_vad(voice_cfg: VoiceConfig, out_path: Path | None = None,
                          silence_seconds: float = 1.2,
                          silence_rms: float = 300.0,
                          min_seconds: float = 0.8,
-                         on_chunk=None) -> Path:
+                         on_chunk=None, on_status=None) -> Path:
     """Enregistre le micro jusqu'à la fin de parole (VAD par seuil RMS),
     puis écrit le WAV 16 kHz mono. Utilisé par l'UI pour le "parler et
     attendre" : plus de durée fixe.
@@ -1006,6 +1016,8 @@ async def record_wav_vad(voice_cfg: VoiceConfig, out_path: Path | None = None,
         out_idx = argv.index("-")
         argv = argv[:out_idx] + ["-t", str(max_seconds + 5)] + argv[out_idx:]
 
+    if on_status:
+        on_status("parle")
     proc = await asyncio.create_subprocess_exec(
         *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     block = SAMPLE_RATE * 2 // 10  # 100 ms de PCM 16-bit mono
@@ -1031,6 +1043,8 @@ async def record_wav_vad(voice_cfg: VoiceConfig, out_path: Path | None = None,
             else:
                 silent = 0.0
             if total >= min_seconds and silent >= silence_seconds:
+                if on_status:
+                    on_status(f"fin de parole détectée ({total:.1f}s)")
                 break  # fin de parole détectée
     finally:
         if proc.returncode is None:
@@ -1040,6 +1054,8 @@ async def record_wav_vad(voice_cfg: VoiceConfig, out_path: Path | None = None,
             except TimeoutError:
                 proc.kill()
                 await proc.wait()
+    if on_status:
+        on_status(f"enregistrement terminé ({total:.1f}s)")
     if not buf:
         _, err = await proc.communicate()
         raise VoiceError(f"{cmd[0]} a échoué : {err.decode(errors='replace')[:300]}")
