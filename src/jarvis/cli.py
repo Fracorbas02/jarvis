@@ -1,8 +1,7 @@
-"""REPL minimal avec affichage streaming du raisonnement.
+"""REPL Jarvis : affichage terminal riche (voir tui.py).
 
-Le thinking du modèle s'affiche en grisé pendant qu'il se produit (comme le
-résumé de pensée de Le Chat, sauf que c'est la vraie pensée, en direct), puis
-la réponse, puis l'exécution des outils avec leur statut.
+Le thinking du modèle et la réponse sont streamés en direct ; la réponse est
+rendue en Markdown dans un panneau (tui.Display).
 """
 
 from __future__ import annotations
@@ -14,42 +13,19 @@ import os
 import sys
 from pathlib import Path
 
+from rich.console import Console
+
 from .agent import Agent
 from .config import load_config
 from .llm import LLMClient
 from .mcp import McpToolProvider
-
-DIM, BOLD, RESET = "\x1b[2m", "\x1b[1m", "\x1b[0m"
+from .tui import Display, DIM
 
 BANNER = """Jarvis (pilote) — /tools /reset /quit"""
 
 
-class StreamDisplay:
-    """Affiche le flux de raisonnement en grisé puis la réponse, en direct."""
-
-    def __init__(self):
-        self._reasoning_started = False
-        self._content_started = False
-
-    def reasoning(self, text: str) -> None:
-        if not self._reasoning_started:
-            self._reasoning_started = True
-            print(f"{DIM}↯ réflexion… {RESET}", end="", flush=True)
-        print(f"{DIM}{text}{RESET}", end="", flush=True)
-
-    def content(self, text: str) -> None:
-        if not self._content_started:
-            self._content_started = True
-            print("\n\n[jarvis] ", end="", flush=True)
-        print(text, end="", flush=True)
-
-    def end(self) -> None:
-        if self._reasoning_started or self._content_started:
-            print()
-
-
 def _tool_status(name: str, args: dict) -> None:
-    print(f"\n{DIM}→ {name} {json.dumps(args, ensure_ascii=False)}{RESET}", flush=True)
+    print(f"\n{DIM}→ {name} {json.dumps(args, ensure_ascii=False)}", flush=True)
 
 
 def _setup_logging(verbose: bool = False) -> None:
@@ -94,7 +70,8 @@ async def amain() -> int:
     agent = Agent(llm, tools, cfg.agent.system_prompt, cfg.agent.max_iterations,
                   stream=True)
 
-    print(BANNER)
+    console = Console()
+    console.print(BANNER)
     history: list[dict] = []
     verbose = False
     try:
@@ -122,7 +99,7 @@ async def amain() -> int:
                       f"(log complet: ~/.cache/jarvis/jarvis.log)")
                 continue
 
-            display = StreamDisplay()
+            display = Display(console)
             try:
                 reply, history, trace = await agent.turn(
                     history, user,
@@ -130,12 +107,12 @@ async def amain() -> int:
                     on_reasoning=display.reasoning,
                     on_content=display.content,
                 )
-                display.end()
-                if not reply and not display._content_started:
-                    print(f"[jarvis] {reply}")
+                display.end_turn()
+                if reply and not display.content_started:
+                    display.print_content(reply)
             except Exception as exc:  # noqa: BLE001 — le REPL ne doit pas mourir
-                display.end()
-                print(f"erreur: {exc}", file=sys.stderr)
+                display.end_turn()
+                console.print(f"[bold red]erreur:[/] {exc}")
                 continue
             if trace.error:
                 print(f"warn: {trace.error}", file=sys.stderr)

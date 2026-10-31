@@ -1,0 +1,54 @@
+"""Validation visuelle du rendu TUI, sans LLM.
+
+Pousse des fragments simulés (raisonnement, réponse Markdown) dans
+jarvis.tui.Display et affiche le résultat. Usage :
+    uv run python tests/test_tui.py
+"""
+
+from __future__ import annotations
+
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from rich.console import Console  # noqa: E402
+
+from jarvis.tui import Display  # noqa: E402
+
+MD = """## CVE récentes Arista (30 derniers jours)
+
+| CVE | Score | Sévérité | Date |
+|-----|-------|----------|------|
+| **CVE-2026-102163** | **8.8** | HIGH | 2026-10-06 |
+| CVE-2026-102162 | 8.8 | HIGH | 2026-10-06 |
+| CVE-2026-102167 | 7.5 | HIGH | 2026-10-06 |
+
+### Détail de CVE-2026-102163
+
+Vecteur : `CVSS:3.1/AV:A/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H` — CWE-787.
+
+- aucun privilège requis, proximité RF suffisante
+- [Arista Security Advisory 0195](https://www.arista.com/en/support/advisories-notices)
+
+```python
+print("exemple de bloc de code")
+```
+"""
+
+
+def main() -> None:
+    console = Console(width=90, force_terminal=True)
+    d = Display(console)
+    for chunk in ["Je cherche ", "les CVE récentes ", "pour Arista…"]:
+        d.reasoning(chunk)
+        time.sleep(0.05)
+    for chunk in ["Voici le résultat :\n\n", MD[: len(MD) // 2], MD[len(MD) // 2 :]]:
+        d.content(chunk)
+        time.sleep(0.05)
+    d.end_turn()
+
+
+if __name__ == "__main__":
+    main()
