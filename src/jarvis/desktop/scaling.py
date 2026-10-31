@@ -228,11 +228,17 @@ def _monitors_xml_layout(path=None):
             print(f"[jarvis] debug: monitors.xml {path} illisible: {e}", file=sys.stderr)
         return []
     out = []
+    seen = set()
     for lm in root.iter("logicalmonitor"):
         try:
             x = int(float(lm.findtext("x", "0")))
             y = int(float(lm.findtext("y", "0")))
             s = float(lm.findtext("scale", "1"))
+            # ne garder que les <logicalmonitor> de la configuration ACTIVE
+            # (primaire="yes" ou non marqués <primary>no</primary> dans un <monitor>
+            # actif) : monitors.xml contient l'historique des configurations.
+            mon_el = lm.find("monitor")
+            primary = mon_el.findtext("primary", "") if mon_el is not None else ""
             # width/height ne sont PAS des enfants directs de <logicalmonitor> :
             # ils sont dans <monitor><width> ou <monitor><mode><width>.
             mon = lm.find("monitor")
@@ -246,10 +252,27 @@ def _monitors_xml_layout(path=None):
                         w = int(float(mode.findtext("width", "0")))
                         h = int(float(mode.findtext("height", "0")))
             if w and h:
-                out.append((x, y, w, h, s))
+                out.append((x, y, w, h, s, primary))
         except (TypeError, ValueError):
             continue
-    return out
+    # garder la configuration active : on dédoublonne d'abord, puis on filtre
+    # les <primary>no</primary> (moniteurs désactivés d'une ancienne config).
+    dedup = []
+    seen2 = set()
+    for m in out:
+        key = m[:5]
+        if key not in seen2:
+            seen2.add(key)
+            dedup.append(m)
+    chosen = [m for m in dedup if m[5] != "no"]
+    dedup = []
+    seen2 = set()
+    for m in chosen:
+        key = m[:5]
+        if key not in seen2:
+            seen2.add(key)
+            dedup.append(m[:5])
+    return dedup
 
 
 def _pointer_monitor(root, scale: float) -> tuple[int, int, int, int] | None:
@@ -287,25 +310,30 @@ def _center_geometry(root, scale: float) -> str:
     if mons:
         try:
             px, py = root.winfo_pointerxy()
-            sw = root.winfo_screenwidth()
-            # winfo_pointerxy peut renvoyer des coordonnées physiques (compositeur)
-            # ou déjà logiques (X11 pur) : on détecte via la taille d'écran vue par Tk.
-            if px > sw * 1.5 or py > root.winfo_screenheight() * 1.5:
-                pxl, pyl = px / scale, py / scale
-            else:
-                pxl, pyl = px, py
-            for (x, y, w, h, ms) in mons:
-                if x <= pxl < x + w and y <= pyl < y + h:
-                    mw_l, mh_l = w, h
-                    mx_l, my_l = x, y
-                    s = ms
-                    w_ = max(int(mw_l * 0.62), round(adaptive_minsize()[0] / s))
-                    h_ = max(int(mh_l * 0.68), round(adaptive_minsize()[1] / s))
-                    w_ = min(w_, mw_l)
-                    h_ = min(h_, mh_l)
-                    x_ = mx_l + max((mw_l - w_) // 2, 0)
-                    y_ = my_l + max((mh_l - h_) // 2, 0)
-                    return f"{w_}x{h_}+{x_}+{y_}"
+            # Essayer le pointeur en logiques (px/scale) puis tel quel :
+            # on prend le 1er moniteur qui contient le point dans l'un des 2 cas.
+            candidates = [(px / scale, py / scale), (float(px), float(py))]
+            hit = None
+            for (pxl, pyl) in candidates:
+                for (x, y, w, h, ms) in mons:
+                    if x <= pxl < x + w and y <= pyl < y + h:
+                        hit = (x, y, w, h, ms)
+                        break
+                if hit:
+                    break
+            if hit:
+                x, y, w, h, ms = hit
+                mw_l, mh_l = w, h
+                mx_l, my_l = x, y
+                s = ms
+                w_ = max(int(mw_l * 0.62), round(adaptive_minsize()[0] / s))
+                h_ = max(int(mh_l * 0.68), round(adaptive_minsize()[1] / s))
+                w_ = min(w_, mw_l)
+                h_ = min(h_, mh_l)
+                x_ = mx_l + max((mw_l - w_) // 2, 0)
+                y_ = my_l + max((mh_l - h_) // 2, 0)
+                return f"{w_}x{h_}+{x_}+{y_}"
+            return adaptive_geometry(root)
         except Exception:  # noqa: BLE001
             pass
     return adaptive_geometry(root)

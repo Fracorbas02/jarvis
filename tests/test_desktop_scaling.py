@@ -110,13 +110,19 @@ def test_unit() -> None:
     # format réel GNOME: width/height dans <monitor><mode><width/height>
     monitors2 = (
         '<monitors version="2">'
+        # config active (primary=yes sur eDP-1), avec doublons d'historique
         '<monitor><spec><connector>eDP-1</connector></spec>'
         '<logicalmonitor><x>0</x><y>0</y><scale>2</scale>'
-        '<monitor><mode><width>1440</width><height>900</height></mode></monitor>'
+        '<monitor><primary>yes</primary><mode><width>1440</width><height>900</height></mode></monitor>'
         '</logicalmonitor></monitor>'
         '<monitor><spec><connector>DP-1</connector></spec>'
         '<logicalmonitor><x>1440</x><y>0</y><scale>1</scale>'
         '<monitor><mode><width>1920</width><height>1080</height></mode></monitor>'
+        '</logicalmonitor></monitor>'
+        # historique (anciennes configs, primary=no ou sans primary)
+        '<monitor><spec><connector>HDMI-1</connector></spec>'
+        '<logicalmonitor><x>1920</x><y>0</y><scale>1</scale>'
+        '<monitor><primary>no</primary><mode><width>1920</width><height>1080</height></mode></monitor>'
         '</logicalmonitor></monitor>'
         '</monitors>'
     )
@@ -125,6 +131,7 @@ def test_unit() -> None:
         mpath2 = f.name
     try:
         mons = scaling_mod._monitors_xml_layout(mpath2)
+        # dédoublonné + primary=no filtré (historique)
         assert mons == [(0, 0, 1440, 900, 2.0), (1440, 0, 1920, 1080, 1.0)], mons
 
         class PtrRoot(StubRoot):
