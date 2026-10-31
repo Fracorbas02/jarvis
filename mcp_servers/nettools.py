@@ -88,29 +88,40 @@ def tls_info(host: str, port: int = 443) -> str:
     SANs, algorithme de signature. Utile pour surveiller l'expiration."""
     if shutil.which("openssl") is None:
         return "ERREUR: 'openssl' introuvable dans PATH"
-    proc = subprocess.run(
-        ["openssl", "s_client", "-connect", f"{host}:{port}", "-servername", host],
-        input="", capture_output=True, text=True, timeout=20)
+    try:
+        proc = subprocess.run(
+            ["openssl", "s_client", "-connect", f"{host}:{port}", "-servername", host],
+            input="", capture_output=True, text=True, timeout=20)
+    except subprocess.TimeoutExpired:
+        return f"ERREUR: timeout openssl s_client vers {host}:{port}"
     out = proc.stdout or ""
     err = proc.stderr or ""
     if "CONNECTED" not in err and not out:
         return f"ERREUR: connexion à {host}:{port} impossible ({err.strip()[:300]})"
-    # certificat du serveur + chaîne
-    cert = subprocess.run(
-        ["openssl", "s_client", "-connect", f"{host}:{port}", "-servername", host,
-         "-showcerts"],
-        input="", capture_output=True, text=True, timeout=20).stdout
+    try:
+        cert = subprocess.run(
+            ["openssl", "s_client", "-connect", f"{host}:{port}", "-servername", host,
+             "-showcerts"],
+            input="", capture_output=True, text=True, timeout=20).stdout
+    except subprocess.TimeoutExpired:
+        cert = ""
     lines = ["== s_client ==", (out + err).strip()[:4000], "", "== chaîne ==",
              cert[:_MAX_BYTES]]
-    # dates de validité du certificat serveur
-    m = re.search(r"-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----", cert, re.S)
+    pem_begin = "-----BEGIN CERTIFICATE-----"
+    pem_end = "-----END CERTIFICATE-----"
+    any_body = "(" + chr(46) + chr(42) + "?)"
+    m = re.search(re.escape(pem_begin) + any_body + re.escape(pem_end), cert, re.S)
     if m:
-        p = subprocess.run(["openssl", "x509", "-noout", "-subject", "-issuer",
-                            "-dates", "-ext", "subjectAltName"],
-                           input="-----BEGIN CERTIFICATE-----" + m.group(1) + "-----END CERTIFICATE-----",
-                           capture_output=True, text=True, timeout=10)
-        lines += ["", "== certificat serveur ==", (p.stdout or p.stderr).strip()]
+        try:
+            p = subprocess.run(["openssl", "x509", "-noout", "-subject", "-issuer",
+                                "-dates", "-ext", "subjectAltName"],
+                               input=pem_begin + m.group(1) + pem_end,
+                               capture_output=True, text=True, timeout=10)
+            lines += ["", "== certificat serveur ==", (p.stdout or p.stderr).strip()]
+        except subprocess.TimeoutExpired:
+            pass
     return "\n".join(lines)
+
 
 
 @mcp.tool()

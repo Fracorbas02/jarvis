@@ -8,7 +8,7 @@ import customtkinter as ctk
 
 from ..gui.models import MODES, MODE_ORDER
 from .controller import DesktopController
-from .theme import ACCENT, BG, PANEL, PANEL_2, TEXT_DIM
+from .theme import ACCENT, PANEL, PANEL_2, TEXT_DIM
 
 MODE_VALUES = [MODES[m]["label"] for m in MODE_ORDER]
 MODE_BY_LABEL = {MODES[m]["label"]: m for m in MODE_ORDER}

@@ -38,7 +38,8 @@ class SettingsPanel(ctk.CTkFrame):
         labels = list(self.dev_by_label)
         choice = load_gpu_choice()
         current = choice.get("device", "")
-        initial = next((l for l in labels if l.endswith(f"({current})")), labels[0])
+        initial = next((l for l, g in zip(labels, self.gpus) if g.device == current),
+                       labels[0])
         self.gpu_combo = ctk.CTkComboBox(box, values=labels, height=30,
                                          fg_color=BG, button_color=ACCENT)
         self.gpu_combo.set(initial)

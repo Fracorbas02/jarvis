@@ -189,14 +189,29 @@ class Sidebar:
         if model is None:
             ui.notify("Choisis d'abord un modèle LLM", type="warning")
             return
-        ui.notify(f"Démarrage de llama-server avec {model.name}…", type="info")
-        st = await server_mod.start_server(model.path, self.state.backend.cfg.llm.base_url)
-        self.state.server_status = st
-        self._paint_status()
-        if st.models:
-            ui.notify("Serveur prêt", type="positive")
-        else:
-            ui.notify(st.detail or "démarrage en cours", type="warning")
+        ui.notify(f"Démarrage de llama-server avec {model.name}… "
+                  f"(chargement du modèle, voir ~/.cache/jarvis/llama-server-gui.log)",
+                  type="info")
+        self.btn_start.disable() if self.btn_start else None
+
+        async def _do_start() -> None:
+            st = await server_mod.start_server(model.path,
+                                               self.state.backend.cfg.llm.base_url)
+            self.state.server_status = st
+            self._paint_status()
+            if st.models:
+                ui.notify("Serveur prêt", type="positive")
+            elif st.state == "offline":
+                ui.notify(f"Échec démarrage : {st.detail}", type="negative", timeout=15)
+            else:
+                ui.notify(st.detail or "démarrage en cours", type="warning")
+            if self.btn_start:
+                self.btn_start.enable()
+
+        # le chargement du modèle prend des dizaines de secondes : on lance la
+        # coroutine via un timer (tâche serveur dédiée), jamais en await direct
+        # dans le handler (ça figerait le client)
+        ui.timer(0.1, _do_start, once=True)
 
     async def stop_server(self) -> None:
         if self.state.backend is None:

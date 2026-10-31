@@ -7,7 +7,6 @@ qui change selon le mode choisi (chat LLM, TTS, STT).
 from __future__ import annotations
 
 import argparse
-import asyncio
 import logging
 
 from nicegui import app, ui
