@@ -188,6 +188,20 @@ Nouvelle UI native, qui ne touche \u00e0 rien d'autre que la partie graphique
 D\u00e9pendance syst\u00e8me : `python3-gobject`, `gtk4`, `libadwaita-1`
 (ex. `sudo pacman -S python-gobject gtk4 libadwaita` sur Arch).
 
+Pi\u00e8ge uv : PyGObject vit dans les site-packages du **python syst\u00e8me**
+(`/usr/lib/python3.13/site-packages`). Le venv d'uv doit donc \u00eatre cr\u00e9\u00e9 sur
+ce python avec `--system-site-packages`, sinon `import gi` \u00e9choue m\u00eame avec
+`python-gobject` install\u00e9 (le Python standalone d'uv ne voit pas `/usr/lib/...`) :
+
+```sh
+rm -rf .venv
+uv venv --python /usr/bin/python3 --system-site-packages .venv
+uv sync --python /usr/bin/python3   # r\u00e9utilise le .venv (system-site-packages conserv\u00e9)
+# si uv resette le venv sans le flag : UV_SYSTEM_SITE_PACKAGES=true uv sync --python /usr/bin/python3
+uv run python -c "import gi; gi.require_version('Gtk','4.0'); from gi.repository import Gtk; print('GTK', Gtk.get_major_version(), Gtk.get_minor_version())"
+uv run jarvis-gtk
+```
+
 Tests du pont GTK (sans GTK ni LLM r\u00e9el, mock LLM + MCP echo) :
 
 ```sh
