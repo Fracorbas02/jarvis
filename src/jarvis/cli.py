@@ -10,7 +10,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import sys
+from pathlib import Path
 
 from .agent import Agent
 from .config import load_config
@@ -50,9 +52,35 @@ def _tool_status(name: str, args: dict) -> None:
     print(f"\n{DIM}→ {name} {json.dumps(args, ensure_ascii=False)}{RESET}", flush=True)
 
 
+def _setup_logging(verbose: bool = False) -> None:
+    """Console en WARNING par défaut (lisible), DEBUG complet dans un fichier.
+
+    Les logs httpx/jarvis restent disponibles pour le debug post-mortem dans
+    ~/.cache/jarvis/jarvis.log (ou $JARVIS_LOG_DIR/jarvis.log).
+    """
+    fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG)
+    console = logging.StreamHandler()
+    console.setLevel(logging.DEBUG if verbose else logging.WARNING)
+    console.setFormatter(logging.Formatter(fmt))
+    root.addHandler(console)
+    log_dir = Path(os.environ.get("JARVIS_LOG_DIR", Path.home() / ".cache" / "jarvis"))
+    log_dir.mkdir(parents=True, exist_ok=True)
+    fh = logging.FileHandler(log_dir / "jarvis.log", encoding="utf-8")
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(logging.Formatter(fmt))
+    root.addHandler(fh)
+
+
+def _set_console_log_level(level: int) -> None:
+    for h in logging.getLogger().handlers:
+        if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
+            h.setLevel(level)
+
+
 async def amain() -> int:
-    logging.basicConfig(level=logging.INFO,
-                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    _setup_logging()
     try:
         cfg = load_config()
     except FileNotFoundError as exc:
@@ -68,6 +96,7 @@ async def amain() -> int:
 
     print(BANNER)
     history: list[dict] = []
+    verbose = False
     try:
         while True:
             try:
@@ -85,6 +114,12 @@ async def amain() -> int:
             if user == "/tools":
                 for name in tools.names():
                     print(f"  {name}")
+                continue
+            if user == "/verbose":
+                verbose = not verbose
+                _set_console_log_level(logging.DEBUG if verbose else logging.WARNING)
+                print(f"niveau de log console: {'DEBUG' if verbose else 'WARNING'} "
+                      f"(log complet: ~/.cache/jarvis/jarvis.log)")
                 continue
 
             display = StreamDisplay()
