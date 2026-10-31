@@ -60,6 +60,8 @@ async def main() -> int:
         ("textutils__unit_convert", {"value": 10, "from_unit": "go", "to_unit": "to"}),
         ("textutils__unit_convert", {"value": 1, "from_unit": "h", "to_unit": "min"}),
         ("textutils__unit_convert", {"value": 100, "from_unit": "c", "to_unit": "f"}),
+        ("textutils__unit_convert", {"value": 50, "from_unit": "%", "to_unit": "1"}),
+        ("textutils__unit_convert", {"value": 5, "from_unit": "s", "to_unit": "go"}),
         ("textutils__unit_convert", {"value": 1, "from_unit": "ko", "to_unit": "ko/s"}),
         ("textutils__unit_convert", {"value": 1, "from_unit": "octet", "to_unit": "inconnu"}),
     ])
@@ -79,8 +81,11 @@ async def main() -> int:
     check("10 go = 0.00976562 to", "0.00976562" in at(r, "textutils__unit_convert", 1))
     check("1 h = 60 min", "60" in at(r, "textutils__unit_convert", 2))
     check("100 c = 212 f", "212" in at(r, "textutils__unit_convert", 3))
-    check("ko vs ko/s -> incompatible mais calculée (ERREUR non levée)", at(r, "textutils__unit_convert", 4) != "")
-    check("unité cible inconnue -> ERREUR", "ERREUR" in at(r, "textutils__unit_convert", 5))
+    check("50 % = 0.5 (ratio)", "0.5" in at(r, "textutils__unit_convert", 4))
+    check("5 s -> go refusé (dimensions différentes)", "ERREUR" in at(r, "textutils__unit_convert", 5)
+          and "dimensions" in at(r, "textutils__unit_convert", 5))
+    check("ko (taille) -> ko/s (débit) refusé", "ERREUR" in at(r, "textutils__unit_convert", 6))
+    check("unité cible inconnue -> ERREUR", "ERREUR" in at(r, "textutils__unit_convert", 7))
 
     # --- notes : répertoire temporaire isolé ---
     with tempfile.TemporaryDirectory() as tmp:
@@ -119,16 +124,31 @@ async def main() -> int:
     r = await call_all(p, [
         ("scan__port_scan", {"target": "8.8.8.8", "ports": "80"}),
         ("scan__port_scan", {"target": "127.0.0.1", "ports": "22,80"}),
+        ("scan__port_scan", {"target": "localhost", "ports": "22,80"}),
+        ("scan__port_scan", {"target": "printer.local", "ports": "80"}),
         ("scan__port_scan", {"target": "cible; rm -rf /", "ports": "80"}),
+        ("scan__port_scan", {"target": "-sS", "ports": "80"}),
+        ("scan__port_scan", {"target": "127.0.0.1", "ports": "1-65535"}),
         ("scan__service_detect", {"target": "1.1.1.1"}),
+        ("scan__os_detect", {"target": "-O; rm -rf /"}),
+        ("scan__os_detect", {"target": "127.0.0.1"}),
     ])
     await p.stop()
     check("scan cible publique refusée sans allow_public",
           "ERREUR" in at(r, "scan__port_scan", 0) and "allow_public" in at(r, "scan__port_scan", 0))
     check("scan 127.0.0.1 accepté (nmap absent -> ERREUR propre ou scan)",
-          at(r, "scan__port_scan", 1) != "")
-    check("scan cible avec injection -> ERREUR", "ERREUR" in at(r, "scan__port_scan", 2))
+          at(r, "scan__port_scan", 1) != "" and "hors LAN" not in at(r, "scan__port_scan", 1))
+    check("scan localhost accepté (bug docstring corrigé)",
+          "hors LAN" not in at(r, "scan__port_scan", 2))
+    check("scan *.local accepté", "hors LAN" not in at(r, "scan__port_scan", 3))
+    check("scan cible avec injection -> ERREUR", "ERREUR" in at(r, "scan__port_scan", 4))
+    check("scan cible '-sS' (option) -> ERREUR", "ERREUR" in at(r, "scan__port_scan", 5))
+    check("scan plage 1-65535 refusée (>4096 ports)",
+          "ERREUR" in at(r, "scan__port_scan", 6) and "trop large" in at(r, "scan__port_scan", 6))
     check("service_detect 1.1.1.1 refusé", "ERREUR" in at(r, "scan__service_detect"))
+    check("os_detect cible invalide -> ERREUR (regex ajouté)", "ERREUR" in at(r, "scan__os_detect", 0))
+    check("os_detect 127.0.0.1 accepté", at(r, "scan__os_detect", 1) != ""
+          and "hors LAN" not in at(r, "scan__os_detect", 1))
 
     # --- lan / snmp / docker : présence des outils + erreurs propres ---
     p = McpToolProvider({"lan": SERVERS["lan"], "snmp": SERVERS["snmp"], "docker": SERVERS["docker"]})
@@ -137,9 +157,14 @@ async def main() -> int:
     r = await call_all(p, [
         ("lan__arp_table", {}),
         ("lan__dhcp_leases", {}),
+        ("lan__dhcp_leases", {"path": "/etc/hostname"}),
+        ("lan__dhcp_leases", {"path": "/var/lib/dhcp/dhcpd.leases"}),
         ("lan__lan_hosts", {"subnet": "pas-un-subnet"}),
+        ("lan__lan_hosts", {"subnet": "8.8.8.0/24"}),
+        ("lan__lan_hosts", {"subnet": "192.168.1.0/24"}),
         ("snmp__snmp_get", {"target": "127.0.0.1", "oid": "1.3.6.0.2.1.1.5.0"}),
         ("snmp__snmp_get", {"target": "127.0.0.1", "oid": "1.3.6.0; rm -rf /"}),
+        ("snmp__snmp_get", {"target": "--option", "oid": "1.3.6.0.2.1.1.5.0"}),
         ("docker__containers", {}),
         ("docker__container_logs", {"name": "x; rm -rf /"}),
         ("docker__container_logs", {"name": "mon-ctr", "lines": 10}),
@@ -151,10 +176,19 @@ async def main() -> int:
               "docker__images", "docker__container_inspect", "docker__disk_usage"):
         check(f"outil exposé: {n}", n in names)
     check("arp_table répond", at(r, "lan__arp_table").strip() != "")
-    check("dhcp_leases sans fichier -> ERREUR propre ou liste", at(r, "lan__dhcp_leases") != "")
-    check("lan_hosts subnet invalide -> ERREUR", "ERREUR" in at(r, "lan__lan_hosts"))
+    check("dhcp_leases sans fichier -> ERREUR propre ou liste", at(r, "lan__dhcp_leases", 0) != "")
+    check("dhcp_leases path hors /var/lib,/etc -> refusé",
+          "ERREUR" in at(r, "lan__dhcp_leases", 1) and "autorisés" in at(r, "lan__dhcp_leases", 1))
+    check("dhcp_leases path autorisé mais absent -> ERREUR propre",
+          at(r, "lan__dhcp_leases", 2).startswith("ERREUR"))
+    check("lan_hosts subnet invalide -> ERREUR", "ERREUR" in at(r, "lan__lan_hosts", 0))
+    check("lan_hosts 8.8.8.0/24 (public) refusé",
+          "ERREUR" in at(r, "lan__lan_hosts", 1) and "public" in at(r, "lan__lan_hosts", 1))
+    check("lan_hosts 192.168.1.0/24 (privé) accepté",
+          "public" not in at(r, "lan__lan_hosts", 2).lower() or "refusé" not in at(r, "lan__lan_hosts", 2))
     check("snmp_get répond (timeout/ERREUR propre acceptés)", at(r, "snmp__snmp_get", 0) != "")
     check("snmp OID avec injection -> ERREUR", "ERREUR" in at(r, "snmp__snmp_get", 1))
+    check("snmp target '--option' -> ERREUR (anti-option)", "ERREUR" in at(r, "snmp__snmp_get", 2))
     check("docker containers répond (docker absent -> ERREUR propre)",
           at(r, "docker__containers").startswith("ERREUR") or "CONTAINER" in at(r, "docker__containers").upper()
           or at(r, "docker__containers") != "")
@@ -167,7 +201,9 @@ async def main() -> int:
     r = await call_all(p, [
         ("sysinfo__services", {"state": "failed"}),
         ("sysinfo__service_status", {"name": "systemd; rm -rf /"}),
+        ("sysinfo__service_status", {"name": "--no-pager"}),
         ("sysinfo__service_status", {"name": "systemd-journald"}),
+        ("sysinfo__logs", {"service": "--no-pager"}),
         ("sysinfo__smart_disk", {"device": "/dev/sda"}),
         ("sysinfo__smart_disk", {"device": "pas-un-device"}),
         ("sysinfo__battery", {}),
@@ -175,21 +211,37 @@ async def main() -> int:
     await p.stop()
     check("services failed répond", at(r, "sysinfo__services") != "")
     check("service_status injection -> ERREUR", "ERREUR" in at(r, "sysinfo__service_status", 0))
+    check("service_status '--no-pager' (option) -> ERREUR", "ERREUR" in at(r, "sysinfo__service_status", 1))
+    check("logs '--no-pager' (option) -> ERREUR", "ERREUR" in at(r, "sysinfo__logs"))
     check("service_status valide -> réponse", at(r, "sysinfo__service_status", 1) != "")
     check("smart_disk répond (smartctl absent -> ERREUR propre ou données)",
           at(r, "sysinfo__smart_disk", 0) != "")
     check("smart_disk device invalide -> ERREUR", "ERREUR" in at(r, "sysinfo__smart_disk", 1))
     check("battery répond (fixe -> message ou données)", at(r, "sysinfo__battery") != "")
 
-    # --- nettools : bandwidth_test ---
+    # --- nettools : bandwidth_test + SSRF http_get ---
     p = McpToolProvider({"nettools": SERVERS["nettools"]})
     await p.start()
     names = p.names()
-    r = await call_all(p, [("nettools__bandwidth_test", {"duration": 1})])
+    r = await call_all(p, [
+        ("nettools__bandwidth_test", {"server": "", "duration": 1}),
+        ("nettools__bandwidth_test", {"server": "192.168.1.10", "duration": 1}),
+        ("nettools__bandwidth_test", {"server": "-c", "duration": 1}),
+        ("nettools__http_get", {"url": "http://169.254.169.254/latest/meta-data"}),
+        ("nettools__http_get", {"url": "http://127.0.0.1:9931/v1/models"}),
+        ("nettools__http_get", {"url": "http://[::1]/"}),
+    ])
     await p.stop()
     check("outil exposé: nettools__bandwidth_test", "nettools__bandwidth_test" in names)
-    check("bandwidth_test répond (iperf3 absent -> ERREUR propre ou débit)",
-          at(r, "nettools__bandwidth_test") != "")
+    check("bandwidth_test sans server -> ERREUR (plus de serveur public par défaut)",
+          "ERREUR" in at(r, "nettools__bandwidth_test", 0) and "server requis" in at(r, "nettools__bandwidth_test", 0))
+    check("bandwidth_test avec server -> tentative (iperf3 absent -> ERREUR propre)",
+          at(r, "nettools__bandwidth_test", 1) != "" and "server requis" not in at(r, "nettools__bandwidth_test", 1))
+    check("bandwidth_test server '-c' (option) -> ERREUR", "ERREUR" in at(r, "nettools__bandwidth_test", 2))
+    check("http_get 169.254.169.254 (métadonnées cloud) -> ERREUR SSRF",
+          "SSRF" in at(r, "nettools__http_get", 0))
+    check("http_get 127.0.0.1 -> ERREUR SSRF", "SSRF" in at(r, "nettools__http_get", 1))
+    check("http_get [::1] -> ERREUR SSRF", "SSRF" in at(r, "nettools__http_get", 2))
 
     # --- serveurs externes : on vérifie juste qu'ils démarrent et exposent leurs outils ---
     p = McpToolProvider({s: SERVERS[s] for s in ("kev", "epss", "ghsa", "fetch", "rss", "exploitdb")})
@@ -209,7 +261,10 @@ async def main() -> int:
     r = await call_all(p, [
         ("fetch__fetch_page", {"url": "ftp://x"}),
         ("fetch__fetch_headers", {"url": "ht!tp://x"}),
+        ("fetch__fetch_page", {"url": "http://169.254.169.254/latest/meta-data"}),
+        ("fetch__fetch_page", {"url": "http://127.0.0.1:8080/"}),
         ("rss__rss_latest", {"feed_url": "ftp://x"}),
+        ("rss__rss_latest", {"feed_url": "http://169.254.169.254/feed"}),
         ("exploitdb__exploit_search", {"query": "x; rm -rf /"}),
         ("exploitdb__exploit_info", {"edb_id": "abc"}),
         ("epss__epss_score", {"cves": "pas-une-cve"}),
@@ -218,9 +273,12 @@ async def main() -> int:
         ("kev__kev_info", {"cve_id": "pas-une-cve"}),
     ])
     await p.stop()
-    check("fetch_page schéma refusé", "ERREUR" in at(r, "fetch__fetch_page"))
+    check("fetch_page schéma refusé", "ERREUR" in at(r, "fetch__fetch_page", 0))
     check("fetch_headers url invalide", "ERREUR" in at(r, "fetch__fetch_headers"))
-    check("rss schéma refusé", "ERREUR" in at(r, "rss__rss_latest"))
+    check("fetch_page métadonnées cloud -> ERREUR SSRF", "SSRF" in at(r, "fetch__fetch_page", 1))
+    check("fetch_page 127.0.0.1 -> ERREUR SSRF", "SSRF" in at(r, "fetch__fetch_page", 2))
+    check("rss schéma refusé", "ERREUR" in at(r, "rss__rss_latest", 0))
+    check("rss métadonnées cloud -> ERREUR SSRF", "SSRF" in at(r, "rss__rss_latest", 1))
     check("exploit_search injection -> ERREUR", "ERREUR" in at(r, "exploitdb__exploit_search"))
     check("exploit_info id non numérique -> ERREUR", "ERREUR" in at(r, "exploitdb__exploit_info"))
     check("epss_score sans CVE valide -> ERREUR", "ERREUR" in at(r, "epss__epss_score"))
@@ -228,6 +286,68 @@ async def main() -> int:
           at(r, "epss__epss_history") != "")
     check("ghsa_info id invalide -> ERREUR", "ERREUR" in at(r, "ghsa__ghsa_info"))
     check("kev_info id invalide -> ERREUR", "ERREUR" in at(r, "kev__kev_info"))
+
+    # --- rss/fetch : parsing réel RSS 2.0 + Atom contre un serveur HTTP local ---
+    import http.server
+    import threading
+
+    RSS20 = """<?xml version="1.0"?>
+<rss version="2.0"><channel><title>Blog Test RSS</title><description>desc rss</description>
+<item><title>Article RSS Un</title><link>https://exemple.test/a1</link><pubDate>Mon, 27 Oct 2026 10:00:00 GMT</pubDate><description>résumé un</description></item>
+<item><title>Article RSS Deux</title><link>https://exemple.test/a2</link><pubDate>Tue, 28 Oct 2026 10:00:00 GMT</pubDate><description>résumé deux</description></item>
+</channel></rss>"""
+    ATOM = """<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"><title>Blog Test Atom</title><subtitle>desc atom</subtitle>
+<entry><title>Article Atom Un</title><link rel="alternate" href="https://exemple.test/e1"/><updated>2026-10-28T09:00:00Z</updated><summary>résumé atom un</summary></entry>
+<entry><title>Article Atom Deux</title><link rel="self" href="https://exemple.test/feed"/><link rel="alternate" href="https://exemple.test/e2"/><updated>2026-10-29T09:00:00Z</updated><content>contenu deux</content></entry>
+</feed>"""
+    PAGE = "<html><head><title>Doc</title><style>x{}</style></head><body><h1>Titre</h1><p>Bonjour <b>monde</b></p><script>evil()</script></body></html>"
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            body = {"/rss.xml": RSS20, "/atom.xml": ATOM, "/page": PAGE}.get(self.path, "")
+            payload = body.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/xml" if self.path != "/page" else "text/html")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+    httpd = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    os.environ["JARVIS_FETCH_ALLOW_PRIVATE"] = "1"  # override test local uniquement
+    try:
+        p = McpToolProvider({"rss": SERVERS["rss"], "fetch": SERVERS["fetch"]})
+        await p.start()
+        r = await call_all(p, [
+            ("rss__rss_latest", {"feed_url": f"http://127.0.0.1:{port}/rss.xml", "n": 5}),
+            ("rss__rss_latest", {"feed_url": f"http://127.0.0.1:{port}/atom.xml", "n": 5}),
+            ("rss__rss_check", {"feed_url": f"http://127.0.0.1:{port}/atom.xml"}),
+            ("fetch__fetch_page", {"url": f"http://127.0.0.1:{port}/page", "max_chars": 500}),
+        ])
+        await p.stop()
+    finally:
+        del os.environ["JARVIS_FETCH_ALLOW_PRIVATE"]
+        httpd.shutdown()
+    check("RSS 2.0: titre du site + 2 articles avec liens",
+          "Blog Test RSS" in at(r, "rss__rss_latest", 0)
+          and "Article RSS Un" in at(r, "rss__rss_latest", 0)
+          and "https://exemple.test/a1" in at(r, "rss__rss_latest", 0))
+    check("Atom: titres résolus via namespace (bug corrigé)",
+          "Article Atom Un" in at(r, "rss__rss_latest", 1))
+    check("Atom: lien rel=alternate choisi (pas le rel=self)",
+          "https://exemple.test/e2" in at(r, "rss__rss_latest", 1)
+          and "exemple.test/feed" not in at(r, "rss__rss_latest", 1).split("e2")[0][-40:])
+    check("Atom: contenu en fallback de summary pour l'article 2",
+          "contenu deux" in at(r, "rss__rss_latest", 1))
+    check("rss_check Atom: titre du feed lu", "Blog Test Atom" in at(r, "rss__rss_check"))
+    check("fetch_page local: texte extrait, script/style retirés",
+          "Bonjour" in at(r, "fetch__fetch_page") and "monde" in at(r, "fetch__fetch_page")
+          and "evil()" not in at(r, "fetch__fetch_page"))
 
     passed = sum(1 for _, ok, _ in results if ok)
     print(f"\n{passed}/{len(results)} tests OK")

@@ -9,13 +9,47 @@ try:
 except ImportError:
     from mcp.server.fastmcp import FastMCP as Server      # SDK MCP 1.x
 
+import ipaddress
+import os
 import re
 import shutil
+import socket
 import subprocess
+import urllib.parse
 
 mcp = Server("nettools")
 
 _MAX_BYTES = 20_000
+
+
+def _check_url_ssrf(url: str, allow_private: bool = False) -> str | None:
+    """Garde SSRF : http(s) uniquement et l'hôte ne doit résoudre vers aucune IP
+    loopback, link-local (169.254.169.254 métadonnées cloud), non routable ou
+    privée (sauf allow_private=True). Toutes les IP résolues sont vérifiées."""
+    if not url.startswith(("http://", "https://")):
+        return "ERREUR: url doit commencer par http:// ou https://"
+    host = urllib.parse.urlsplit(url).hostname or ""
+    if not host:
+        return "ERREUR: url sans hôte."
+    try:
+        addrs = [host]
+        ipaddress.ip_address(host)
+    except ValueError:
+        try:
+            addrs = [info[4][0] for info in socket.getaddrinfo(host, None)]
+        except socket.gaierror:
+            return f"ERREUR: hôte '{host}' non résoluble."
+    # JARVIS_FETCH_ALLOW_PRIVATE=1 : override explicite (tests locaux) —
+    # désactive les contrôles d'IP, jamais la vérification de schéma.
+    if os.environ.get("JARVIS_FETCH_ALLOW_PRIVATE") == "1":
+        return None
+    for a in addrs:
+        addr = ipaddress.ip_address(a)
+        if addr.is_loopback or addr.is_link_local or addr.is_unspecified or addr.is_multicast:
+            return f"ERREUR SSRF: '{host}' résout vers {addr} (loopback/link-local interdit)."
+        if not allow_private and addr.is_private:
+            return f"ERREUR SSRF: '{host}' résout vers {addr} (privée, allow_private=True pour un service interne)."
+    return None
 
 
 def _run(cmd: list[str], timeout: float = 15.0) -> str:
@@ -125,15 +159,16 @@ def tls_info(host: str, port: int = 443) -> str:
 
 
 @mcp.tool()
-def bandwidth_test(server: str = "", duration: int = 10) -> str:
-    """Test de débit via iperf3 (client TCP, upload+download). server: hôte
-    iperf3 -s (vide = tente les serveurs publics listés par iperf3, sinon
-    ERREUR). duration: secondes par sens (max 30)."""
+def bandwidth_test(server: str, duration: int = 10) -> str:
+    """Test de débit via iperf3 (client TCP, upload+download) vers un serveur
+    iperf3 -s que tu contrôles. server: hôte OBLIGATOIRE (aucun serveur public
+    n'est contacté par défaut). duration: secondes par sens (max 30)."""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.:_-]*", server or ""):
+        return "ERREUR: server requis (hôte d'un iperf3 -s, ex: 192.168.1.10)."
     if shutil.which("iperf3") is None:
         return "ERREUR: 'iperf3' introuvable dans PATH"
     duration = max(1, min(duration, 30))
-    cmd = ["iperf3", "-c", server, "-t", str(duration), "-J"] if server \
-        else ["iperf3", "-c", "iperf3.par2.as49434.net", "-t", str(duration), "-J"]
+    cmd = ["iperf3", "-c", server, "-t", str(duration), "-J"]
     out = _run(cmd, timeout=float(duration * 2 + 30))
     # sortie JSON : on extrait les débits lisibles
     try:
@@ -144,7 +179,7 @@ def bandwidth_test(server: str = "", duration: int = 10) -> str:
         sum_recv = end.get("sum_received", {})
         def mbps(bps):
             return f"{bps / 1e6:.1f} Mb/s" if bps else "?"
-        return (f"iperf3 vers {server or 'iperf3.par2.as49434.net'} ({duration}s):\n"
+        return (f"iperf3 vers {server} ({duration}s):\n"
                 f"  Upload:   {mbps(sum_sent.get('bits_per_second', 0))}\n"
                 f"  Download: {mbps(sum_recv.get('bits_per_second', 0))}")
     except Exception:
@@ -152,11 +187,14 @@ def bandwidth_test(server: str = "", duration: int = 10) -> str:
 
 
 @mcp.tool()
-def http_get(url: str, timeout: float = 15.0) -> str:
+def http_get(url: str, timeout: float = 15.0, allow_private: bool = False) -> str:
     """Requête HTTP(S) GET : statut, headers de réponse et début du corps
-    (tronqué). url doit commencer par http:// ou https://."""
-    if not url.startswith(("http://", "https://")):
-        return "ERREUR: url doit commencer par http:// ou https://"
+    (tronqué). url doit commencer par http:// ou https://. Garde SSRF :
+    loopback/link-local toujours refusés ; IP privée refusée sauf
+    allow_private=True (service interne)."""
+    err = _check_url_ssrf(url, allow_private)
+    if err:
+        return err
     import urllib.request
     import urllib.error
     req = urllib.request.Request(url, headers={"User-Agent": "jarvis-nettools/0.1"})

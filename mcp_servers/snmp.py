@@ -36,7 +36,8 @@ def _run(cmd: list[str], timeout: float = 30.0) -> str:
 
 
 def _target_ok(target: str) -> bool:
-    return bool(re.fullmatch(r"[A-Za-z0-9.:_-]+", target))
+    # doit commencer par alphanum : un tiret en tête passerait comme option
+    return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.:_-]*", target))
 
 
 def _oid_ok(oid: str) -> bool:

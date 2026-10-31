@@ -213,7 +213,7 @@ def logs(service: str, lines: int = 50, since: str = "1h ago") -> str:
     """Derniers logs systemd d'un service via journalctl.
     service: nom d'unité (ex: NetworkManager, sshd, docker).
     lines: nombre de lignes (max 200). since: fenêtre ('1h ago', 'today', '2 days ago'...)."""
-    if not re.fullmatch(r"[A-Za-z0-9@._-]+", service):
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9@._-]*", service):
         return "ERREUR: nom de service invalide."
     lines = max(1, min(lines, 200))
     return _run(["journalctl", "-u", service, "-n", str(lines),
@@ -255,7 +255,7 @@ def services(state: str = "failed") -> str:
 def service_status(name: str) -> str:
     """État détaillé d'un service systemd (systemctl status) : actif, uptime,
     mémoire, dernières lignes de log. name: unité (ex: sshd, NetworkManager)."""
-    if not re.fullmatch(r"[A-Za-z0-9@._-]+", name):
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9@._-]*", name):
         return "ERREUR: nom d'unité invalide."
     return _run(["systemctl", "status", name, "--no-pager", "-n", "15", "-l"], timeout=30.0)
 

@@ -99,23 +99,36 @@ def regex_test(pattern: str, text: str, flags: str = "") -> str:
     return "\n".join(out)
 
 
-# (valeur, unité) -> facteur vers l'unité de base ; conversions par table explicite
-_UNITS = {
-    # tailles (base: octet)
-    "o": 1, "ko": 1024, "mo": 1024**2, "go": 1024**3, "to": 1024**4,
-    "octet": 1, "kio": 1024, "mio": 1024**2, "gio": 1024**3, "tio": 1024**4,
-    # débits (base: bit/s) — ko = 1000 bit/s (réseau), kio = 1024
-    "b": 1, "kb": 1000, "mb": 1000**2, "gb": 1000**3,
-    "kib": 1024, "mib": 1024**2, "gib": 1024**3,
-    "ko/s": 1024 * 8, "mo/s": 1024**2 * 8, "go/s": 1024**3 * 8,
-    "kb/s": 1000 * 8, "mb/s": 1000**2 * 8, "gb/s": 1000**3 * 8,
-    # durées (base: seconde)
-    "ms": 1e-3, "s": 1, "min": 60, "h": 3600, "j": 86400,
-    # températures : gérées à part (non linéaires)
-    "c": None, "f": None, "k": None,
-    # pourcentage
-    "%": 0.01,
+# Conversions par dimension : chaque table ne contient QUE des unités de même
+# dimension, sinon la conversion n'a pas de sens (5 s en Go est refusé).
+_UNITS: dict[str, dict[str, float]] = {
+    "taille": {  # base: octet
+        "o": 1, "ko": 1024, "mo": 1024**2, "go": 1024**3, "to": 1024**4,
+        "octet": 1, "kio": 1024, "mio": 1024**2, "gio": 1024**3, "tio": 1024**4,
+    },
+    "debit": {  # base: bit/s — ko/s = octets (1024) x8, kb/s = kilo réseau (1000)
+        "b/s": 1, "kb/s": 1000, "mb/s": 1000**2, "gb/s": 1000**3,
+        "kib/s": 1024, "mib/s": 1024**2, "gib/s": 1024**3,
+        "ko/s": 1024 * 8, "mo/s": 1024**2 * 8, "go/s": 1024**3 * 8,
+    },
+    "duree": {  # base: seconde
+        "ms": 1e-3, "s": 1, "min": 60, "h": 3600, "j": 86400,
+    },
+    "ratio": {  # base: 1 (sans unité)
+        "%": 0.01, "1": 1, "ppm": 1e-6, "ppb": 1e-9,
+    },
 }
+
+_TEMP = ("c", "f", "k")
+
+
+def _dim_of(unit: str) -> str | None:
+    if unit in _TEMP:
+        return "temperature"
+    for dim, table in _UNITS.items():
+        if unit in table:
+            return dim
+    return None
 
 
 def _temp_convert(value: float, frm: str, to: str) -> float:
@@ -125,19 +138,25 @@ def _temp_convert(value: float, frm: str, to: str) -> float:
 
 @mcp.tool()
 def unit_convert(value: float, from_unit: str, to_unit: str) -> str:
-    """Conversion d'unités. Tailles: o/ko/mo/go/to (1024) ou octet/kio/mio...
-    Débits: b/kb/mb/gb (1000) ou kib/mib/gib, et ko/s, mo/s... Durées: ms/s/min/h/j.
-    Températures: c/f/k. Pourcentage: '%' (ex: 50 % -> 0.5 avec to_unit='1').
-    Ex: unit_convert(10, 'go', 'to') -> 0.009765625 to."""
+    """Conversion d'unités, même dimension obligatoire. Tailles: o/ko/mo/go/to
+    (1024) ou octet/kio/mio/gio/tio. Débits: b/s/kb/s/mb/s/gb/s (1000) ou
+    kib/s/mib/s/gib/s, ko/s/mo/s/go/s (1024). Durées: ms/s/min/h/j.
+    Températures: c/f/k. Ratio: %/ppm/ppb vers '1' (ex: 50 % -> 0.5).
+    Ex: unit_convert(10, 'go', 'to') -> 0.00976562 to. unit_convert(5, 's', 'go')
+    -> ERREUR (dimensions différentes)."""
     frm, to = from_unit.strip().lower(), to_unit.strip().lower()
-    if frm in ("c", "f", "k") and to in ("c", "f", "k"):
-        return f"{value} °{frm.upper()} = {_temp_convert(value, frm, to):.4g} °{to.upper()}"
-    if frm not in _UNITS or _UNITS[frm] is None:
+    dim_f, dim_t = _dim_of(frm), _dim_of(to)
+    if dim_f is None:
         return f"ERREUR: unité source '{from_unit}' inconnue. Voir la docstring."
-    if to not in _UNITS or _UNITS[to] is None:
+    if dim_t is None:
         return f"ERREUR: unité cible '{to_unit}' inconnue. Voir la docstring."
-    base = value * _UNITS[frm]
-    result = base / _UNITS[to]
+    if dim_f != dim_t:
+        return (f"ERREUR: dimensions différentes ({frm} est {dim_f}, "
+                f"{to} est {dim_t}) — conversion refusée.")
+    if dim_f == "temperature":
+        return f"{value:g} °{frm.upper()} = {_temp_convert(value, frm, to):.6g} °{to.upper()}"
+    base = value * _UNITS[dim_f][frm]
+    result = base / _UNITS[dim_t][to]
     return f"{value:g} {from_unit} = {result:.6g} {to_unit}"
 
 

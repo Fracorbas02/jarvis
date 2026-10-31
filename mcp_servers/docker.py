@@ -18,7 +18,6 @@ except ImportError:
 mcp = Server("docker")
 
 _MAX_BYTES = 20_000
-_ALLOWED = ("ps", "stats", "logs", "images", "inspect", "system", "version", "info")
 
 
 def _run(args: list[str], timeout: float = 30.0) -> str:

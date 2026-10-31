@@ -9,7 +9,10 @@ http/https uniquement.
 from __future__ import annotations
 
 import html
+import ipaddress
+import os
 import re
+import socket
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -25,6 +28,39 @@ _MAX_BYTES = 100_000
 _TIMEOUT = 20.0
 
 
+def _check_url(url: str, allow_private: bool = False) -> str | None:
+    """Garde SSRF : http(s) uniquement, et l'hôte ne doit résoudre vers aucune
+    IP loopback, link-local (169.254.169.254 métadonnées cloud), non routable
+    ou (sauf allow_private) privée. La résolution DNS est faite ici pour
+    vérifier TOUTES les IP résolues (anti DNS-rebinding simple)."""
+    if not url.startswith(("http://", "https://")):
+        return "ERREUR: url doit commencer par http:// ou https://"
+    host = urllib.parse.urlsplit(url).hostname or ""
+    if not host:
+        return "ERREUR: url sans hôte."
+    try:
+        ipaddress.ip_address(host)
+        infos = [(socket.AF_INET, None, None, None, (host, 0))]
+    except ValueError:
+        try:
+            infos = socket.getaddrinfo(host, None)
+        except socket.gaierror:
+            return f"ERREUR: hôte '{host}' non résoluble."
+    # JARVIS_FETCH_ALLOW_PRIVATE=1 : override explicite (tests locaux sur
+    # 127.0.0.1) — désactive les contrôles d'IP, jamais la vérification de schéma.
+    if os.environ.get("JARVIS_FETCH_ALLOW_PRIVATE") == "1":
+        return None
+    for _fam, _t, _p, _c, sockaddr in infos:
+        addr = ipaddress.ip_address(sockaddr[0])
+        if addr.is_loopback or addr.is_link_local or addr.is_unspecified or addr.is_multicast:
+            return (f"ERREUR SSRF: '{host}' résout vers {addr} "
+                    "(loopback/link-local/non routable interdit).")
+        if not allow_private and addr.is_private:
+            return (f"ERREUR SSRF: '{host}' résout vers {addr} (privée). "
+                    "Passe allow_private=True pour un service interne.")
+    return None
+
+
 def _to_text(raw: str) -> str:
     raw = re.sub(r"(?is)<(script|style|noscript|svg|head)\b.*?</\1>", " ", raw)
     raw = re.sub(r"(?s)<!--.*?-->", " ", raw)
@@ -38,12 +74,15 @@ def _to_text(raw: str) -> str:
 
 
 @mcp.tool()
-def fetch_page(url: str, max_chars: int = 20000) -> str:
+def fetch_page(url: str, max_chars: int = 20000, allow_private: bool = False) -> str:
     """Télécharge une page http(s) et renvoie son texte brut (lisible, sans
-    HTML). max_chars: plafond de caractères retournés (max 100000). Utile pour
-    faire lire/résumer une doc ou un article par le LLM."""
-    if not url.startswith(("http://", "https://")):
-        return "ERREUR: url doit commencer par http:// ou https://"
+    HTML). max_chars: plafond de caractères retournés (max 100000).
+    allow_private: autorise les IP privées RFC1918 (service interne) ;
+    loopback et link-local (169.254.169.254) sont toujours refusés (SSRF).
+    Utile pour faire lire/résumer une doc ou un article par le LLM."""
+    err = _check_url(url, allow_private)
+    if err:
+        return err
     max_chars = max(100, min(max_chars, _MAX_BYTES))
     req = urllib.request.Request(url, headers={
         "User-Agent": "Mozilla/5.0 (compatible; jarvis-fetch/0.1)",
@@ -71,9 +110,11 @@ def fetch_page(url: str, max_chars: int = 20000) -> str:
 @mcp.tool()
 def fetch_headers(url: str) -> str:
     """En-têtes HTTP d'une URL (méthode HEAD si possible, GET sinon) : statut,
-    Content-Type, Content-Length, Last-Modified, Server... Sans le corps."""
-    if not url.startswith(("http://", "https://")):
-        return "ERREUR: url doit commencer par http:// ou https://"
+    Content-Type, Content-Length, Last-Modified, Server... Sans le corps.
+    Mêmes gardes SSRF que fetch_page (loopback/link-local refusés)."""
+    err = _check_url(url, allow_private=False)
+    if err:
+        return err
     req = urllib.request.Request(url, method="HEAD", headers={
         "User-Agent": "jarvis-fetch/0.1"})
     try:

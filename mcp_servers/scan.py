@@ -33,10 +33,38 @@ def _is_private_target(target: str) -> bool:
         return False  # hostname : accepté seulement en allow_public ou .local/.lan
 
 
+_TARGET_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9.:_-]*")
+
+
 def _resolve_lan(target: str) -> bool:
     if _is_private_target(target):
         return True
+    if target in ("localhost", "localhost.localdomain") or target.endswith(".localhost"):
+        return True
     return target.endswith((".local", ".lan", ".home", ".internal"))
+
+
+def _check_target(target: str) -> str | None:
+    if not _TARGET_RE.fullmatch(target):
+        return "ERREUR: cible invalide."
+    return None
+
+
+def _check_ports(ports: str) -> str | None:
+    """Refuse les plages de plus de 4096 ports (pas de scan full 1-65535)."""
+    if not re.fullmatch(r"[0-9,\-]+", ports):
+        return "ERREUR: plage de ports invalide (ex: '22,80,443' ou '1-1024')."
+    total = 0
+    for part in ports.split(","):
+        if "-" in part:
+            lo, hi = part.split("-", 1)
+            total += int(hi) - int(lo) + 1
+        else:
+            total += 1
+    if total > 4096:
+        return ("ERREUR: plage trop large ({} ports, max 4096) — scanne par morceaux."
+                .format(total))
+    return None
 
 
 def _run(cmd: list[str], timeout: float = 120.0) -> str:
@@ -57,11 +85,15 @@ def port_scan(target: str, ports: str = "1-1024", allow_public: bool = False) ->
     """Scan TCP (connect scan, -sT) des ports d'une cible.
     target: IP/hostname. ports: plage nmap (défaut '1-1024', ex: '22,80,443' ou
     '1-65535'). allow_public: doit être True pour scanner hors LAN/localhost —
-    par défaut seules les cibles privées (RFC1918, loopback, .local/.lan) sont
-    acceptées."""
+    par défaut seules les cibles privées (RFC1918, loopback, localhost,
+    .local/.lan) sont acceptées. Plage de ports max 4096 (pas de 1-65535)."""
     target = target.strip()
-    if not re.fullmatch(r"[A-Za-z0-9.:_-]+", target):
-        return "ERREUR: cible invalide."
+    err = _check_target(target)
+    if err:
+        return err
+    err = _check_ports(ports)
+    if err:
+        return err
     if not allow_public and not _resolve_lan(target):
         return ("ERREUR: cible hors LAN/localhost refusée. "
                 "Passe allow_public=True uniquement pour une cible que tu "
@@ -74,10 +106,14 @@ def port_scan(target: str, ports: str = "1-1024", allow_public: bool = False) ->
 @mcp.tool()
 def service_detect(target: str, ports: str = "1-1024", allow_public: bool = False) -> str:
     """Détection de versions des services (-sV) sur les ports ouverts d'une cible
-    privée/LAN (mêmes règles que port_scan)."""
+    privée/LAN (mêmes règles que port_scan). Plage de ports max 4096."""
     target = target.strip()
-    if not re.fullmatch(r"[A-Za-z0-9.:_-]+", target):
-        return "ERREUR: cible invalide."
+    err = _check_target(target)
+    if err:
+        return err
+    err = _check_ports(ports)
+    if err:
+        return err
     if not allow_public and not _resolve_lan(target):
         return "ERREUR: cible hors LAN/localhost refusée (allow_public=True requis)."
     if shutil.which("nmap") is None:
@@ -92,6 +128,9 @@ def os_detect(target: str, allow_public: bool = False) -> str:
     root pour les sondes raw ; en non-root, nmap retombe sur une détection
     limitée (résultat partiel ou refus — c'est normal)."""
     target = target.strip()
+    err = _check_target(target)
+    if err:
+        return err
     if not allow_public and not _resolve_lan(target):
         return "ERREUR: cible hors LAN/localhost refusée (allow_public=True requis)."
     if shutil.which("nmap") is None:

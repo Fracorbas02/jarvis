@@ -35,7 +35,7 @@ def _catalog() -> list[dict]:
         "User-Agent": "jarvis-kev/0.1", "Accept": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode())
+            data = json.loads(resp.read(20_000_000).decode())  # plafond 20 Mo
     except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"KEV: catalogue inaccessible ({exc})")
     vulns = data.get("vulnerabilities", [])

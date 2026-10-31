@@ -6,6 +6,7 @@ installé. Aucun scan agressif.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
 import shutil
@@ -50,11 +51,16 @@ def arp_table() -> str:
 def dhcp_leases(path: str = "") -> str:
     """Baux DHCP actifs lus dans un fichier de leases (défaut:
     /var/lib/dhcp/dhcpd.leases, puis /var/lib/dhcpcd/, puis NetworkManager).
-    path: fichier de leases explicite optionnel. Renvoie IP, MAC, hostname,
-    expiration pour chaque bail actif."""
+    path: fichier de leases explicite, mais UNIQUEMENT sous un répertoire système
+    autorisé (/var/lib ou /etc/dhcp) — tout autre chemin est refusé.
+    Renvoie IP, MAC, hostname, expiration pour chaque bail actif."""
     found = None
     if path:
-        found = path if os.path.isfile(path) else None
+        real = os.path.realpath(path)
+        if not any(real.startswith(p + os.sep) for p in ("/var/lib", "/etc/dhcp")):
+            return ("ERREUR: path hors des répertoires de leases autorisés "
+                    "(/var/lib, /etc/dhcp).")
+        found = real if os.path.isfile(real) else None
     else:
         nm_dir = "/var/lib/NetworkManager"
         if os.path.isdir(nm_dir):
@@ -91,7 +97,8 @@ def lan_hosts(subnet: str = "") -> str:
     """Découverte douce des hôtes du LAN : arp-scan si installé, sinon ping
     sweep léger (1 paquet, timeout 1s) sur le sous-réseau donné ou déduit de
     l'interface principale. subnet: ex '192.168.1.0/24' (défaut: /24 du premier
-    IPv4 privé trouvé)."""
+    IPv4 privé trouvé). Le sous-réseau doit être privé/loopback/link-local —
+    les plages publiques sont refusées (même politique que scan.py)."""
     if subnet:
         if not re.fullmatch(r"\d+\.\d+\.\d+\.\d+/\d{1,2}", subnet):
             return "ERREUR: subnet invalide (ex: 192.168.1.0/24)."
@@ -99,6 +106,10 @@ def lan_hosts(subnet: str = "") -> str:
         subnet = _default_subnet()
         if not subnet:
             return "ERREUR: aucun IPv4 privé détecté pour deviner le LAN."
+    net = ipaddress.ip_network(subnet, strict=False)
+    if not (net.is_private or net.is_loopback or net.is_link_local):
+        return ("ERREUR: sous-réseau public/non-local refusé (LAN uniquement). "
+                "Utilise scan__port_scan avec allow_public=True pour une cible publique.")
     if shutil.which("arp-scan"):
         return _run(["arp-scan", "--localnet", "-q"], timeout=90.0) \
             if subnet == _default_subnet() else _run(["arp-scan", subnet], timeout=90.0)
@@ -106,25 +117,22 @@ def lan_hosts(subnet: str = "") -> str:
     if shutil.which("nmap"):
         return _run(["nmap", "-sn", "-T3", subnet], timeout=120.0)
     if shutil.which("fping"):
-        import ipaddress
-        net = ipaddress.ip_network(subnet, strict=False)
-        hosts = [str(h) for h in net.hosts()][:254]
         return _run(["fping", "-a", "-g", subnet], timeout=120.0)
     return ("ERREUR: ni arp-scan, ni nmap, ni fping — impossible de scanner. "
-            f"(LAN déduit: {subnet})")
+            f"(LAN: {subnet})")
 
 
 def _default_subnet() -> str:
     try:
         import socket
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))  # ne envoie rien, sert juste à lire l'IP source
+        s.connect(("8.8.8.8", 80))  # n'envoie rien, sert juste à lire l'IP source
         ip = s.getsockname()[0]
         s.close()
-        if ip.startswith(("127.", "169.254.")):
+        addr = ipaddress.ip_address(ip)
+        if not (addr.is_private or addr.is_loopback or addr.is_link_local):
             return ""
-        parts = ip.split(".")
-        return f"{parts[0]}.{parts[1]}.{parts[2]}.0/24"
+        return str(ipaddress.ip_network(f"{ip}/24", strict=False))
     except OSError:
         return ""
 
