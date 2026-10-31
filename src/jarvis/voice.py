@@ -26,7 +26,7 @@ import os
 import shutil
 import subprocess
 import wave
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
@@ -54,6 +54,7 @@ def host_port(base_url: str) -> tuple[str, int]:
     from urllib.parse import urlparse
     u = urlparse(base_url if "://" in base_url else f"http://{base_url}")
     return (u.hostname or "127.0.0.1", u.port or 80)
+
 
 
 def resolve_model_path(model: str | Path, models_root: Path | None = None) -> Path:
@@ -139,9 +140,10 @@ async def start_voice_server(name: str, vcfg: VoiceServerConfig,
     # Choix GPU global enregistré (pop-up 1er lancement / onglet Réglages) :
     # UN mécanisme par backend — env (CUDA_VISIBLE_DEVICES & co) pour
     # cuda/hip/cpu si la config du serveur ne précise pas déjà env, et
-    # --device <index> pour vulkan (pas de variable d'env équivalente).
-    # On ne renseigne PAS vcfg.device depuis le choix global (un --device brut
-    # entrerait en conflit avec l'env pour cuda/hip).
+    # --device <nom ggml> pour vulkan (pas de variable d'env équivalente).
+    # On ne MUTE PAS vcfg (partagé entre appels et interfaces) : on travaille
+    # sur une copie via dataclasses.replace.
+    from dataclasses import replace
     gpu_args: list[str] = []
     try:
         from .gpu import choice_args, choice_env
@@ -159,10 +161,13 @@ async def start_voice_server(name: str, vcfg: VoiceServerConfig,
     except OSError:
         pass
     log = open(log_path, "ab", buffering=0)
-    log.write(f"\n--- {argv} ---\n".encode())
-    env = {**os.environ, **vcfg.env} if vcfg.env else None
-    proc = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT,
-                            start_new_session=True, env=env)
+    try:
+        log.write(f"\n--- {argv} ---\n".encode())
+        env = {**os.environ, **vcfg.env} if vcfg.env else None
+        proc = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT,
+                                start_new_session=True, env=env)
+    finally:
+        log.close()
     _procs[name] = proc
 
     deadline = asyncio.get_running_loop().time() + (ready_timeout or vcfg.ready_timeout)
@@ -324,11 +329,14 @@ async def transcribe_bytes(voice_cfg: VoiceConfig, data: bytes, filename: str = 
     """Transcription d'un upload navigateur (wav, webm, mp3…) : conversion
     éventuelle en WAV 16 kHz mono via ffmpeg, puis transcription."""
     import tempfile
+    import uuid
     suffix = Path(filename).suffix or ".bin"
-    tmp = Path(tempfile.gettempdir()) / f"jarvis-stt-{os.getpid()}-{abs(hash(data)) % 10**8}{suffix}"
+    tmp = Path(tempfile.gettempdir()) / f"jarvis-stt-{os.getpid()}-{uuid.uuid4().hex[:8]}{suffix}"
     tmp.write_bytes(data)
+    wav = tmp if suffix.lower() == ".wav" else None
     try:
-        wav = await to_wav_16k_mono(tmp) if suffix.lower() != ".wav" else tmp
+        if wav is None:
+            wav = await to_wav_16k_mono(tmp)
         st = await ensure_voice_server("stt", voice_cfg.stt, auto_start=False)
         if st.state == "offline":
             raise VoiceError(
@@ -336,11 +344,12 @@ async def transcribe_bytes(voice_cfg: VoiceConfig, data: bytes, filename: str = 
                 f"dans le panneau STT")
         return await transcribe_file(voice_cfg, wav, language=language)
     finally:
-        for p in {tmp, tmp.with_suffix(".16k.wav")}:
-            try:
-                p.unlink()
-            except OSError:
-                pass
+        for f in {tmp, wav}:
+            if f is not None:
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
 
 
 async def synthesize(voice_cfg: VoiceConfig, text: str, voice: str | None = None,
@@ -423,30 +432,41 @@ async def record_wav(seconds: float, voice_cfg: VoiceConfig,
         raise VoiceError(f"binaire d'enregistrement introuvable : {cmd[0]} "
                          f"(installe alsa-utils ou ffmpeg)")
     argv = [binary, *cmd[1:]]
-    if argv[-1] == "-":
+    stdout_to_file = argv[-1] != "-"
+
+    async def _stop_after(proc, secs: float):
+        """Laisse tourner `secs`, puis arrête le process proprement (SIGTERM,
+        SIGKILL en dernier recours) et récupère sa sortie."""
+        try:
+            return await asyncio.wait_for(proc.communicate(), timeout=secs)
+        except TimeoutError:
+            pass
+        if proc.returncode is None:
+            proc.terminate()
+            try:
+                return await asyncio.wait_for(proc.communicate(), timeout=5)
+            except TimeoutError:
+                proc.kill()
+                return await proc.communicate()
+        return await proc.communicate()
+
+    if not stdout_to_file:
+        # "-" en dernier élément : le binaire produit du PCM s16le sur stdout
         argv = argv[:-1]
         proc = await asyncio.create_subprocess_exec(
             *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        try:
-            pcm, err = await asyncio.wait_for(proc.communicate(), timeout=seconds + 10)
-        except asyncio.TimeoutExpired:
-            proc.kill()
-            await proc.wait()
-            raise VoiceError("enregistrement interrompu (timeout)")
-        if proc.returncode != 0:
+        pcm, err = await _stop_after(proc, seconds)
+        # arecord/ffmpeg coupés par SIGTERM renvoient un code non nul : ce n'est
+        # pas une erreur tant qu'on a du PCM exploitable.
+        if not pcm:
             raise VoiceError(f"{cmd[0]} a échoué : {err.decode(errors='replace')[:300]}")
         write_wav(out_path, pcm)
     else:
         argv.append(str(out_path))
         proc = await asyncio.create_subprocess_exec(
             *argv, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
-        try:
-            _, err = await asyncio.wait_for(proc.communicate(), timeout=seconds + 10)
-        except asyncio.TimeoutExpired:
-            proc.kill()
-            await proc.wait()
-            raise VoiceError("enregistrement interrompu (timeout)")
-        if proc.returncode != 0 or not out_path.is_file():
+        _, err = await _stop_after(proc, seconds)
+        if not out_path.is_file():
             raise VoiceError(f"{cmd[0]} a échoué : {err.decode(errors='replace')[:300]}")
     return out_path
 
@@ -472,7 +492,12 @@ async def play_wav(path: str | Path, voice_cfg: VoiceConfig | None = None) -> st
         proc = await asyncio.create_subprocess_exec(
             binary, *cmd[1:], str(path),
             stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
-        await proc.wait()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=600.0)
+        except TimeoutError:
+            proc.kill()
+            await proc.wait()
+            continue
         if proc.returncode == 0:
             return cmd[0]
     raise VoiceError("aucun lecteur audio trouvé (ffplay/aplay/paplay/play)")

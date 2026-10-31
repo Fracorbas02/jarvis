@@ -212,6 +212,10 @@ class VoicePanel(ctk.CTkFrame):
             self.result_label.configure(text=f"transcription de {path}…")
             self.ctrl.stt_transcribe_file(path)
 
+    def on_stt_recorded(self, path: str) -> None:
+        if path:
+            self.result_label.configure(text=f"WAV enregistré : {path} — transcription…")
+
     def on_stt_done(self, text: str) -> None:
         self.result_label.configure(text=f"« {text} »" if text else "(aucune parole détectée)")
 

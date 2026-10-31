@@ -172,10 +172,14 @@ class DesktopApp:
             panel = self.panels.get("tts")
             if isinstance(panel, VoicePanel):
                 panel.on_tts_error(ev["message"])
-        elif kind in ("stt_done", "stt_recorded"):
+        elif kind == "stt_done":
             panel = self.panels.get("stt")
-            if isinstance(panel, VoicePanel) and kind == "stt_done":
+            if isinstance(panel, VoicePanel):
                 panel.on_stt_done(ev["text"])
+        elif kind == "stt_recorded":
+            panel = self.panels.get("stt")
+            if isinstance(panel, VoicePanel):
+                panel.on_stt_recorded(ev.get("path", ""))
         elif kind in ("stt_error", "wav_error"):
             panel = self.panels.get("stt") if kind == "stt_error" else self.panels.get("tts")
             if isinstance(panel, VoicePanel):

@@ -15,7 +15,7 @@ import json
 import customtkinter as ctk
 
 from .controller import DesktopController
-from .theme import ACCENT, BG, PANEL_2, TEXT_DIM, TOOL, ERROR
+from .theme import ACCENT, BG, PANEL_2, TOOL, ERROR
 
 
 class ChatPanel(ctk.CTkFrame):
@@ -54,6 +54,8 @@ class ChatPanel(ctk.CTkFrame):
         self._tag("tool", fg=TOOL, size=12)
         self._tag("error", fg=ERROR)
         self.text.configure(state="disabled")
+        self._build_input()
+        self._welcome()
 
     def _scaled_font(self, size: float, styles: tuple = ()) -> tuple:
         # tuple tk : (family, taille en pixels si négatif, *styles). La famille
@@ -69,6 +71,7 @@ class ChatPanel(ctk.CTkFrame):
         if size:
             self.text._textbox.tag_config(name, font=self._scaled_font(size, styles))
 
+    def _build_input(self) -> None:
         # saisie
         row = ctk.CTkFrame(self, fg_color="transparent")
         row.grid(row=2, column=0, padx=12, pady=(0, 12), sticky="ew")
@@ -81,8 +84,6 @@ class ChatPanel(ctk.CTkFrame):
                                       fg_color=ACCENT, text_color="#06121a",
                                       command=self.send)
         self.send_btn.grid(row=0, column=1)
-
-        self._welcome()
 
     # ---------- affichage ----------
 

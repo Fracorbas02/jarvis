@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-from typing import Any, Callable
+from typing import Callable
 
 from ..agent import Agent
 from ..config import Config, load_config

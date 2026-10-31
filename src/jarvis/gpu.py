@@ -5,20 +5,6 @@ $XDG_CONFIG_HOME/jarvis/gpu.json) : {"device": "cuda:1", "env": {...}}.
 L’app desktop propose ce GPU au premier lancement (pop-up) quand plusieurs
 sont détectés et qu’aucun choix n’est enregistré ; l’onglet Réglages permet de le
 changer ensuite.
-
-Le device stocké est le NOM ggml du GPU quand llama-server est dispo
-("Vulkan0", "Vulkan1", "CUDA0"… lu via `llama-server --list-devices`) —
-c’est exactement ce que `--device` attend. Anciens formats "vulkan:N"
-(index vulkaninfo) acceptés en entrée et convertis par correspondance de nom.
-
-Le choix est appliqué aux sous-processus lancés par jarvis (llama-server
-principal + serveurs voix STT/TTS), au prochain démarrage, avec UN mécanisme
-par backend (jamais les deux, sinon ils se contredisent) :
-- cuda / hip -> env CUDA_VISIBLE_DEVICES / HIP+ROCR_VISIBLE_DEVICES = index
-- vulkan     -> argument --device <nom ggml> (Vulkan n’a pas de variable
-  d’env « VK_VISIBLE_DEVICES » ; un index brut "0" est refusé par llama.cpp :
-  "invalid device: 0")
-- cpu        -> env CUDA/HIP/ROCR vides (masque les GPU, best-effort)
 """
 
 from __future__ import annotations
@@ -27,7 +13,7 @@ import json
 import os
 import re
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -36,6 +22,12 @@ class Gpu:
     device: str          # ex. "cuda:0", "hip:1", "vulkan:0", "cpu"
     name: str            # ex. "NVIDIA RTX 4090" / "AMD Radeon 890M"
     backend: str         # "cuda" | "hip" | "vulkan" | "cpu"
+
+
+def device_index(device: str) -> str:
+    """Index numérique d'un device : "cuda:1" -> "1", "Vulkan1" -> "1".
+    Pour --device quand on veut un index plutôt que le nom ggml."""
+    return _backend_index(device)[1] or device
 
 
 def config_dir() -> Path:
@@ -62,26 +54,76 @@ def save_gpu_choice(device: str, env: dict[str, str] | None = None) -> dict:
     return data
 
 
-def _run(cmd: list[str]) -> str:
+def _run(cmd: list[str], timeout: float = 10.0) -> str:
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=15).stdout
+        return subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=timeout).stdout
     except Exception:  # noqa: BLE001
         return ""
 
 
-def list_llama_devices() -> list[tuple[str, str]]:
-    """Devices ggml depuis `llama-server --list-devices` : [(nom, description)],
-    ex. [("Vulkan0", "AMD Radeon RX 9070 XT (RADV GFX1201) (16304 MiB, …)")].
-    Le nom ("Vulkan0", "CUDA1"…) est exactement ce que `--device` accepte.
-    [] si llama-server absent ou option inconnue. L’ordre ggml peut différer
-    de celui de vulkaninfo (la dGPU peut être Vulkan0)."""
-    out = _run(["llama-server", "--list-devices"])
-    devs: list[tuple[str, str]] = []
+def _nvidia_gpus() -> list[Gpu]:
+    out = _run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"])
+    return [Gpu(f"cuda:{i}", line.strip(), "cuda")
+            for i, line in enumerate(l for l in out.splitlines() if l.strip())]
+
+
+def _amd_gpus_rocm() -> list[Gpu]:
+    """GPU AMD détectés via rocminfo (ROCm) : un device par carte, nommé
+    d'après son 'Marketing Name' (ex. 'AMD Radeon RX 7900 XTX')."""
+    out = _run(["rocminfo"])
+    if not out:
+        return []
+    # un GPU = un bloc contenant un 'Marketing Name' (rocminfo répète le nom
+    # pour chaque agent d'une même carte : on dédoublonne par nom+gfx).
+    gpus: list[Gpu] = []
+    seen: set[str] = set()
+    for m in re.finditer(r"Marketing Name:\s*(.+?)(?:\n|$)", out):
+        name = m.group(1).strip()
+        # gfx le plus proche après ce nom (même carte)
+        tail = out[m.end():m.end() + 2000]
+        gfx = re.search(r"gfx\d+[a-z0-9]*", tail)
+        key = (name + "|" + (gfx.group(0) if gfx else "")).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        gpus.append(Gpu(f"hip:{len(gpus)}", name, "hip"))
+    if not gpus:
+        # pas de Marketing Name : fallback sur les gfx distincts
+        for g in dict.fromkeys(re.findall(r"gfx\d+[a-z0-9]*", out)):
+            gpus.append(Gpu(f"hip:{len(gpus)}", g, "hip"))
+    return gpus
+
+
+def _vulkan_gpus() -> list[Gpu]:
+    out = _run(["vulkaninfo", "--summary"])
+    if not out:
+        return []
+    names = [n.strip() for n in re.findall(r"deviceName\s*=\s*(.+)", out)]
+    return [Gpu(f"vulkan:{i}", n, "vulkan")
+            for i, n in enumerate(dict.fromkeys(names))]
+
+
+def _lspci_gpus() -> list[Gpu]:
+    """Dernier recours : lspci. Les lignes VGA/3D/Display n'ont pas forcément
+    de ': ' après l'adresse PCI -> on garde la description, et on devine le
+    backend d'après le fondeur (NVIDIA/AMD/ATI)."""
+    out = _run(["lspci"])
+    if not out:
+        return []
+    gpus: list[Gpu] = []
     for line in out.splitlines():
-        m = re.match(r"\s*([A-Za-z]+\d+):\s*(.+)", line)
-        if m:
-            devs.append((m.group(1), m.group(2).strip()))
-    return devs
+        if not re.search(r"\b(VGA|3D|Display)\b", line):
+            continue
+        m = re.match(r"^[0-9a-f:.]+\s+[^:]+:\s*(.*)$", line, re.IGNORECASE)
+        name = (m.group(1) if m else line).strip()
+        low = name.lower()
+        backend = ("cuda" if "nvidia" in low
+                   else "hip" if ("amd" in low or "ati" in low)
+                   else "vulkan")
+        idx = len([g for g in gpus if g.backend == backend])
+        gpus.append(Gpu(f"{backend}:{idx}", name, backend))
+    return gpus
 
 
 def detect_gpus() -> list[Gpu]:
@@ -104,15 +146,8 @@ def _detect_gpus_fallback(gpus: list[Gpu]) -> None:
     out = _run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"])
     for i, line in enumerate(l for l in out.splitlines() if l.strip()):
         gpus.append(Gpu(f"cuda:{i}", line.strip(), "cuda"))
-    # AMD ROCm
-    out = _run(["rocminfo"])
-    if out:
-        names = re.findall(r"Marketing Name:\s*(.+)", out)
-        # chaque "gfx" distinct = un GPU ; on compte les agents GPU
-        gfx = sorted(set(re.findall(r"gfx\d+", out)))
-        for i, g in enumerate(gfx):
-            name = names[i] if i < len(names) else g
-            gpus.append(Gpu(f"hip:{i}", name.strip(), "hip"))
+    # AMD ROCm (un GPU par Marketing Name, agents dédoublonnés)
+    gpus.extend(_amd_gpus_rocm())
     # Vulkan (catch-all)
     out = _run(["vulkaninfo", "--summary"])
     if out and not gpus:
@@ -128,12 +163,23 @@ def _detect_gpus_fallback(gpus: list[Gpu]) -> None:
                 name += f" [{t.group(1).lower()}]"
             gpus.append(Gpu(f"vulkan:{i}", name, "vulkan"))
     if not gpus:
-        # lspci VGA
-        out = _run(["lspci"])
-        vgas = [l.split(": ", 1)[1] for l in out.splitlines() if "VGA" in l or "3D" in l]
-        for i, n in enumerate(vgas):
-            gpus.append(Gpu(f"vulkan:{i}", n.strip(), "vulkan"))
+        # lspci VGA/3D/Display (dernier recours, parsing robuste)
+        gpus.extend(_lspci_gpus())
 
+
+def list_llama_devices() -> list[tuple[str, str]]:
+    """Devices ggml depuis `llama-server --list-devices` : [(nom, description)],
+    ex. [("Vulkan0", "AMD Radeon RX 9070 XT (RADV GFX1201) (16304 MiB, …)")].
+    Le nom ("Vulkan0", "CUDA1"…) est exactement ce que `--device` accepte.
+    [] si llama-server absent ou option inconnue. L’ordre ggml peut différer
+    de celui de vulkaninfo (la dGPU peut être Vulkan0)."""
+    out = _run(["llama-server", "--list-devices"])
+    devs: list[tuple[str, str]] = []
+    for line in out.splitlines():
+        m = re.match(r"\s*([A-Za-z]+\d+):\s*(.+)", line)
+        if m:
+            devs.append((m.group(1), m.group(2).strip()))
+    return devs
 
 def _backend_index(device: str) -> tuple[str, str]:
     """("vulkan", "1") depuis "vulkan:1" (ancien format) OU "Vulkan1" (nom
@@ -143,44 +189,6 @@ def _backend_index(device: str) -> tuple[str, str]:
         return m.group(1).lower(), m.group(2)
     b, _, i = device.partition(":")
     return b.lower(), i
-
-
-def env_for_device(device: str) -> dict[str, str]:
-    """Variables d’env pour forcer ce device : CUDA_VISIBLE_DEVICES /
-    HIP_VISIBLE_DEVICES / ROCR_VISIBLE_DEVICES selon le backend.
-    "cpu" masque tous les GPU (chaîne vide = aucun device visible).
-    Vulkan -> {} (pas de variable d'env, on passe --device, voir args_for_device)."""
-    backend, idx = _backend_index(device)
-    idx = idx or "0"
-    if backend == "cuda":
-        return {"CUDA_VISIBLE_DEVICES": idx}
-    if backend in ("hip", "rocm"):
-        return {"HIP_VISIBLE_DEVICES": idx, "ROCR_VISIBLE_DEVICES": idx}
-    if backend == "cpu":
-        return {"CUDA_VISIBLE_DEVICES": "", "HIP_VISIBLE_DEVICES": "",
-                "ROCR_VISIBLE_DEVICES": ""}
-    return {}
-
-
-def device_index(device: str) -> str:
-    """Index numérique d'un device : "cuda:1" -> "1", "Vulkan1" -> "1".
-    Pour --device quand on veut un index plutôt que le nom ggml."""
-    return _backend_index(device)[1] or device
-
-
-def _vulkaninfo_gpu_names() -> list[str]:
-    """Noms des GPU dans l'ordre vulkaninfo (GPU0, GPU1…). Sert à convertir
-    un ancien choix "vulkan:N" en nom ggml (l'ordre vulkaninfo diffère de
-    celui de ggml : la dGPU peut être Vulkan0 chez ggml mais GPU1 chez
-    vulkaninfo)."""
-    out = _run(["vulkaninfo", "--summary"])
-    names: list[str] = []
-    for b in re.split(r"^GPU\d+:", out, flags=re.M)[1:]:
-        m = re.search(r"deviceName\s*=\s*(.+)", b)
-        if m:
-            names.append(m.group(1).strip())
-    return names
-
 
 def args_for_device(device: str) -> list[str]:
     """Arguments CLI pour forcer ce device quand l'env ne suffit pas.
@@ -210,7 +218,6 @@ def args_for_device(device: str) -> list[str]:
         pass
     return []
 
-
 def choice_env() -> dict[str, str]:
     """Env du choix GPU global enregistré (Réglages / pop-up 1er lancement).
     {} si aucun choix. Sert à passer env= au Popen des serveurs locaux."""
@@ -224,7 +231,6 @@ def choice_env() -> dict[str, str]:
         return env_for_device(choice["device"])
     return {}
 
-
 def choice_args() -> list[str]:
     """Args CLI (--device <nom ggml> pour vulkan) du choix GPU global
     enregistré. [] si aucun choix ou si le backend se force par env."""
@@ -235,3 +241,33 @@ def choice_args() -> list[str]:
     if choice.get("device"):
         return args_for_device(choice["device"])
     return []
+
+def _vulkaninfo_gpu_names() -> list[str]:
+    """Noms des GPU dans l'ordre vulkaninfo (GPU0, GPU1…). Sert à convertir
+    un ancien choix "vulkan:N" en nom ggml (l'ordre vulkaninfo diffère de
+    celui de ggml : la dGPU peut être Vulkan0 chez ggml mais GPU1 chez
+    vulkaninfo)."""
+    out = _run(["vulkaninfo", "--summary"])
+    names: list[str] = []
+    for b in re.split(r"^GPU\d+:", out, flags=re.M)[1:]:
+        m = re.search(r"deviceName\s*=\s*(.+)", b)
+        if m:
+            names.append(m.group(1).strip())
+    return names
+
+def env_for_device(device: str) -> dict[str, str]:
+    """Variables d’env pour forcer ce device : CUDA_VISIBLE_DEVICES /
+    HIP_VISIBLE_DEVICES / ROCR_VISIBLE_DEVICES selon le backend.
+    Accepte l’ancien format "cuda:1"/"hip:0" ET les noms ggml
+    ("CUDA1", "HIP0"…). "cpu" masque tous les GPU (chaîne vide = aucun
+    device visible). Vulkan -> {} (pas d’env, on passe --device)."""
+    backend, idx = _backend_index(device)
+    idx = idx or "0"
+    if backend == "cuda":
+        return {"CUDA_VISIBLE_DEVICES": idx}
+    if backend in ("hip", "rocm"):
+        return {"HIP_VISIBLE_DEVICES": idx, "ROCR_VISIBLE_DEVICES": idx}
+    if backend == "cpu":
+        return {"CUDA_VISIBLE_DEVICES": "", "HIP_VISIBLE_DEVICES": "",
+                "ROCR_VISIBLE_DEVICES": ""}
+    return {}
