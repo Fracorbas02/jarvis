@@ -77,13 +77,14 @@ def _css() -> None:
     .jarvis-meta { font-size: 0.8em; color: alpha(@window_fg_color, 0.45); }
     .jarvis-home-title { font-size: 44px; font-weight: 700; }
     .jarvis-notif-badge {
-        background-color: @error_color;
+        background-color: #e01b24;
         color: #ffffff;
         border-radius: 10px;
-        font-size: 0.75em;
+        font-size: 11px;
         font-weight: 700;
-        padding: 1px 5px;
-        min-width: 16px;
+        padding: 1px 6px;
+        min-width: 18px;
+        min-height: 18px;
     }
     .jarvis-ctx-bar { min-height: 6px; }
     .jarvis-msg-user .jarvis-bubble { background-color: @accent_bg_color; }

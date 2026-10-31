@@ -56,8 +56,10 @@ def main() -> int:
                         "_on_mic_changed", "_on_test_mic", "_on_open_gnome_privacy",
                         "_fill_mic_devices", "_on_mic_permission",
                         "_ask_mic_permission_first_run", "_on_mic_perm_response",
-                        "_on_bell_clicked", "_clear_notifs", "_refresh_notif_ui",
-                        "_toast", "_dispatch", "_on_server_status", "_on_turn_done",
+                        "_on_bell_clicked", "_bell_icon", "_draw_bell", "_clear_notifs", "_refresh_notif_ui",
+                        "_toast", "_on_reset_context", "_do_reset", "_on_toggle_sidebar",
+                        "_on_split_sidebar_changed", "_fill_conv_list", "_on_conv_row_activated",
+                        "_dispatch", "_on_server_status", "_on_turn_done",
                         "_replay_history", "_fill_tools_group"):
             assert hasattr(gtk_app.JarvisWindow, handler), handler
 

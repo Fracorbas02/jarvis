@@ -178,23 +178,35 @@ class GtkBackend:
             self.events.put({"type": "backend_error", "message": str(exc)})
 
     def stop(self) -> None:
+        """Arrêt rapide (fermeture fenêtre) : la sauvegarde de session est
+        synchrone (ms) ; la fermeture des transports MCP/HTTP part en tâche de
+        fond sur la boucle (elle peut prendre des secondes, on ne bloque pas
+        le thread GTK). Le processus s'arrête de toute façon à la fermeture."""
+        if self.session_id and self.history:
+            try:
+                self.sessions.save(self.session_id, self.history)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("sauvegarde session: %s", exc)
+
         async def _astop() -> None:
-            if self.session_id and self.history:
-                try:
-                    self.sessions.save(self.session_id, self.history)
-                except Exception as exc:  # noqa: BLE001
-                    log.debug("sauvegarde session: %s", exc)
             try:
                 await self.tools.stop()
-            except RuntimeError as exc:
+            except Exception as exc:  # noqa: BLE001 — best-effort à la fermeture
                 log.debug("fermeture MCP dégradée: %s", exc)
-            await self.llm.aclose()
+            try:
+                await self.llm.aclose()
+            except Exception as exc:  # noqa: BLE001
+                log.debug("fermeture HTTP dégradée: %s", exc)
+            self.loop.call_soon_threadsafe(self.loop.stop)
+
         try:
-            asyncio.run_coroutine_threadsafe(_astop(), self.loop).result(timeout=15)
-        except Exception as exc:  # noqa: BLE001
+            if self.loop is not None and self.loop.is_running():
+                asyncio.run_coroutine_threadsafe(_astop(), self.loop)
+        except Exception as exc:  # noqa: BLE001 — boucle déjà arrêtée
             log.debug("arrêt backend: %s", exc)
-        self.loop.call_soon_threadsafe(self.loop.stop)
-        self._thread.join(timeout=5)
+        # join très court : on ne bloque pas la fermeture de la fenêtre
+        if self._thread.is_alive():
+            self._thread.join(timeout=0.5)
 
     # ---------- appels depuis le thread GTK ----------
 
@@ -297,6 +309,59 @@ class GtkBackend:
 
     def stop_server(self) -> None:
         self._run(self._astop_server())
+
+    def reset_context(self, which: str = "llm", model_path: str | None = None,
+                      ctx_size: int | None = None) -> None:
+        """Reset du contexte = redémarrage du serveur GÉRÉ par Jarvis.
+        which: "llm" (llama-server principal) | "stt" | "tts".
+        - LLM : stop puis start avec le même GGUF (model_path, défaut: 1er
+          modèle découvert) et le ctx_size demandé ; nouveau contexte vierge.
+        - STT/TTS : stop_voice_server + start_voice_server (même modèle de config).
+        Un serveur externe (non géré) n'est jamais arrêté : on émet juste un
+        avertissement. Événement: {"type": "context_reset", "which", "ok", "detail"}.
+        """
+        self._run(self._areset(which, model_path, ctx_size))
+
+    async def _areset(self, which: str, model_path: str | None,
+                       ctx_size: int | None) -> None:
+        try:
+            if which == "llm":
+                if not server_mod.is_managed_running():
+                    st = await server_mod.get_status(self.cfg.llm.base_url)
+                    self.events.put({"type": "context_reset", "which": which,
+                                     "ok": False,
+                                     "detail": "serveur externe (non géré) : "
+                                               "reset impossible depuis Jarvis"})
+                    return
+                # modèle servi actuellement (pour redémarrer dessus)
+                st = await server_mod.get_status(self.cfg.llm.base_url)
+                await server_mod.stop_server(self.cfg.llm.base_url)
+                mp = model_path or (str(self.models_llm[0].path) if self.models_llm else None)
+                if not mp:
+                    self.events.put({"type": "context_reset", "which": which,
+                                     "ok": False, "detail": "aucun GGUF local trouvé"})
+                    return
+                await self._astart_server(mp, ctx_size)
+                self.events.put({"type": "context_reset", "which": which, "ok": True,
+                                 "detail": f"serveur redémarré avec {mp} "
+                                           f"(ctx={ctx_size or 'défaut'}) — contexte vierge"})
+            else:
+                from ..voice import _procs, start_voice_server, stop_voice_server
+                proc = _procs.get(which)
+                if proc is None or proc.poll() is not None:
+                    self.events.put({"type": "context_reset", "which": which,
+                                     "ok": False,
+                                     "detail": f"serveur {which} non géré par Jarvis"})
+                    return
+                scfg = self.cfg.voice.stt if which == "stt" else self.cfg.voice.tts
+                await stop_voice_server(which, scfg)
+                st = await start_voice_server(which, scfg)
+                self.events.put({"type": "context_reset", "which": which,
+                                 "ok": st.state in ("online", "managed"),
+                                 "detail": f"{which} redémarré ({st.state} {st.host}:{st.port})"})
+        except Exception as exc:  # noqa: BLE001
+            self.events.put({"type": "context_reset", "which": which, "ok": False,
+                             "detail": f"{type(exc).__name__}: {exc}"})
 
     async def _astop_server(self) -> None:
         st = await server_mod.stop_server(self.cfg.llm.base_url)
