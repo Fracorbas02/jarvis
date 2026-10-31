@@ -1,14 +1,16 @@
 """Panneau Réglages de l’application desktop : choix du GPU, infos.
 
-Le GPU choisi est persisté dans ~/.config/jarvis/gpu.json et appliqué
-aux serveurs voix (STT/TTS) au prochain démarrage (voir jarvis.gpu).
+Le GPU choisi est persisté dans ~/.config/jarvis/gpu.json et appliqué par
+variables d env (CUDA_VISIBLE_DEVICES & co) au llama-server principal et aux
+serveurs voix (STT/TTS) au prochain démarrage (voir jarvis.gpu).
 """
 
 from __future__ import annotations
 
 import customtkinter as ctk
 
-from ..gpu import detect_gpus, env_for_device, load_gpu_choice, save_gpu_choice
+from ..gpu import (args_for_device, detect_gpus, env_for_device,
+                   load_gpu_choice, save_gpu_choice)
 from .theme import ACCENT, BG, PANEL_2, TEXT_DIM
 
 
@@ -32,7 +34,8 @@ class SettingsPanel(ctk.CTkFrame):
             row=0, column=0, padx=14, pady=(12, 6), sticky="w")
 
         self.gpus = detect_gpus()
-        labels = [f"{g.name}  ({g.device})" for g in self.gpus]
+        self.dev_by_label = {f"{g.name}  ({g.device})": g.device for g in self.gpus}
+        labels = list(self.dev_by_label)
         choice = load_gpu_choice()
         current = choice.get("device", "")
         initial = next((l for l in labels if l.endswith(f"({current})")), labels[0])
@@ -53,15 +56,25 @@ class SettingsPanel(ctk.CTkFrame):
                                                pady=(0, 12), sticky="w")
 
     def _device_of(self, label: str) -> str:
-        return label.rsplit("(", 1)[1].rstrip(")")
+        # dict label -> device (robuste même si le nom du GPU contient "(")
+        return self.dev_by_label.get(label, label)
 
     def _update_hint(self) -> None:
         dev = self._device_of(self.gpu_combo.get())
         env = env_for_device(dev)
+        args = args_for_device(dev)
+        saved = load_gpu_choice().get("device", "")
         txt = f"device = {dev}"
         if env:
             txt += "   env = " + ", ".join(f"{k}={v}" for k, v in env.items())
-        txt += "\nEnregistré dans ~/.config/jarvis/gpu.json"
+        if args:
+            txt += "   args = " + " ".join(args)
+        if saved:
+            txt += (f"\nEnregistré : {saved} dans ~/.config/jarvis/gpu.json "
+                    "(appliqué au prochain démarrage des serveurs locaux)")
+        else:
+            txt += ("\nAUCUN choix enregistré (pas de gpu.json) : le GPU par défaut "
+                    "sera utilisé. Sélectionne un GPU puis clique sur Enregistrer.")
         self.gpu_hint.configure(text=txt)
 
     def _save(self) -> None:

@@ -146,11 +146,71 @@ def test_gpu_choice_persistence(tmp_path, monkeypatch) -> None:
     import jarvis.gpu as gpu
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     assert gpu.load_gpu_choice() == {}
+    assert gpu.choice_env() == {}
     gpu.save_gpu_choice("hip:1", gpu.env_for_device("hip:1"))
     choice = gpu.load_gpu_choice()
     assert choice["device"] == "hip:1"
     assert choice["env"] == {"HIP_VISIBLE_DEVICES": "1", "ROCR_VISIBLE_DEVICES": "1"}
+    assert gpu.choice_env() == {"HIP_VISIBLE_DEVICES": "1", "ROCR_VISIBLE_DEVICES": "1"}
     assert gpu.env_for_device("cuda:0") == {"CUDA_VISIBLE_DEVICES": "0"}
-    assert gpu.env_for_device("cpu") == {}
+    # "cpu" masque tous les GPU (chaîne vide = aucun device visible)
+    assert gpu.env_for_device("cpu") == {"CUDA_VISIBLE_DEVICES": "",
+                                          "HIP_VISIBLE_DEVICES": "",
+                                          "ROCR_VISIBLE_DEVICES": ""}
+    assert gpu.env_for_device("vulkan:0") == {}  # pas d'env pour vulkan…
+    assert gpu.args_for_device("vulkan:0") == ["--device", "0"]  # …mais --device
+    assert gpu.args_for_device("cuda:1") == []   # cuda/hip : l'env suffit
+    assert gpu.args_for_device("hip:1") == []
+    assert gpu.args_for_device("cpu") == []
+    gpu.save_gpu_choice("vulkan:1", gpu.env_for_device("vulkan:1"))
+    assert gpu.choice_args() == ["--device", "1"]
+    gpu.save_gpu_choice("cuda:1", gpu.env_for_device("cuda:1"))
+    assert gpu.choice_args() == []
+    assert gpu.choice_env() == {"CUDA_VISIBLE_DEVICES": "1"}
+    # --device : llama.cpp/whisper.cpp veulent un index, pas "cuda:1"
+    assert gpu.device_index("cuda:1") == "1"
+    assert gpu.device_index("hip:0") == "0"
+    assert gpu.device_index("cpu") == "cpu"
     print("OK  gpu choice persistence")
+
+
+def test_argv_for_device_index() -> None:
+    """Un device explicite "cuda:1" doit devenir --device 1 (index llama.cpp),
+    jamais --device cuda:1 (invalide). gpu_args (choix global vulkan) est
+    passé tel quel en tête d'extra."""
+    from jarvis.voice import _argv_for
+    vcfg = VoiceServerConfig(binary="whisper-server",
+                             base_url="http://127.0.0.1:8178",
+                             device="cuda:1")
+    argv = _argv_for("stt", vcfg, Path("/tmp/m.gguf"))
+    assert argv[argv.index("--device") + 1] == "1"
+    vcfg2 = VoiceServerConfig(binary="whisper-server",
+                              base_url="http://127.0.0.1:8178")
+    assert "--device" not in _argv_for("stt", vcfg2, Path("/tmp/m.gguf"))
+    argv2 = _argv_for("stt", vcfg2, Path("/tmp/m.gguf"), ["--device", "1"])
+    assert argv2[argv2.index("--device") + 1] == "1"
+    print("OK  argv_for device index")
+
+
+def test_detect_gpus_vulkan_types(monkeypatch) -> None:
+    """vulkaninfo --summary parsé par bloc GPU : deviceName + deviceType
+    (integrated/discrete) pour distinguer iGPU et dGPU."""
+    import jarvis.gpu as gpu
+    summary = (
+        "Devices:\n========\nGPU0:\n"
+        "\tdeviceType         = PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU\n"
+        "\tdeviceName         = AMD Radeon 890M Graphics (RADV STRIX1)\n"
+        "GPU1:\n"
+        "\tdeviceType         = PHYSICAL_DEVICE_TYPE_DISCRETE_GPU\n"
+        "\tdeviceName         = AMD Radeon RX 9070 XT (RADV GFX1201)\n"
+    )
+    monkeypatch.setattr(gpu, "_run",
+                        lambda cmd: summary if cmd[:1] == ["vulkaninfo"] else "")
+    gpus = gpu.detect_gpus()
+    vulkans = [g for g in gpus if g.backend == "vulkan"]
+    assert [g.device for g in vulkans] == ["vulkan:0", "vulkan:1"]
+    assert "890M" in vulkans[0].name and "integrated" in vulkans[0].name
+    assert "9070" in vulkans[1].name and "discrete" in vulkans[1].name
+    assert gpus[-1].backend == "cpu"
+    print("OK  detect_gpus vulkan")
 

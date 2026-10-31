@@ -73,16 +73,34 @@ async def start_server(model_path: str | Path, base_url: str,
     global _proc
     host, port = host_port(base_url)
     _log_path.parent.mkdir(parents=True, exist_ok=True)
+    # Choix GPU global (onglet Réglages / pop-up 1er lancement) : un mécanisme
+    # par backend — env (CUDA_VISIBLE_DEVICES & co) pour cuda/hip/cpu,
+    # --device <index> pour vulkan (pas de variable d'env équivalente).
+    # Les args du choix vont avant extra_args pour que la config puisse
+    # surcharger ; jamais de --device brut type "vulkan:0".
+    env = None
+    gpu_args: list[str] = []
+    try:
+        from ..gpu import choice_args, choice_env
+        gpu_env = choice_env()
+        if gpu_env:
+            env = {**os.environ, **gpu_env}
+        gpu_args = choice_args()
+    except Exception:  # noqa: BLE001
+        pass
     argv = [
         "llama-server", "-m", str(model_path),
         "--host", host, "--port", str(port),
         "-ngl", "99", "--jinja", "-fa", "on", "--ctx-size", "16384",
+        *gpu_args,
         *(extra_args or []),
     ]
     log = open(_log_path, "ab", buffering=0)
     log.write(f"\n--- {argv} ---\n".encode())
+    if env:
+        log.write(f"--- env: {env} ---\n".encode())
     _proc = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT,
-                             start_new_session=True)
+                             start_new_session=True, env=env)
     deadline = asyncio.get_event_loop().time() + ready_timeout
     while asyncio.get_event_loop().time() < deadline:
         if _proc.poll() is not None:

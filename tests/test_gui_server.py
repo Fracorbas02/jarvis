@@ -29,6 +29,66 @@ def test_status_live_server():
     assert any("Qwen" in m for m in st.models), st.models
 
 
+def test_start_server_passe_env_gpu(monkeypatch, tmp_path):
+    """Le choix GPU global (onglet Réglages) doit être passé en env au Popen
+    du llama-server principal lancé par l'app (jamais de --device brut)."""
+    import jarvis.gpu as gpu
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    gpu.save_gpu_choice("cuda:1", gpu.env_for_device("cuda:1"))
+    captured = {}
+
+    class FakeProc:
+        def poll(self):
+            return None
+
+    def fake_popen(argv, **kw):
+        captured["argv"] = argv
+        captured["env"] = kw.get("env")
+        return FakeProc()
+
+    monkeypatch.setattr(server.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(server, "_log_path", tmp_path / "llama-server-gui.log")
+    try:
+        st = asyncio.run(server.start_server("/tmp/m.gguf", "http://127.0.0.1:59998/v1",
+                                             ready_timeout=0.05))
+    finally:
+        server._proc = None
+    assert st.state == "managed"
+    assert "--device" not in captured["argv"]
+    assert captured["env"] is not None
+    assert captured["env"]["CUDA_VISIBLE_DEVICES"] == "1"
+
+
+def test_start_server_passe_device_vulkan(monkeypatch, tmp_path):
+    """Choix vulkan:N -> --device N dans l'argv (pas d'env, Vulkan n'en a pas),
+    jamais --device vulkan:N (invalide pour llama.cpp)."""
+    import jarvis.gpu as gpu
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    gpu.save_gpu_choice("vulkan:1", gpu.env_for_device("vulkan:1"))
+    captured = {}
+
+    class FakeProc:
+        def poll(self):
+            return None
+
+    def fake_popen(argv, **kw):
+        captured["argv"] = argv
+        captured["env"] = kw.get("env")
+        return FakeProc()
+
+    monkeypatch.setattr(server.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(server, "_log_path", tmp_path / "llama-server-gui.log")
+    try:
+        st = asyncio.run(server.start_server("/tmp/m.gguf", "http://127.0.0.1:59998/v1",
+                                             ready_timeout=0.05))
+    finally:
+        server._proc = None
+    assert st.state == "managed"
+    assert captured["argv"][captured["argv"].index("--device") + 1] == "1"
+    assert "vulkan:1" not in captured["argv"]
+    assert captured["env"] is None  # aucun env pour vulkan
+
+
 if __name__ == "__main__":
     test_host_port()
     test_status_offline()

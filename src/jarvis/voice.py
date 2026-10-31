@@ -26,7 +26,7 @@ import os
 import shutil
 import subprocess
 import wave
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import httpx
@@ -78,11 +78,14 @@ def _log_path(name: str) -> Path:
     return log_dir / f"voice-{name}.log"
 
 
-def _argv_for(name: str, vcfg: VoiceServerConfig, model_path: Path) -> list[str]:
+def _argv_for(name: str, vcfg: VoiceServerConfig, model_path: Path,
+              gpu_args: list[str] | None = None) -> list[str]:
     host, port = host_port(vcfg.base_url)
-    extra = list(vcfg.extra_args)
+    extra = [*(gpu_args or []), *vcfg.extra_args]
     if vcfg.device and "--device" not in extra:
-        extra += ["--device", vcfg.device]
+        # --device attend un index/nom de device llama.cpp, pas "cuda:1"
+        from .gpu import device_index
+        extra += ["--device", device_index(vcfg.device)]
     if name == "stt":
         return [vcfg.binary, "--host", host, "--port", str(port),
                 "-m", str(model_path), *extra]
@@ -131,19 +134,22 @@ async def start_voice_server(name: str, vcfg: VoiceServerConfig,
 
     host, port = host_port(vcfg.base_url)
     # Choix GPU global enregistré (pop-up 1er lancement / onglet Réglages) :
-    # appliqué si la config du serveur ne précise pas déjà device/env.
+    # UN mécanisme par backend — env (CUDA_VISIBLE_DEVICES & co) pour
+    # cuda/hip/cpu si la config du serveur ne précise pas déjà env, et
+    # --device <index> pour vulkan (pas de variable d'env équivalente).
+    # On ne renseigne PAS vcfg.device depuis le choix global (un --device brut
+    # entrerait en conflit avec l'env pour cuda/hip).
+    gpu_args: list[str] = []
     try:
-        from .gpu import env_for_device, load_gpu_choice
-        choice = load_gpu_choice()
-        if choice.get("device") and not vcfg.device:
-            vcfg.device = choice["device"]
-        if choice.get("env") and not vcfg.env:
-            vcfg.env = dict(choice["env"])
-        elif choice.get("device") and not vcfg.env:
-            vcfg.env = env_for_device(choice["device"])
+        from .gpu import choice_args, choice_env
+        gpu_env = choice_env()
+        if gpu_env and not vcfg.env:
+            vcfg = replace(vcfg, env=dict(gpu_env))
+        if not vcfg.device:
+            gpu_args = choice_args()
     except Exception:  # noqa: BLE001
         pass
-    argv = _argv_for(name, vcfg, model)
+    argv = _argv_for(name, vcfg, model, gpu_args)
     log_path = _log_path(name)
     try:
         log_path.parent.mkdir(parents=True, exist_ok=True)

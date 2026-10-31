@@ -5,6 +5,15 @@ $XDG_CONFIG_HOME/jarvis/gpu.json) : {"device": "cuda:1", "env": {...}}.
 L’app desktop propose ce GPU au premier lancement (pop-up) quand plusieurs
 sont détectés et qu’aucun choix n’est enregistré ; l’onglet Réglages permet de le
 changer ensuite.
+
+Le choix est appliqué aux sous-processus lancés par jarvis (llama-server
+principal + serveurs voix STT/TTS), au prochain démarrage, avec UN mécanisme
+par backend (jamais les deux, sinon ils se contredisent) :
+- cuda:N  -> env CUDA_VISIBLE_DEVICES=N
+- hip:N   -> env HIP_VISIBLE_DEVICES=N + ROCR_VISIBLE_DEVICES=N
+- vulkan:N -> argument --device N (llama.cpp/whisper.cpp ; il n’existe pas de
+  variable d’env « VK_VISIBLE_DEVICES », sans --device le choix est ignoré)
+- cpu     -> env CUDA/HIP/ROCR vides (masque les GPU, best-effort)
 """
 
 from __future__ import annotations
@@ -75,9 +84,17 @@ def detect_gpus() -> list[Gpu]:
     # Vulkan (catch-all)
     out = _run(["vulkaninfo", "--summary"])
     if out and not gpus:
-        names = re.findall(r"deviceName\s*=\s*(.+)", out)
-        for i, n in enumerate(dict.fromkeys(names)):
-            gpus.append(Gpu(f"vulkan:{i}", n.strip(), "vulkan"))
+        # parser par bloc "GPUn:" pour lier deviceName et deviceType
+        # (integrated vs discrete) — l’index vulkan:N suit l’ordre d’énumération
+        # Vulkan, le même que --device N de llama.cpp.
+        blocks = re.split(r"^GPU\d+:", out, flags=re.M)
+        for i, b in enumerate(blocks[1:]):
+            m = re.search(r"deviceName\s*=\s*(.+)", b)
+            t = re.search(r"deviceType\s*=\s*PHYSICAL_DEVICE_TYPE_(\w+)", b)
+            name = m.group(1).strip() if m else f"Vulkan GPU {i}"
+            if t:
+                name += f" [{t.group(1).lower()}]"
+            gpus.append(Gpu(f"vulkan:{i}", name, "vulkan"))
     if not gpus:
         # lspci VGA
         out = _run(["lspci"])
@@ -90,11 +107,62 @@ def detect_gpus() -> list[Gpu]:
 
 def env_for_device(device: str) -> dict[str, str]:
     """Variables d’env pour forcer ce device : CUDA_VISIBLE_DEVICES /
-    HIP_VISIBLE_DEVICES / ROCR_VISIBLE_DEVICES selon le backend."""
+    HIP_VISIBLE_DEVICES / ROCR_VISIBLE_DEVICES selon le backend.
+    "cpu" masque tous les GPU (chaîne vide = aucun device visible)."""
     backend, _, idx = device.partition(":")
     idx = idx or "0"
     if backend == "cuda":
         return {"CUDA_VISIBLE_DEVICES": idx}
     if backend == "hip":
         return {"HIP_VISIBLE_DEVICES": idx, "ROCR_VISIBLE_DEVICES": idx}
+    if backend == "cpu":
+        return {"CUDA_VISIBLE_DEVICES": "", "HIP_VISIBLE_DEVICES": "",
+                "ROCR_VISIBLE_DEVICES": ""}
+    return {}  # vulkan : pas de variable standard fiable, llama-server détecte seul
+
+
+def device_index(device: str) -> str:
+    """Convertit "cuda:1" -> "1" pour un --device explicite : llama.cpp et
+    whisper.cpp attendent un index (ou un nom de device interne), pas
+    "cuda:1". Sans "backend:" on renvoie la valeur telle quelle."""
+    _, _, idx = device.partition(":")
+    return idx or device
+
+
+def args_for_device(device: str) -> list[str]:
+    """Arguments CLI pour forcer ce device quand l'env ne suffit pas.
+    Vulkan n'a pas de variable d'env type CUDA_VISIBLE_DEVICES : le seul
+    levier fiable est --device <index> (llama.cpp/whisper.cpp). On ne le
+    renvoie QUE pour vulkan (pour cuda/hip, l'env masque déjà les autres GPU
+    et --device <idx> serait alors invalide car le process ne voit plus que
+    le device choisi, sous l'index 0)."""
+    backend, _, idx = device.partition(":")
+    if backend == "vulkan":
+        return ["--device", idx or "0"]
+    return []
+
+
+def choice_env() -> dict[str, str]:
+    """Env du choix GPU global enregistré (Réglages / pop-up 1er lancement).
+    {} si aucun choix. Sert à passer env= au Popen des serveurs locaux."""
+    try:
+        choice = load_gpu_choice()
+    except Exception:  # noqa: BLE001
+        return {}
+    if choice.get("env"):
+        return dict(choice["env"])
+    if choice.get("device"):
+        return env_for_device(choice["device"])
     return {}
+
+
+def choice_args() -> list[str]:
+    """Args CLI (--device N pour vulkan) du choix GPU global enregistré.
+    [] si aucun choix ou si le backend se force par env."""
+    try:
+        choice = load_gpu_choice()
+    except Exception:  # noqa: BLE001
+        return []
+    if choice.get("device"):
+        return args_for_device(choice["device"])
+    return []

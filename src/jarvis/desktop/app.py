@@ -19,9 +19,9 @@ import customtkinter as ctk
 
 from .chat_panel import ChatPanel
 from .controller import DesktopController, default_repo_root
-from .scaling import detect_scale, setup_window
+from .scaling import _monitors_xml_layout, detect_scale, setup_window
 from .sidebar import Sidebar
-from .theme import BG, PANEL
+from .theme import ACCENT, BG, PANEL
 from .voice_panel import VoicePanel
 
 SIDEBAR_W = 280
@@ -76,9 +76,11 @@ class DesktopApp:
 
     def _maybe_gpu_popup(self) -> None:
         """Premier lancement : si plusieurs GPU détectés et aucun choix
-        enregistré, pop-up demandant lequel utiliser (persisté en JSON)."""
+        enregistré, pop-up MODAL demandant lequel utiliser (persisté en JSON).
+        S'affiche au premier plan, centré sur la fenêtre principale."""
         try:
-            from ..gpu import detect_gpus, load_gpu_choice, save_gpu_choice, env_for_device
+            from ..gpu import (detect_gpus, env_for_device, gpu_choice_path,
+                               load_gpu_choice, save_gpu_choice)
             if load_gpu_choice().get("device"):
                 return
             gpus = [g for g in detect_gpus() if g.backend != "cpu"]
@@ -86,21 +88,56 @@ class DesktopApp:
                 return
             top = ctk.CTkToplevel(self.root)
             top.title("Choisir le GPU")
-            top.geometry("480x260")
-            ctk.CTkLabel(top, text="Plusieurs GPU détectés. Lequel utiliser ?",
-                         font=ctk.CTkFont(size=14, weight="bold")).pack(pady=(16, 8))
-            labels = [f"{g.name}  ({g.device})" for g in gpus]
-            combo = ctk.CTkComboBox(top, values=labels, width=420)
-            combo.set(labels[0])
+            top.transient(self.root)           # liée à la fenêtre mère
+            top.attributes("-topmost", True)   # visible même en multi-écrans
+            # centrée sur la fenêtre principale (pas sur l'écran virtuel entier)
+            self.root.update_idletasks()
+            w, h = 500, 300
+            x = self.root.winfo_x() + max((self.root.winfo_width() - w) // 2, 0)
+            y = self.root.winfo_y() + max((self.root.winfo_height() - h) // 2, 0)
+            top.geometry(f"{w}x{h}+{x}+{y}")
+            top.lift()
+            top.focus_force()
+            top.grab_set()                     # modal : oblige à répondre oui/non
+
+            dev_by_label = {f"{g.name}  ({g.device})": g.device for g in gpus}
+            ctk.CTkLabel(top,
+                         text="Plusieurs GPU détectés. Lequel utiliser pour les modèles locaux (LLM, STT, TTS) ?",
+                         font=ctk.CTkFont(size=14, weight="bold"),
+                         wraplength=460).pack(pady=(16, 8))
+            combo = ctk.CTkComboBox(top, values=list(dev_by_label), width=440)
+            combo.set(next(iter(dev_by_label)))
             combo.pack(pady=4)
+            status = ctk.CTkLabel(top, text="", font=ctk.CTkFont(size=11),
+                                  text_color="#9aa4b0", wraplength=460)
+            status.pack(pady=2)
+
             def _ok():
-                dev = combo.get().rsplit("(", 1)[1].rstrip(")")
+                dev = dev_by_label.get(combo.get(), combo.get())
                 save_gpu_choice(dev, env_for_device(dev))
+                status.configure(text=f"Enregistré : {dev} -> {gpu_choice_path()}\n"
+                                      "Appliqué au prochain démarrage des serveurs locaux.")
+                btn_ok.configure(state="disabled")
+                btn_no.configure(state="disabled")
+                top.after(2500, top.destroy)
+
+            def _cancel():
+                top.grab_release()
                 top.destroy()
-            ctk.CTkButton(top, text="Valider", fg_color=ACCENT, text_color="#06121a",
-                          command=_ok).pack(pady=10)
-        except Exception:  # noqa: BLE001
-            pass
+
+            btns = ctk.CTkFrame(top, fg_color="transparent")
+            btns.pack(pady=10)
+            btn_ok = ctk.CTkButton(btns, text="Oui, utiliser ce GPU",
+                                   fg_color=ACCENT, text_color="#06121a",
+                                   command=_ok)
+            btn_ok.pack(side="left", padx=6)
+            btn_no = ctk.CTkButton(btns, text="Non (plus tard)", command=_cancel)
+            btn_no.pack(side="left", padx=6)
+            top.protocol("WM_DELETE_WINDOW", _cancel)
+        except Exception:  # noqa: BLE001 — jamais bloquant, mais on logue
+            import traceback
+            print("[jarvis] pop-up GPU impossible :", traceback.format_exc(),
+                  file=sys.stderr)
 
     # ---------- événements ----------
 
@@ -188,6 +225,113 @@ class DesktopApp:
         self.root.destroy()
 
 
+def _debug_scale(root, scale: float, app=None) -> None:
+    """Dump de diagnostic du scaling (JARVIS_DEBUG_SCALE=1) : toujours sur
+    stderr + /tmp/jarvis-debug.log, jamais bloquant (try/except)."""
+    import sys
+    import traceback
+    import customtkinter as _ctk
+    lines: list[str] = []
+    try:
+        from customtkinter.windows.widgets.scaling.scaling_tracker import ScalingTracker
+        lbl = _ctk.CTkLabel(root, text="x", font=_ctk.CTkFont(size=13))
+        root.update_idletasks()
+        lines.append(
+            f"[jarvis] debug: scale={scale} "
+            f"widget_scaling={ScalingTracker.get_widget_scaling(lbl)} "
+            f"window_scaling={ScalingTracker.get_window_scaling(root)} "
+            f"screen={root.winfo_screenwidth()}x{root.winfo_screenheight()} "
+            f"dpi={root.winfo_fpixels('1i'):.1f} "
+            f"tk_scaling={root.tk.call('tk', 'scaling')} "
+            f"label13_font={lbl._label.cget('font')}")
+        lbl.destroy()
+    except Exception:
+        lines.append("[jarvis] debug: ERREUR dans le dump:")
+        lines.extend(traceback.format_exc().splitlines())
+    if app is not None:
+        try:
+            def walk(w, depth=0):
+                if depth > 4:
+                    return
+                for c in w.winfo_children():
+                    if isinstance(c, _ctk.CTkLabel):
+                        txt = str(c.cget("text"))[:20]
+                        lines.append(
+                            f"[jarvis] debug: label {txt!r} font={c._label.cget('font')}")
+                    walk(c, depth + 1)
+            walk(app.root)
+            tb = app.chat.text._textbox
+            lines.append(
+                f"[jarvis] debug: chat default font={tb.cget('font')} "
+                f"tag reasoning font={tb.tag_cget('reasoning', 'font')}")
+            lines.append(
+                f"[jarvis] debug: root winfo={root.winfo_width()}x{root.winfo_height()} "
+                f"req={root.winfo_reqwidth()}x{root.winfo_reqheight()} "
+                f"screen={root.winfo_screenwidth()}x{root.winfo_screenheight()} "
+                f"pointerxy={root.winfo_pointerxy()} "
+                f"geometry={root.geometry()} "
+                f"monitors={_monitors_xml_layout()} "
+                f"screenmm={root.winfo_screenmmwidth()}x{root.winfo_screenmmheight()}mm "
+                f"pw={app.pw.winfo_width()}x{app.pw.winfo_height()} "
+                f"sidebar_w={app.sidebar.winfo_width()} chat_w={app.chat.winfo_width()}")
+            try:
+                import tkinter.font as tkfont
+                fams = sorted(tkfont.families())
+                lines.append(f"[jarvis] debug: font families: Roboto={'Roboto' in fams} "
+                             f"n={len(fams)} sample={fams[:8]}")
+                import glob as _glob
+                home_fonts = _glob.glob(os.path.expanduser("~/.fonts/**/*.ttf"), recursive=True) + \
+                             _glob.glob(os.path.expanduser("~/.fonts/*.ttf"))
+                lines.append(f"[jarvis] debug: ~/.fonts ttf={home_fonts}")
+                xdg = os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
+                lines.append(f"[jarvis] debug: XDG_DATA_HOME={xdg} "
+                             f"fonts dir exists={os.path.isdir(os.path.join(xdg, 'fonts'))}")
+                lines.append(f"[jarvis] debug: DISPLAY={os.environ.get('DISPLAY')} "
+                             f"WAYLAND_DISPLAY={os.environ.get('WAYLAND_DISPLAY')}")
+                import subprocess as _sp
+                try:
+                    out = _sp.run(["xlsfonts"], capture_output=True, text=True, timeout=5).stdout
+                    n = len(out.splitlines())
+                    rob = [l for l in out.splitlines() if "oboto" in l][:3]
+                    lines.append(f"[jarvis] debug: xlsfonts n={n} roboto={rob}")
+                except Exception as e:
+                    lines.append(f"[jarvis] debug: xlsfonts erreur: {e}")
+                for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont"):
+                    f = tkfont.nametofont(name)
+                    lines.append(
+                        f"[jarvis] debug: named font {name}: actual={f.actual()} "
+                        f"measure(JARVIS)={f.measure('JARVIS')}px")
+                # tester un spec pixel -44 avec famille connue vs Roboto
+                for spec in (("Roboto", -44, "bold"), ("DejaVu Sans", -44, "bold"), ("fixed", -44)):
+                    ff = tkfont.Font(family=spec[0], size=spec[1], weight=spec[2] if len(spec) > 2 else "normal")
+                    lines.append(f"[jarvis] debug: Font{spec} actual={ff.actual()} measure={ff.measure('JARVIS')}px")
+                    ff.destroy()
+            except Exception:
+                pass
+            # hauteur réelle d'un label JARVIS (titre sidebar)
+            import tkinter.font as _tkf
+            for c in app.sidebar.winfo_children():
+                if isinstance(c, _ctk.CTkLabel) and c.cget("text") == "JARVIS":
+                    spec = c._label.cget("font")
+                    f = _tkf.Font(font=spec)
+                    lines.append(
+                        f"[jarvis] debug: label JARVIS winfo_h={c.winfo_height()} "
+                        f"reqh={c.winfo_reqheight()} spec={spec} "
+                        f"font_actual={f.actual()} measure={f.measure('JARVIS')}px")
+                    break
+        except Exception:
+            lines.append("[jarvis] debug: ERREUR scan widgets:")
+            lines.extend(traceback.format_exc().splitlines())
+    text = "\n".join(lines)
+    sys.stderr.write(text + "\n")
+    sys.stderr.flush()
+    try:
+        with open("/tmp/jarvis-debug.log", "w", encoding="utf-8") as f:
+            f.write(text + "\n")
+    except OSError:
+        pass
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="jarvis-app",
                                      description="Application desktop de Jarvis")
@@ -206,6 +350,19 @@ def main() -> None:
     ctk.set_appearance_mode("dark")
     ctk.set_default_color_theme("blue")
 
+    # Curseur souris AVANT toute création de fenêtre : libXcursor lit
+    # XCURSOR_SIZE une seule fois au chargement. Sous XWayland scale 2 sans
+    # cette variable, le curseur reste en 24px (minuscule sur écran HiDPI).
+    if "XCURSOR_SIZE" not in os.environ:
+        try:
+            import tkinter as _tk
+            _probe = _tk.Tk()
+            _s = detect_scale(_probe)
+            _probe.destroy()
+            os.environ["XCURSOR_SIZE"] = str(int(24 * _s))
+        except Exception:  # noqa: BLE001
+            pass
+
     root = ctk.CTk()
     root.title("Jarvis")
 
@@ -217,6 +374,8 @@ def main() -> None:
     root.configure(fg_color=BG)
 
     app = DesktopApp(root, args.config, scale=scale)
+    if os.environ.get("JARVIS_DEBUG_SCALE"):
+        _debug_scale(root, scale, app)
     try:
         root.mainloop()
     except KeyboardInterrupt:
