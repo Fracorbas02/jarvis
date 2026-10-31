@@ -158,6 +158,43 @@ Test de l'app desktop sous Xvfb (mock LLM, fenêtre pilotée) :
 xvfb-run -a uv run python tests/test_desktop_app.py
 ```
 
+## Interface GTK4 / libadwaita (refonte de l'UI)
+
+```sh
+uv run jarvis-gtk                 # fen\u00eatre native GTK4 (PyGObject + libadwaita)
+uv run jarvis-gtk --config /chemin/config.toml
+```
+
+Nouvelle UI native, qui ne touche \u00e0 rien d'autre que la partie graphique
+(le c\u0153ur LLM + MCP + voix + sessions est r\u00e9utilis\u00e9 tel quel) :
+
+- **Accueil** : un seul bouton \u00ab Lancer \u00bb. S'il n'y a pas d\u00e9j\u00e0 de llama-server,
+  il en d\u00e9marre un avec le GGUF choisi (liste des mod\u00e8les d\u00e9couverts, s'il y en a
+  plusieurs) puis ouvre la conversation ; sinon il ouvre directement la
+  conversation. Le prompt texte n'est pas sur l'accueil : il est dans le
+  **menu (Ctrl+P)**, avec les conversations (Ctrl+O) et la lecture TTS.
+- **Conversation** : centr\u00e9e sur l'\u00e9change avec le mod\u00e8le \u2014 bouton micro
+  (STT local : enregistre, transcrit, envoie au LLM) ; r\u00e9ponses en streaming
+  avec raisonnement repliable et appels d'outils en lignes \u2713/\u2717 + dur\u00e9e.
+- **R\u00e9glages** (vrai onglet) : th\u00e8me (syst\u00e8me/sombre/clair), GPU utilis\u00e9 par
+  les serveurs locaux (persist\u00e9 dans `~/.config/jarvis/gpu.json`, appliqu\u00e9 au
+  prochain d\u00e9marrage), taille de contexte (`--ctx-size` au lancement du
+  serveur depuis l'accueil), liste des outils MCP, lecture TTS des r\u00e9ponses.
+  Les r\u00e9glages UI sont persist\u00e9s dans `~/.config/jarvis/ui.json`.
+- Le statut du serveur (en ligne / g\u00e9r\u00e9 / hors ligne + mod\u00e8le servi + usage
+  du contexte via GET /slots) est dans le popover de l'ic\u00f4ne r\u00e9seau, qui permet
+  aussi de d\u00e9marrer/arr\u00eater le serveur g\u00e9r\u00e9.
+
+D\u00e9pendance syst\u00e8me : `python3-gobject`, `gtk4`, `libadwaita-1`
+(ex. `sudo pacman -S python-gobject gtk4 libadwaita` sur Arch).
+
+Tests du pont GTK (sans GTK ni LLM r\u00e9el, mock LLM + MCP echo) :
+
+```sh
+python3 tests/test_gtk_backend.py          # flux d'\u00e9v\u00e9nements, sessions, r\u00e9glages
+python3 tests/test_gtk_app_structure.py    # structure de la fen\u00eatre (stub gi)
+```
+
 ## Outils MCP
 
 | Server   | Outils | Source |
@@ -240,6 +277,10 @@ src/jarvis/
   desktop/    # application desktop (customtkinter) : app, sidebar, chat_panel,
               #  voice_panel (TTS/STT fonctionnels), controller (boucle asyncio
               #  + queue vers Tk, appels voix inclus) -> `uv run jarvis-app`
+  gtk/        # interface GTK4 / libadwaita (refonte UI) : app (fen\u00eatre Adw :
+              #  accueil "Lancer", conversation, r\u00e9glages), widgets (bulles,
+              #  reasoning repliable, outils), backend (boucle asyncio + queue
+              #  + sessions + statut serveur) -> `uv run jarvis-gtk`
 mcp_servers/  # nettools (ping/dig/traceroute/whois/ss/ip/TLS/HTTP),
               #  sysinfo (disques/mémoire/GPU/processus/journalctl),
               #  files (grep/read/empreintes, lecture confinée),

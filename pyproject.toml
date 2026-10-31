@@ -16,6 +16,7 @@ dependencies = [
 jarvis = "jarvis.cli:main"
 jarvis-gui = "jarvis.gui.app:main"
 jarvis-app = "jarvis.desktop.app:main"
+jarvis-gtk = "jarvis.gtk.app:main"
 
 [dependency-groups]
 dev = [
