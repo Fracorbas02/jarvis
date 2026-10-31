@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "tests"))
 
+from jarvis.desktop import scaling as scaling_mod  # noqa: E402
 from jarvis.desktop.scaling import (  # noqa: E402
     adaptive_geometry, adaptive_minsize, detect_scale, setup_window,
 )
@@ -52,6 +53,15 @@ def test_unit() -> None:
         assert detect_scale(StubRoot(96, 1920, 1080)) == 2.0
     finally:
         del os.environ["GDK_SCALE"]
+    # hint gsettings GNOME (Wayland) : prioritaire sur un DPI X11 à 96
+    orig = scaling_mod._gsettings_scale
+    scaling_mod._gsettings_scale = lambda: 2.0
+    try:
+        assert detect_scale(StubRoot(96, 1920, 1080)) == 2.0
+        # le DPI X11 à 192 gagne si plus fort
+        assert detect_scale(StubRoot(192, 3840, 2160)) == 2.0
+    finally:
+        scaling_mod._gsettings_scale = orig
     # géométrie adaptative
     assert adaptive_geometry(StubRoot(96, 1920, 1080)) == "1190x734+365+173"
     # petit écran -> minimum, x centré à 0 (pas négatif)
@@ -105,6 +115,13 @@ def run_integration(expect_scale: float) -> None:
     # 5. le chat est présent et la sidebar contient le segmented des modes
     assert app.chat.winfo_manager() == "grid"
     assert app.sidebar.mode_seg is not None
+    # 6. les polices internes du chat (tags du textbox) suivent le scale :
+    #    sinon le texte du chat reste à l'échelle 1x dans une UI à l'échelle OS
+    tb = app.chat.text._textbox
+    tag_font = str(tb.tag_cget("reasoning", "font"))
+    assert f"-{round(12 * expect_scale)}" in tag_font, tag_font
+    head_font = str(tb.tag_cget("user", "font"))
+    assert f"-{round(13 * expect_scale)}" in head_font, head_font
 
     app.ctrl.stop()
     root.destroy()

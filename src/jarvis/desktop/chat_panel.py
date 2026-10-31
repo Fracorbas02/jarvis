@@ -19,9 +19,10 @@ from .theme import ACCENT, BG, PANEL_2, TEXT_DIM, TOOL, ERROR
 
 
 class ChatPanel(ctk.CTkFrame):
-    def __init__(self, master, ctrl: DesktopController):
+    def __init__(self, master, ctrl: DesktopController, scale: float = 1.0):
         super().__init__(master, fg_color=BG, corner_radius=0)
         self.ctrl = ctrl
+        self.scale = scale
         self.busy = False
         self._reasoning_started = False
         self._content_started = False
@@ -39,24 +40,31 @@ class ChatPanel(ctk.CTkFrame):
                                    text_color="#e6edf3", border_width=0,
                                    font=ctk.CTkFont(size=13), activate_scrollbars=True)
         self.text.grid(row=1, column=0, padx=12, pady=8, sticky="nsew")
-        # CTkTextbox.tag_config interdit l'option font (scaling) : couleurs via
-        # tag_config, polices via le textbox interne en tuples.
-        self._tag("user", fg=ACCENT, font=("TkDefaultFont", 13, "bold"))
+        # CTkTextbox.tag_config interdit l'option font (scaling ctk) : couleurs
+        # via tag_config, polices via le textbox interne. Les polices des tags
+        # DOIVENT être scalées à la main (taille en pixels NÉGATIFS x scale),
+        # sinon le texte du chat reste à l'échelle 1x pendant que le reste de
+        # l'UI est à l'échelle de l'OS.
+        self._tag("user", fg=ACCENT, size=13, styles=("bold",))
         self._tag("assistant", fg="#e6edf3")
-        self._tag("assistant_head", fg=ACCENT, font=("TkDefaultFont", 13, "bold"))
-        self._tag("reasoning", fg="#6e7681", font=("TkDefaultFont", 12, "italic"))
-        self._tag("reasoning_head", fg="#6e7681",
-                  font=("TkDefaultFont", 12, "italic", "bold"))
-        self._tag("tool", fg=TOOL, font=("TkDefaultFont", 12))
+        self._tag("assistant_head", fg=ACCENT, size=13, styles=("bold",))
+        self._tag("reasoning", fg="#6e7681", size=12, styles=("italic",))
+        self._tag("reasoning_head", fg="#6e7681", size=12,
+                  styles=("italic", "bold"))
+        self._tag("tool", fg=TOOL, size=12)
         self._tag("error", fg=ERROR)
         self.text.configure(state="disabled")
 
-    def _tag(self, name: str, fg: str | None = None,
-             font: tuple | None = None) -> None:
+    def _scaled_font(self, size: float, styles: tuple = ()) -> tuple:
+        # tuple tk : (family, taille en pixels si négatif, *styles)
+        return ("TkDefaultFont", -round(size * self.scale), *styles)
+
+    def _tag(self, name: str, fg: str | None = None, size: float | None = None,
+             styles: tuple = ()) -> None:
         if fg:
             self.text.tag_config(name, foreground=fg)
-        if font:
-            self.text._textbox.tag_config(name, font=font)
+        if size:
+            self.text._textbox.tag_config(name, font=self._scaled_font(size, styles))
 
         # saisie
         row = ctk.CTkFrame(self, fg_color="transparent")

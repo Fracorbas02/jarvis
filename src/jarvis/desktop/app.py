@@ -37,8 +37,9 @@ class DesktopApp:
 
         # Fenêtre redimensionnable ; la sidebar est sur un sash déplaçable.
         root.resizable(True, True)
+        sash = max(3, round(6 * scale))
         self.pw = tk.PanedWindow(root, orient="horizontal", bg=BG, bd=0,
-                                 sashwidth=6, sashpad=0, opaqueresize=True,
+                                 sashwidth=sash, sashpad=0, opaqueresize=True,
                                  handlepad=0)
         self.pw.pack(fill="both", expand=True)
 
@@ -55,7 +56,7 @@ class DesktopApp:
 
         # panneaux par mode
         self.panels: dict[str, ctk.CTkFrame] = {}
-        self.chat = ChatPanel(self.main, self.ctrl)
+        self.chat = ChatPanel(self.main, self.ctrl, scale=scale)
         self.panels["llm"] = self.chat
         for mode in ("tts", "stt"):
             self.panels[mode] = VoicePanel(self.main, self.ctrl, mode)
