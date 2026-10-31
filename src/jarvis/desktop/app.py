@@ -95,13 +95,9 @@ class DesktopApp:
     def show_mode(self, mode: str) -> None:
         for m, panel in self.panels.items():
             if m == mode:
-                panel.tkraise()
+                panel.grid(row=0, column=0, sticky="nsew")
             else:
                 panel.grid_remove()
-        # re-grid the visible one (tkraise ne gère pas grid)
-        for m, panel in self.panels.items():
-            if m == mode:
-                panel.grid(row=0, column=0, sticky="nsew")
 
     def on_reset(self) -> None:
         self.chat.clear()

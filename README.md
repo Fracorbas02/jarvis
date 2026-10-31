@@ -92,6 +92,26 @@ Tests GUI (sans navigateur, via le plugin pytest de NiceGUI) :
 uv run pytest tests/ -v
 ```
 
+## Application desktop
+
+```sh
+uv run jarvis-app             # fenêtre native customtkinter (dark mode)
+uv run jarvis-app --config /chemin/config.toml
+```
+
+Même expérience que la GUI web, en application native : sélecteur de mode
+(Chat LLM / TTS / STT), modèles détectés par mode, panneau serveur
+llama-server (statut, start/stop), liste des outils MCP, et chat avec
+streaming (réflexion en grisé italique, outils en violet, réponse en clair).
+La logique async (LLM + MCP) tourne dans une boucle asyncio sur un thread
+dédié, les événements remontent au thread Tk via une queue.
+
+Test de l'app desktop sous Xvfb (mock LLM, fenêtre pilotée) :
+
+```sh
+xvfb-run -a uv run python tests/test_desktop_app.py
+```
+
 ## Outils MCP
 
 | Server   | Outils | Source |
@@ -156,6 +176,9 @@ src/jarvis/
   gui/        # interface web locale (NiceGUI) : app, sidebar, chat_view,
               #  voice_views, models (découverte), server (statut llama-server),
               #  backend (pont agent + streaming) -> `uv run jarvis-gui`
+  desktop/    # application desktop (customtkinter) : app, sidebar, chat_panel,
+              #  voice_panel, controller (boucle asyncio + queue vers Tk)
+              #  -> `uv run jarvis-app`
 mcp_servers/  # nettools (ping/dig/traceroute), cve (NVD 2.0 : détail CVE,
               #  recherche par mots-clés + fenêtre de jours, veille), echo (test)
 bench/       # mesure tok/s / TTFT
