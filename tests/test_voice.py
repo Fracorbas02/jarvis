@@ -140,3 +140,17 @@ if __name__ == "__main__":
     test_voice_server_status_online()
     test_voice_config_defaults()
     print("OK")
+
+def test_gpu_choice_persistence(tmp_path, monkeypatch) -> None:
+    """save/load du choix GPU en JSON sous XDG_CONFIG_HOME."""
+    import jarvis.gpu as gpu
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    assert gpu.load_gpu_choice() == {}
+    gpu.save_gpu_choice("hip:1", gpu.env_for_device("hip:1"))
+    choice = gpu.load_gpu_choice()
+    assert choice["device"] == "hip:1"
+    assert choice["env"] == {"HIP_VISIBLE_DEVICES": "1", "ROCR_VISIBLE_DEVICES": "1"}
+    assert gpu.env_for_device("cuda:0") == {"CUDA_VISIBLE_DEVICES": "0"}
+    assert gpu.env_for_device("cpu") == {}
+    print("OK  gpu choice persistence")
+
