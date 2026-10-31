@@ -156,27 +156,21 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.home_status.add_css_class("dim-label")
         page.append(self.home_status)
 
-        self.launch_button = Gtk.Button(label="Lancer", halign=Gtk.Align.CENTER)
-        self.launch_button.add_css_class("suggested-action")
-        self.launch_button.add_css_class("pill")
-        page.append(self.launch_button)
-        self.launch_button.connect("clicked", self._on_launch)
-
-        # choix du modèle uniquement si le serveur est hors ligne et qu'on a
-        # plusieurs modèles locaux (sinon Lancer prend le premier / celui servi)
-        self.home_model_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
-                                      spacing=8, halign=Gtk.Align.CENTER)
-        self.home_model_box.set_visible(False)
-        lbl = Gtk.Label(label="Modèle :")
-        lbl.add_css_class("dim-label")
-        self.home_model_box.append(lbl)
-        self.home_model_combo = Gtk.ComboBoxText()
-        for m in self.backend.models_llm:
-            self.home_model_combo.append(str(m.path), f"{m.name}  ({m.size_human})")
-        if self.backend.models_llm:
-            self.home_model_combo.set_active(0)
-        self.home_model_box.append(self.home_model_combo)
-        page.append(self.home_model_box)
+        # Accueil : un seul gros bouton micro. Si le serveur LLM est hors
+        # ligne, il est d'abord démarré (modèle choisi dans le popover
+        # statut) et la conversation s'ouvre quand le modèle est servi.
+        self.home_mic_button = Gtk.Button(halign=Gtk.Align.CENTER,
+                                          tooltip_text="Parler à Jarvis")
+        self.home_mic_button.add_css_class("suggested-action")
+        self.home_mic_button.add_css_class("pill")
+        mic_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
+                          halign=Gtk.Align.CENTER)
+        mic_icon = Gtk.Image(icon_name="audio-input-microphone-symbolic", pixel_size=48)
+        mic_box.append(mic_icon)
+        mic_box.append(Gtk.Label(label="Parler à Jarvis"))
+        self.home_mic_button.set_child(mic_box)
+        page.append(self.home_mic_button)
+        self.home_mic_button.connect("clicked", self._on_home_mic)
 
         hint = Gtk.Label(label="Le prompt texte est dans le menu (Ctrl+P)",
                          halign=Gtk.Align.CENTER)
@@ -192,19 +186,30 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.messages = MessagesColumn()
         outer.append(self.messages.widget)
 
+        # barre du bas : micro + champ texte + envoyer
         bottom = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8,
-                         halign=Gtk.Align.CENTER, margin_top=8, margin_bottom=12)
+                         halign=Gtk.Align.CENTER, margin_top=8, margin_bottom=12,
+                         margin_start=16, margin_end=16)
         self.chat_mic = Gtk.Button(icon_name="audio-input-microphone-symbolic",
                                    tooltip_text="Parler à Jarvis (enregistre puis transcrit)")
         self.chat_mic.add_css_class("pill")
         self.chat_mic.connect("clicked", self._on_mic)
         bottom.append(self.chat_mic)
-        self.chat_hint = Gtk.Label(label="Cliquez sur le micro pour parler",
-                                   halign=Gtk.Align.CENTER)
+        self.chat_entry = Gtk.Entry(hexpand=True, placeholder_text="Message…")
+        self.chat_entry.add_css_class("pill")
+        self.chat_entry.connect("activate", self._on_entry_activate)
+        bottom.append(self.chat_entry)
+        send_btn = Gtk.Button(icon_name="go-next-symbolic", tooltip_text="Envoyer")
+        send_btn.add_css_class("pill")
+        send_btn.connect("clicked", self._on_entry_activate)
+        bottom.append(send_btn)
+        outer.append(bottom)
+        hint_row = Gtk.Box(halign=Gtk.Align.CENTER, margin_bottom=8)
+        self.chat_hint = Gtk.Label(label="", halign=Gtk.Align.CENTER)
         self.chat_hint.add_css_class("dim-label")
         self.chat_hint.add_css_class("caption")
-        bottom.append(self.chat_hint)
-        outer.append(bottom)
+        hint_row.append(self.chat_hint)
+        outer.append(hint_row)
         return outer
 
     def _build_settings(self) -> Gtk.Widget:
@@ -266,15 +271,84 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.tools_group = Adw.PreferencesGroup(title="Outils MCP disponibles")
         page.add(self.tools_group)
 
-        # --- Voix ---
+        # --- Voix : micro + TTS ---
         g_voice = Adw.PreferencesGroup(title="Voix")
+        self.mic_row = Adw.ComboRow(title="Micro utilisé pour parler à Jarvis",
+                                    subtitle="Liste des cartes d'entrée ALSA (arecord -L)")
+        self.mic_row.set_model(Gtk.StringList.new(["default"]))
+        self.mic_row.set_selected(0)
+        self.mic_row.connect("notify::selected", self._on_mic_changed)
+        g_voice.add(self.mic_row)
         row_tts = Adw.SwitchRow(title="Lire les réponses à voix haute (TTS)",
                                 active=self.tts_enabled)
         row_tts.connect("notify::active", self._on_tts_switch)
         g_voice.add(row_tts)
         page.add(g_voice)
 
+        # --- Autorisations système ---
+        g_perm = Adw.PreferencesGroup(title="Autorisations système",
+                                      description="GNOME contrôle l'accès au micro "
+                                                  "par application (Paramètres > Confidentialité)")
+        row_test = Adw.ActionRow(title="Tester le micro",
+                                 subtitle="Enregistre 0,5 s pour vérifier l'autorisation")
+        btn_test = Gtk.Button(label="Tester", valign=Gtk.Align.CENTER)
+        btn_test.connect("clicked", self._on_test_mic)
+        row_test.add_suffix(btn_test)
+        g_perm.add(row_test)
+        row_gnome = Adw.ActionRow(title="Ouvrir les réglages Confidentialité de GNOME",
+                                  subtitle="Gérer les autorisations micro des applications")
+        btn_gnome = Gtk.Button(label="Ouvrir", valign=Gtk.Align.CENTER)
+        btn_gnome.connect("clicked", self._on_open_gnome_privacy)
+        row_gnome.add_suffix(btn_gnome)
+        g_perm.add(row_gnome)
+        page.add(g_perm)
+
+        # liste les micros disponibles dès l'ouverture de l'onglet
+        self.backend.list_input_devices()
+
         return scroll
+
+    def _fill_mic_devices(self, devices: list, error: str) -> None:
+        """Remplit le ComboRow des micros depuis arecord -L."""
+        model = Gtk.StringList()
+        labels: list[str] = []
+        for dev, desc in devices:
+            model.append(desc)
+            labels.append(dev)
+        self.mic_row.set_model(model)
+        self._mic_devices = labels
+        # resélectionne le micro enregistré
+        try:
+            idx = labels.index(self.mic_device)
+        except ValueError:
+            idx = 0
+        self.mic_row.set_selected(idx)
+        if error:
+            self.mic_row.set_subtitle(error)
+
+    def _on_mic_changed(self, row, _pspec) -> None:
+        idx = row.get_selected()
+        devices = getattr(self, "_mic_devices", ["default"])
+        if 0 <= idx < len(devices):
+            self.mic_device = devices[idx]
+            save_ui_settings({"mic": self.mic_device})
+
+    def _on_test_mic(self, _btn) -> None:
+        self._toast("Test du micro…")
+        self.backend.test_mic(self.mic_device)
+
+    def _on_open_gnome_privacy(self, _btn) -> None:
+        import subprocess
+        for uri in ("settings://privacy", "gnome-control-center privacy"):
+            try:
+                if uri.startswith("settings://"):
+                    subprocess.Popen(["gio", "open", uri])
+                else:
+                    subprocess.Popen(uri.split())
+                return
+            except Exception:  # noqa: BLE001
+                continue
+        self._toast("Ouvre manuellement : Paramètres > Confidentialité")
 
     def _build_status_popover(self) -> None:
         self.status_popover = Gtk.Popover()
@@ -340,23 +414,23 @@ class JarvisWindow(Adw.ApplicationWindow):
 
     # ---------- page d'accueil ----------
 
-    def _on_launch(self, _btn) -> None:
-        if self._status_state in ("online", "managed"):
-            self.stack.set_visible_child_name("chat")
+    def _on_home_mic(self, _btn) -> None:
+        # Accueil = micro uniquement : si le serveur LLM est hors ligne, on
+        # le démarre d'abord (modèle choisi dans le popover statut), la
+        # conversation s'ouvre quand le modèle est servi ; sinon on y va.
+        if self._status_state not in ("online", "managed"):
+            model_path = self.pop_model_combo.get_active_id()
+            if not model_path and self.backend.models_llm:
+                model_path = str(self.backend.models_llm[0].path)
+            if model_path:
+                self.home_status.set_text("Démarrage du modèle (peut être long)…")
+                self.backend.start_server(model_path, ctx_size=int(self._ctx))
+            else:
+                self._toast("Aucun modèle GGUF trouvé "
+                            "(~/models, cache HF, $JARVIS_MODEL_DIRS)")
             return
-        # hors ligne : démarrer le serveur avec le modèle choisi
-        model_path = None
-        if self.home_model_combo.get_active_id():
-            model_path = self.home_model_combo.get_active_id()
-        elif self.backend.models_llm:
-            model_path = str(self.backend.models_llm[0].path)
-        if not model_path:
-            self._toast("Aucun modèle GGUF trouvé (~/models, cache HF, $JARVIS_MODEL_DIRS)")
-            return
-        self.launch_button.set_sensitive(False)
-        self.launch_button.set_label("Démarrage du modèle…")
-        self.home_status.set_text("Chargement du modèle (peut être long)…")
-        self.backend.start_server(model_path, ctx_size=int(self._ctx))
+        self.stack.set_visible_child_name("chat")
+        self._start_mic_turn()
 
     def _on_status_clicked(self, _btn) -> None:
         self._refresh_status()
@@ -379,10 +453,22 @@ class JarvisWindow(Adw.ApplicationWindow):
     # ---------- conversation ----------
 
     def _on_mic(self, _btn) -> None:
+        self._start_mic_turn()
+
+    def _start_mic_turn(self) -> None:
+        self.stack.set_visible_child_name("chat")
         self.chat_mic.set_sensitive(False)
         self.mic_button.set_sensitive(False)
+        self.chat_entry.set_sensitive(False)
         self._set_chat_hint("Enregistrement…")
-        self.backend.stt_record_and_transcribe(6.0)
+        self.backend.stt_record_and_transcribe(6.0, device=self.mic_device)
+
+    def _on_entry_activate(self, _widget) -> None:
+        text = self.chat_entry.get_text().strip()
+        if not text:
+            return
+        self.chat_entry.set_text("")
+        self._send_turn(text)
 
     def _on_prompt(self, *_args) -> None:
         dialog = Adw.Dialog.new()
@@ -470,8 +556,6 @@ class JarvisWindow(Adw.ApplicationWindow):
             self._on_server_status(event)
             if t == "server_started" and event.get("models"):
                 self.stack.set_visible_child_name("chat")
-                self.launch_button.set_sensitive(True)
-                self.launch_button.set_label("Ouvrir la conversation")
         elif t == "reasoning":
             if self._assistant_box is not None:
                 self._assistant_box.append_reasoning(event["text"])
@@ -506,17 +590,22 @@ class JarvisWindow(Adw.ApplicationWindow):
             self._set_chat_hint(f"Enregistrement… {event['seconds']:.0f}s")
         elif t == "stt_done":
             self._set_chat_hint("")
-            self.chat_mic.set_sensitive(True)
-            self.mic_button.set_sensitive(True)
+            self._set_busy_ui(False)
             if event["text"].strip():
                 self._send_turn(event["text"].strip())
             else:
                 self._toast("Aucune parole transcrite")
         elif t == "voice_error":
             self._set_chat_hint("")
-            self.chat_mic.set_sensitive(True)
-            self.mic_button.set_sensitive(True)
+            self._set_busy_ui(False)
             self._toast(event["message"])
+        elif t == "mic_devices":
+            self._fill_mic_devices(event.get("devices") or [], event.get("error") or "")
+        elif t == "mic_test":
+            if event.get("ok"):
+                self._toast("Micro OK — autorisation et périphérique fonctionnent")
+            else:
+                self._toast(f"Micro indisponible : {event.get('message', '')}")
         elif t == "session_new":
             self.messages.clear()
             self._assistant_box = None
@@ -559,14 +648,8 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.pop_status_label.set_text(txt + (f"\n{event.get('detail') or ''}"
                                               if event.get("detail") else ""))
         if self._status_state == "offline":
-            self.launch_button.set_label("Lancer")
-            self.launch_button.set_sensitive(True)
-            self.home_model_box.set_visible(len(self.backend.models_llm) > 1)
             self.pop_button.set_label("Démarrer le serveur")
         else:
-            self.launch_button.set_label("Ouvrir la conversation")
-            self.launch_button.set_sensitive(True)
-            self.home_model_box.set_visible(False)
             self.pop_button.set_label("Arrêter le serveur (géré)"
                                        if self._server_managed() else "Serveur externe")
 
@@ -624,8 +707,7 @@ class JarvisWindow(Adw.ApplicationWindow):
     def _set_busy_ui(self, busy: bool) -> None:
         self.chat_mic.set_sensitive(not busy)
         self.mic_button.set_sensitive(not busy)
-        if not busy:
-            self._set_chat_hint("Cliquez sur le micro pour parler")
+        self.chat_entry.set_sensitive(not busy)
 
     def _set_chat_hint(self, text: str) -> None:
         self.chat_hint.set_text(text)

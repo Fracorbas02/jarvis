@@ -283,19 +283,43 @@ class GtkBackend:
 
     # ---------- voix ----------
 
-    def stt_record_and_transcribe(self, seconds: float = 6.0) -> None:
-        self._run(self._arecord_stt(seconds))
+    def stt_record_and_transcribe(self, seconds: float = 6.0,
+                                  device: str | None = None) -> None:
+        self._run(self._arecord_stt(seconds, device))
 
-    async def _arecord_stt(self, seconds: float) -> None:
+    def _record_cfg(self, device: str | None):
+        """VoiceConfig clon\u00e9 avec un record_cmd pointant sur le micro choisi
+        (arecord -D <device>). device None/"default" -> record_cmd d'origine."""
+        from dataclasses import replace
+        if device and device != "default":
+            return replace(self.cfg.voice, record_cmd=[
+                "arecord", "-q", "-D", device,
+                "-f", "S16_LE", "-r", "16000", "-c", "1", "-"])
+        return self.cfg.voice
+
+    async def _arecord_stt(self, seconds: float, device: str | None) -> None:
         from ..voice import VoiceError, record_wav, transcribe_file
-        vcfg = self.cfg.voice
+        vcfg = self._record_cfg(device)
         try:
             self.events.put({"type": "stt_recording", "seconds": seconds})
             path = await record_wav(seconds, vcfg)
-            text = await transcribe_file(vcfg, path, language="fr")
+            text = await transcribe_file(self.cfg.voice, path, language="fr")
             self.events.put({"type": "stt_done", "text": text})
         except VoiceError as exc:
             self.events.put({"type": "voice_error", "message": str(exc)})
+
+    def test_mic(self, device: str | None = None) -> None:
+        """Enregistrement de test (0.5 s) pour v\u00e9rifier l'autorisation micro."""
+        self._run(self._atest_mic(device))
+
+    async def _atest_mic(self, device: str | None) -> None:
+        from ..voice import VoiceError, record_wav
+        vcfg = self._record_cfg(device)
+        try:
+            await record_wav(0.5, vcfg)
+            self.events.put({"type": "mic_test", "ok": True, "message": ""})
+        except VoiceError as exc:
+            self.events.put({"type": "mic_test", "ok": False, "message": str(exc)})
 
     def tts_speak(self, text: str) -> None:
         self._run(self._atts(text))
@@ -315,6 +339,35 @@ class GtkBackend:
             self.events.put({"type": "voice_error", "message": str(exc)})
 
     # ---------- réglages ----------
+
+    def list_input_devices(self) -> None:
+        """Liste les cartes son d'entr\u00e9e (arecord -L) -> \u00e9v\u00e9nement mic_devices."""
+        self._run(self._alist_mic())
+
+    async def _alist_mic(self) -> None:
+        import re
+        import subprocess
+        devices: list[tuple[str, str]] = [("default", "Micro par d\u00e9faut du syst\u00e8me")]
+        try:
+            out = subprocess.run(["arecord", "-L"], capture_output=True, text=True,
+                                 timeout=10).stdout
+            cur = None
+            for line in out.splitlines():
+                m = re.match(r"^(\S+)\s*$", line)
+                if m and not line.startswith((" ", "\t")):
+                    cur = m.group(1)
+                    devices.append((cur, cur))
+                elif cur and line.startswith((" ", "\t")):
+                    desc = line.strip()
+                    # premi\u00e8re ligne descriptive = nom de la carte (ex. "HDA Intel PCH, ...")
+                    if devices[-1][1] == cur and desc and not desc.startswith(
+                            ("Discard", "Direct", "Hardware", "Default", "Sysdefault")):
+                        devices[-1] = (cur, f"{cur} — {desc}")
+        except Exception as exc:  # noqa: BLE001 — arecord absent
+            self.events.put({"type": "mic_devices", "devices": devices,
+                             "error": f"arecord -L indisponible : {exc}"})
+            return
+        self.events.put({"type": "mic_devices", "devices": devices, "error": ""})
 
     def apply_gpu(self, device: str) -> dict:
         """Persiste le choix GPU (gpu.json, appliqué aux serveurs locaux au
