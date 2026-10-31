@@ -59,12 +59,43 @@ async def run_case(name: str, user_text: str, expect_in_reply: str,
         thread.join(timeout=5)
 
 
+async def run_case_failing_tool() -> bool:
+    """Un outil qui lève une exception ne doit pas tuer le tour : le résultat
+    d'outil contient ERREUR: et le modèle peut conclure normalement."""
+    srv, thread = start_mock(18080)
+    try:
+        llm = LLMClient("http://127.0.0.1:18080/v1", model="mock")
+        tools = McpToolProvider({"echo": [sys.executable, str(ECHO_SERVER)]})
+        await tools.start()
+
+        async def boom(name, arguments):
+            raise RuntimeError("serveur MCP mort")
+
+        tools.call = boom  # type: ignore[method-assign]
+        agent = Agent(llm, tools, "system de test", max_iterations=4)
+        results: list[tuple] = []
+        reply, _history, trace = await agent.turn(
+            [], "fais un ping vers 127.0.0.1",
+            on_tool_result=lambda n, a, ok, d, r: results.append((n, ok, r)))
+        ok = ("ERREUR" in reply and results and results[0][1] is False
+              and "RuntimeError" in results[0][2] and trace.iterations >= 2)
+        status = "OK " if ok else "FAIL"
+        print(f"[{status}] outil en erreur: reply={reply!r} results={results}")
+        await tools.stop()
+        await llm.aclose()
+        return ok
+    finally:
+        srv.shutdown()
+        thread.join(timeout=5)
+
+
 async def main() -> int:
     results = [
         await run_case("tour avec outil", "fais un ping vers 127.0.0.1",
                        "pong vers 127.0.0.1", expect_tool=True),
         await run_case("tour sans outil", "dis simplement bonjour",
                        "réponse directe", expect_tool=False),
+        await run_case_failing_tool(),
     ]
     print(f"\n{sum(results)}/{len(results)} tests OK")
     return 0 if all(results) else 1

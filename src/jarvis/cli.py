@@ -11,6 +11,7 @@ import logging
 import os
 import signal
 import sys
+import tomllib
 from pathlib import Path
 
 from rich import box
@@ -82,11 +83,14 @@ def _setup_logging(verbose: bool = False) -> None:
     console.setFormatter(logging.Formatter(fmt))
     root.addHandler(console)
     log_dir = Path(os.environ.get("JARVIS_LOG_DIR", Path.home() / ".cache" / "jarvis"))
-    log_dir.mkdir(parents=True, exist_ok=True)
-    fh = logging.FileHandler(log_dir / "jarvis.log", encoding="utf-8")
-    fh.setLevel(logging.DEBUG)
-    fh.setFormatter(logging.Formatter(fmt))
-    root.addHandler(fh)
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        fh = logging.FileHandler(log_dir / "jarvis.log", encoding="utf-8")
+        fh.setLevel(logging.DEBUG)
+        fh.setFormatter(logging.Formatter(fmt))
+        root.addHandler(fh)
+    except OSError:
+        pass  # répertoire non writable : la console suffit, on ne crash pas
 
 
 def _set_console_log_level(level: int) -> None:
@@ -101,6 +105,9 @@ async def amain() -> int:
         cfg = load_config()
     except FileNotFoundError as exc:
         print(f"config: {exc}", file=sys.stderr)
+        return 2
+    except tomllib.TOMLDecodeError as exc:
+        print(f"config: TOML invalide: {exc}", file=sys.stderr)
         return 2
 
     llm = LLMClient(**cfg.llm.__dict__)
@@ -135,6 +142,7 @@ async def amain() -> int:
                 continue
             if user == "/reset":
                 history.clear()
+                display.reset_blocks()  # sinon les blocs reviennent au prochain resize
                 console.print("[dim]historique réinitialisé[/]")
                 continue
             if user == "/tools":
@@ -167,6 +175,7 @@ async def amain() -> int:
                                   f"(1..{max(len(display.last_tool_results), 1)})[/]")
                 continue
 
+            snapshot = list(history)  # agent.turn mute history : on restaure si ça plante
             try:
                 reply, history, trace = await agent.turn(
                     history, user,
@@ -179,7 +188,13 @@ async def amain() -> int:
                 if reply and not display.content_started:
                     display.print_content(reply)
                 display.end_turn()
+            except KeyboardInterrupt:
+                history = snapshot
+                display.end_turn()
+                console.print("[yellow]interrompu (Ctrl+C)[/]")
+                continue
             except Exception as exc:  # noqa: BLE001 — le REPL ne doit pas mourir
+                history = snapshot
                 display.end_turn()
                 console.print(f"[bold red]erreur:[/] {exc}")
                 continue

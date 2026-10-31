@@ -77,7 +77,13 @@ class Agent:
                     if on_tool_call:
                         on_tool_call(name, args)
                     start = time.perf_counter()
-                    result = await self.tools.call(name, args)
+                    try:
+                        result = await self.tools.call(name, args)
+                    except Exception as exc:  # noqa: BLE001 — serveur MCP mort, timeout...
+                        # le tour ne doit pas mourir : le modèle voit l'erreur
+                        # comme résultat d'outil et peut réagir
+                        log.warning("outil %s a levé %s: %s", name, type(exc).__name__, exc)
+                        result = f"ERREUR: {type(exc).__name__}: {exc}"
                     duration = time.perf_counter() - start
                     if on_tool_result:
                         on_tool_result(name, args,
