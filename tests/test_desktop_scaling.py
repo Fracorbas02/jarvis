@@ -105,6 +105,67 @@ def test_unit() -> None:
         finally:
             del os.environ["XDG_CONFIG_HOME"]
     assert scaling_mod._hypr_scale() == 0.0  # pas de conf dans ce sandbox
+    # géométrie centrée sur le moniteur du pointeur (multi-écran)
+    import tempfile
+    # format réel GNOME: width/height dans <monitor><mode><width/height>
+    monitors2 = (
+        '<monitors version="2">'
+        # config active (primary=yes sur eDP-1), avec doublons d'historique
+        '<monitor><spec><connector>eDP-1</connector></spec>'
+        '<logicalmonitor><x>0</x><y>0</y><scale>2</scale>'
+        '<monitor><primary>yes</primary><mode><width>1440</width><height>900</height></mode></monitor>'
+        '</logicalmonitor></monitor>'
+        '<monitor><spec><connector>DP-1</connector></spec>'
+        '<logicalmonitor><x>1440</x><y>0</y><scale>1</scale>'
+        '<monitor><mode><width>1920</width><height>1080</height></mode></monitor>'
+        '</logicalmonitor></monitor>'
+        # historique (anciennes configs, primary=no ou sans primary)
+        '<monitor><spec><connector>HDMI-1</connector></spec>'
+        '<logicalmonitor><x>1920</x><y>0</y><scale>1</scale>'
+        '<monitor><primary>no</primary><mode><width>1920</width><height>1080</height></mode></monitor>'
+        '</logicalmonitor></monitor>'
+        '</monitors>'
+    )
+    with tempfile.NamedTemporaryFile("w", suffix=".xml", delete=False) as f:
+        f.write(monitors2)
+        mpath2 = f.name
+    try:
+        mons = scaling_mod._monitors_xml_layout(mpath2)
+        # dédoublonné + primary=no filtré (historique)
+        assert mons == [(0, 0, 1440, 900, 2.0), (1440, 0, 1920, 1080, 1.0)], mons
+
+        class PtrRoot(StubRoot):
+            def __init__(self, dpi, w, h, px, py):
+                super().__init__(dpi, w, h)
+                self._px, self._py = px, py
+            def winfo_pointerxy(self):
+                return self._px, self._py
+
+        orig_layout = scaling_mod._monitors_xml_layout
+        scaling_mod._monitors_xml_layout = lambda path=None: mons
+        try:
+            # pointeur (physiques) sur DP-1: logique x=1440, scale global 2 -> pxl=1500
+            r = PtrRoot(96, 3840, 2160, 3000, 500)
+            g = scaling_mod._center_geometry(r, 2.0)
+            w, rest = g.split("x", 1)
+            h, xy = rest.split("+", 1)
+            x, y = xy.split("+", 1)
+            # DP-1 logique 1920x1080 scale 1: fenêtre 1190x734 centrée en x=1440
+            assert (int(w), int(h)) == (1190, 734), g
+            assert (int(x), int(y)) == (1440 + (1920 - 1190) // 2, (1080 - 734) // 2), g
+            # pointeur sur eDP-1 (scale 2): pxl=500 -> logique 250, dans eDP-1 0..1440
+            r2 = PtrRoot(192, 3840, 2160, 500, 500)
+            g2 = scaling_mod._center_geometry(r2, 2.0)
+            w2, rest2 = g2.split("x", 1)
+            h2, xy2 = rest2.split("+", 1)
+            x2, y2 = xy2.split("+", 1)
+            # eDP-1 logique 1440x900 scale 2: fenêtre min 440x280 -> 62% = 892x612
+            assert (int(w2), int(h2)) == (892, 612), g2
+            assert int(x2) == (1440 - 892) // 2 and 0 <= int(y2), g2
+        finally:
+            scaling_mod._monitors_xml_layout = orig_layout
+    finally:
+        os.unlink(mpath2)
     # géométrie adaptative
     assert adaptive_geometry(StubRoot(96, 1920, 1080)) == "1190x734+365+173"
     # petit écran -> minimum, x centré à 0 (pas négatif)

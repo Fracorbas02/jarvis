@@ -162,9 +162,190 @@ def adaptive_minsize() -> tuple[int, int]:
     return 880, 560
 
 
+def ensure_fonts(root) -> None:
+    """S'assure que les polices embarquées de CTk (Roboto) sont connues de Tk.
+
+    Sous X11, CTk copie ses .ttf dans ~/.fonts/ mais ne lance pas fc-cache :
+    si le cache fontconfig de XWayland n'est pas rafraîchi, Tk ne voit que
+    'fixed' (tkfont.families() == ['fixed']) et ignore tout spec 'Roboto -44'
+    -> texte minuscule. On copie les .ttf CTk dans ~/.fonts/ (idempotent) et
+    on lance fc-cache -f si dispo. Best-effort."""
+    import shutil
+    import subprocess
+    from pathlib import Path as _P
+    try:
+        import customtkinter as ctk
+        assets = _P(ctk.__file__).parent / "assets" / "fonts"
+        dst_dir = _P(os.path.expanduser("~/.fonts"))
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        copied = False
+        if assets.is_dir():
+            for ttf in assets.rglob("*.ttf"):
+                dst = dst_dir / ttf.name
+                if not dst.exists() or dst.stat().st_size != ttf.stat().st_size:
+                    shutil.copy2(ttf, dst)
+                    copied = True
+        if copied:
+            try:
+                subprocess.run(["fc-cache", "-f"], capture_output=True, timeout=10)
+            except Exception:  # noqa: BLE001
+                pass
+        # Enregistrer aussi le dossier dans le font path du SERVEUR X
+        # (XWayland a son propre font path, indépendant de fontconfig) :
+        # sans ça, tkfont.families() ne voit que 'fixed' et Tk ignore 'Roboto'.
+        if os.environ.get("DISPLAY"):
+            try:
+                # mkfontscale génère fonts.dir/fonts.scale (obligatoire pour
+                # que le serveur X accepte le dossier), puis on l'ajoute au
+                # font path et on rehash.
+                subprocess.run(["mkfontscale", str(dst_dir)],
+                               capture_output=True, timeout=10)
+                subprocess.run(["mkfontdir", str(dst_dir)],
+                               capture_output=True, timeout=10)
+                subprocess.run(["xset", "fp+", str(dst_dir)],
+                               capture_output=True, timeout=5)
+                subprocess.run(["xset", "fp", "rehash"],
+                               capture_output=True, timeout=5)
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception:  # noqa: BLE001 — best-effort
+        pass
+
+
+def _monitors_xml_layout(path=None):
+    """Liste des moniteurs logiques depuis monitors.xml (GNOME >= 46) :
+    [(x, y, w, h, scale), ...] en coordonnées LOGIQUES. Best-effort : [] si absent."""
+    import xml.etree.ElementTree as ET
+    if path is None:
+        cfg = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
+            os.path.expanduser("~"), ".config")
+        path = os.path.join(cfg, "monitors.xml")
+    try:
+        root = ET.parse(path).getroot()
+    except Exception as e:  # noqa: BLE001
+        if os.environ.get("JARVIS_DEBUG_SCALE"):
+            import sys
+            print(f"[jarvis] debug: monitors.xml {path} illisible: {e}", file=sys.stderr)
+        return []
+    out = []
+    seen = set()
+    for lm in root.iter("logicalmonitor"):
+        try:
+            x = int(float(lm.findtext("x", "0")))
+            y = int(float(lm.findtext("y", "0")))
+            s = float(lm.findtext("scale", "1"))
+            # ne garder que les <logicalmonitor> de la configuration ACTIVE
+            # (primaire="yes" ou non marqués <primary>no</primary> dans un <monitor>
+            # actif) : monitors.xml contient l'historique des configurations.
+            mon_el = lm.find("monitor")
+            primary = mon_el.findtext("primary", "") if mon_el is not None else ""
+            # width/height ne sont PAS des enfants directs de <logicalmonitor> :
+            # ils sont dans <monitor><width> ou <monitor><mode><width>.
+            mon = lm.find("monitor")
+            w = h = 0
+            if mon is not None:
+                w = int(float(mon.findtext("width", "0")))
+                h = int(float(mon.findtext("height", "0")))
+                if not (w and h):
+                    mode = mon.find("mode")
+                    if mode is not None:
+                        w = int(float(mode.findtext("width", "0")))
+                        h = int(float(mode.findtext("height", "0")))
+            if w and h:
+                out.append((x, y, w, h, s, primary))
+        except (TypeError, ValueError):
+            continue
+    # garder la configuration active : on dédoublonne d'abord, puis on filtre
+    # les <primary>no</primary> (moniteurs désactivés d'une ancienne config).
+    dedup = []
+    seen2 = set()
+    for m in out:
+        key = m[:5]
+        if key not in seen2:
+            seen2.add(key)
+            dedup.append(m)
+    chosen = [m for m in dedup if m[5] != "no"]
+    dedup = []
+    seen2 = set()
+    for m in chosen:
+        key = m[:5]
+        if key not in seen2:
+            seen2.add(key)
+            dedup.append(m[:5])
+    return dedup
+
+
+def _pointer_monitor(root, scale: float) -> tuple[int, int, int, int] | None:
+    """Moniteur (x, y, w, h en pixels PHYSIQUES) contenant le pointeur souris,
+    déduit de monitors.xml (Wayland) ou de la géométrie écran X11 (fallback).
+    Retourne None si indéterminé."""
+    try:
+        px, py = root.winfo_pointerxy()
+    except Exception:  # noqa: BLE001
+        return None
+    mons = _monitors_xml_layout()
+    if os.environ.get("JARVIS_DEBUG_SCALE"):
+        import sys
+        print(f"[jarvis] debug: _monitors_xml_layout -> {mons}", file=sys.stderr)
+    if mons:
+        for (x, y, w, h, s) in mons:
+            if x * s <= px < (x + w) * s and y * s <= py < (y + h) * s:
+                return (round(x * s), round(y * s), round(w * s), round(h * s), s)
+        return None
+    # fallback X11: un seul écran vu par Tk
+    sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+    if 0 <= px < sw and 0 <= py < sh:
+        return (0, 0, sw, sh, scale)
+    return None
+
+
+def _center_geometry(root, scale: float) -> str:
+    """Géométrie centrée sur le moniteur du pointeur (pas sur l'écran virtuel
+    entier) : sinon la fenêtre s'ouvre sur tous les écrans en multi-monitor."""
+    # Sous Wayland, winfo_screenwidth/height = écran virtuel LOGIQUE (ex. 3840x2160
+    # pour 3 écrans) et winfo_pointerxy = coordonnées PHYSIQUES du compositor.
+    # On travaille donc tout en logiques : moniteur logique depuis monitors.xml,
+    # pointeur logique = pointerxy / scale.
+    mons = _monitors_xml_layout()
+    if mons:
+        try:
+            px, py = root.winfo_pointerxy()
+            # Essayer le pointeur en logiques (px/scale) puis tel quel :
+            # on prend le 1er moniteur qui contient le point dans l'un des 2 cas.
+            candidates = [(px / scale, py / scale), (float(px), float(py))]
+            hit = None
+            for (pxl, pyl) in candidates:
+                for (x, y, w, h, ms) in mons:
+                    if x <= pxl < x + w and y <= pyl < y + h:
+                        hit = (x, y, w, h, ms)
+                        break
+                if hit:
+                    break
+            if hit:
+                x, y, w, h, ms = hit
+                mw_l, mh_l = w, h
+                mx_l, my_l = x, y
+                s = ms
+                w_ = max(int(mw_l * 0.62), round(adaptive_minsize()[0] / s))
+                h_ = max(int(mh_l * 0.68), round(adaptive_minsize()[1] / s))
+                w_ = min(w_, mw_l)
+                h_ = min(h_, mh_l)
+                x_ = mx_l + max((mw_l - w_) // 2, 0)
+                y_ = my_l + max((mh_l - h_) // 2, 0)
+                return f"{w_}x{h_}+{x_}+{y_}"
+            return adaptive_geometry(root)
+        except Exception:  # noqa: BLE001
+            pass
+    return adaptive_geometry(root)
+
+
 def setup_window(root, scale: float) -> None:
     """Applique le scaling puis configure la fenêtre (géométrie adaptative,
     redimensionnable).
+
+    Sous GNOME Wayland scale 2 (XWayland non scalé, Xft.dpi=192) : Tk travaille
+    en pixels physiques (winfo_screenwidth = 2880) ; CTk set_widget_scaling(scale)
+    scale dimensions et polices (font 22 -> -44 px). --scale / JARVIS_SCALE forcent.
 
     Ordre important : CTk bloque maxsize à la taille courante dans son
     _set_scaling (appelé par set_window_scaling) — il faut donc déverrouiller
@@ -173,9 +354,10 @@ def setup_window(root, scale: float) -> None:
     """
     import customtkinter as ctk
 
+    ensure_fonts(root)
     ctk.set_widget_scaling(scale)
     ctk.set_window_scaling(scale)
     root.maxsize(root.winfo_screenwidth(), root.winfo_screenheight())
     root.minsize(*adaptive_minsize())
-    root.geometry(adaptive_geometry(root))
+    root.geometry(_center_geometry(root, scale))
     root.resizable(True, True)
