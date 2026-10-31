@@ -889,9 +889,13 @@ async def record_wav(seconds: float, voice_cfg: VoiceConfig,
         if not pcm:
             raise VoiceError(f"{cmd[0]} a échoué : {err.decode(errors='replace')[:300]}")
         if pcm[:4] == b"RIFF":
-            # arecord sans "-t raw" envoie un header WAV de 44 octets sur stdout
-            pcm = pcm[44:]
-        write_wav(out_path, pcm)
+            # arecord sans "-t raw" envoie un WAV complet sur stdout : on garde
+            # le fichier tel quel (header inclus) au lieu de stripper 44 octets
+            # à l'aveugle (un header WAV peut faire plus que 44 octets ->
+            # WAV tronqué de 0 s dans ffplay)
+            out_path.write_bytes(pcm)
+        else:
+            write_wav(out_path, pcm)
     else:
         argv.append(str(out_path))
         proc = await asyncio.create_subprocess_exec(

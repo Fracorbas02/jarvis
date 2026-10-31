@@ -458,21 +458,36 @@ def test_record_wav_stdout_pcm() -> None:
     print("OK  record_wav stdout pcm")
 
 
-def test_record_wav_strip_riff() -> None:
-    """Si le binaire envoie un WAV (header RIFF) sur stdout, on strippe les
-    44 octets d'en-tête avant d'écrire notre propre header WAV."""
+def test_record_wav_riff_stdout_kept_intact() -> None:
+    """Si le binaire envoie un WAV complet (RIFF) sur stdout, on garde le
+    fichier tel quel (header inclus) : pas de strip de 44 octets à l'aveugle
+    qui produirait un WAV illisible de 0 s."""
     import jarvis.voice as voice
-    cfg = VoiceConfig(record_cmd=["ffmpeg", "-loglevel", "error", "-f", "lavfi",
-                                  "-i", "sine=frequency=440:duration=30",
-                                  "-ar", "16000", "-ac", "1", "-f", "wav", "-"])
-    p = _run(voice.record_wav(1.0, cfg))
-    with wave.open(str(p)) as w:  # wave lit NOTRE header -> le RIFF a été strip
-        assert w.getframerate() == 16000
-        frames = w.readframes(4000)
-    peak = max(abs(int.from_bytes(frames[i:i + 2], "little", signed=True))
-               for i in range(0, len(frames), 2))
-    assert peak > 100, peak
-    print("OK  record_wav strip RIFF")
+    wav_bytes = pcm_to_wav_bytes(b"\x01\x02" * 16000)
+    class FakeProc:
+        returncode = -15
+        async def communicate(self):
+            return wav_bytes, b""
+    async def fake_exec(*a, **k):
+        return FakeProc()
+    import shutil as _shutil
+    orig_exec = voice.asyncio.create_subprocess_exec
+    orig_which = voice.shutil.which
+    voice.asyncio.create_subprocess_exec = fake_exec
+    voice.shutil.which = lambda c: "/usr/bin/" + c  # pretend arecord exists
+    try:
+        cfg = VoiceConfig(record_cmd=["arecord", "-q", "-"])
+        import tempfile, os
+        out = Path(tempfile.mkdtemp()) / "out.wav"
+        p = _run(voice.record_wav(0.2, cfg, out_path=out))
+        assert p.read_bytes() == wav_bytes  # WAV complet conservé
+        import wave
+        with wave.open(str(p)) as w:
+            assert w.getnframes() == 16000  # lisible, pas tronqué
+    finally:
+        voice.asyncio.create_subprocess_exec = orig_exec
+        voice.shutil.which = orig_which
+
 
 
 def test_detect_gpus_list_devices(monkeypatch) -> None:
