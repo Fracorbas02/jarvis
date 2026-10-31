@@ -37,9 +37,14 @@ MODES: dict[str, dict[str, str]] = {
         "icon": "mic",
         "description": "Reconnaissance vocale locale (phase voix).",
     },
+    "settings": {
+        "label": "Réglages",
+        "icon": "settings",
+        "description": "Réglages de l’application (GPU, etc.).",
+    },
 }
 
-MODE_ORDER = ["llm", "tts", "stt"]
+MODE_ORDER = ["llm", "tts", "stt", "settings"]
 
 # whisper.cpp nomme ses modèles ggml-<taille>[.<lang>].bin(.gguf) : préfixe ggml- = STT
 _STT_RE = re.compile(r"whisper|^ggml-", re.IGNORECASE)

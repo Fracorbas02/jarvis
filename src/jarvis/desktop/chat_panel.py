@@ -56,11 +56,8 @@ class ChatPanel(ctk.CTkFrame):
         self.text.configure(state="disabled")
 
     def _scaled_font(self, size: float, styles: tuple = ()) -> tuple:
-        # tuple tk : (family, taille en pixels si négatif, *styles). La famille
-        # "Roboto" (et non "TkDefaultFont") : sous XWayland, si la famille nommée
-        # n'est pas enregistrée côté serveur X, Tk ignore tout le tuple et rend
-        # en "fixed" par défaut (texte minuscule).
-        return ("Roboto", -round(size * self.scale), *styles)
+        # tuple tk : (family, taille en pixels si négatif, *styles)
+        return ("TkDefaultFont", -round(size * self.scale), *styles)
 
     def _tag(self, name: str, fg: str | None = None, size: float | None = None,
              styles: tuple = ()) -> None:
