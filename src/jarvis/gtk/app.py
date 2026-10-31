@@ -710,7 +710,8 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.chat_mic.add_css_class("jarvis-recording")
         self.home_mic_button.add_css_class("jarvis-recording")
         self._set_chat_hint("Enregistrement…")
-        self.backend.stt_record_and_transcribe(6.0, device=getattr(self, "mic_device", "default"))
+        self.mic_level_bar.set_visible(True)
+        self.backend.record_levels(6.0, device=getattr(self, "mic_device", "default"))
 
     def _on_entry_activate(self, _widget) -> None:
         text = self.chat_entry.get_text().strip()
