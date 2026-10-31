@@ -51,37 +51,49 @@ class ToolResult:
 
 
 class _LiveRegion:
-    """Zone du terminal réimprimée en place (curseur remonté + effacement)."""
+    """Zone du terminal réimprimée en place, sans clignotement.
+
+    À chaque repaint on remonte le curseur de `height` lignes puis on
+    réimprime ligne par ligne en écrasant (les caractères identiques ne
+    produisent aucun flash). On n'émet jamais d'effacement global de la zone
+    en début de frame (\x1b[0J), qui est ce qui faisait clignoter toute la
+    page ; seuls les résidus de fin de ligne sont effacés (\x1b[0K), plus
+    les lignes en trop si la nouvelle zone est plus courte.
+    """
 
     def __init__(self, console: Console):
         self.console = console
         self.height = 0
 
-    def _erase(self) -> None:
-        if self.height and self.console.is_terminal:
-            self.console.file.write(f"\x1b[{self.height}A\x1b[0J")
-            self.console.file.flush()
+    def _render_lines(self, renderable) -> list[str]:
+        options = self.console.options
+        return ["".join(seg.text for seg in line)
+                for line in self.console.render_lines(renderable, options)]
 
     def repaint(self, renderable) -> None:
-        """Efface la zone puis réimprime le renderable (live)."""
-        self._erase()
-        text = "".join(seg.text for seg in
-                       self.console.render(renderable, self.console.options))
-        if not text.endswith("\n"):
-            text += "\n"
-        self.console.file.write(text)
-        self.console.file.flush()
-        # chaque "\n" consomme une ligne : le curseur est height lignes plus bas
-        self.height = text.count("\n")
+        lines = self._render_lines(renderable)
+        f = self.console.file
+        if self.height and self.console.is_terminal:
+            f.write(f"\x1b[{self.height}A")  # remonte, sans effacer
+        for line in lines:
+            f.write(line)
+            f.write("\x1b[0K")  # efface le résidu de l'ancienne ligne
+            f.write("\n")  # après chaque ligne : le curseur est height lignes plus bas
+        if len(lines) < self.height:
+            f.write("\x1b[0J")  # lignes en trop en dessous (zone raccourcie)
+        f.flush()
+        self.height = len(lines)
 
     def keep(self, renderable) -> None:
-        """Rendu final : efface la zone live et laisse le renderable affiché."""
+        """Rendu final : repaint puis laisse le contenu affiché (height=0)."""
         self.repaint(renderable)
         self.height = 0
 
     def clear(self) -> None:
-        """Efface la zone sans rien réimprimer (fin d'un rendu transitoire)."""
-        self._erase()
+        """Efface la zone (remontée + effacement global, une seule fois)."""
+        if self.height and self.console.is_terminal:
+            self.console.file.write(f"\x1b[{self.height}A\x1b[0J")
+            self.console.file.flush()
         self.height = 0
 
 

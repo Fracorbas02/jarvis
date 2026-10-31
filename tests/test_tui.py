@@ -39,7 +39,7 @@ print("exemple de bloc de code")
 
 
 def main() -> None:
-    console = Console(width=90, force_terminal=True)
+    console = Console(width=90, force_terminal=True, color_system="truecolor")
     d = Display(console)
     for chunk in ["Je cherche ", "les CVE récentes ", "pour Arista ", "avec search_cve…"]:
         d.reasoning(chunk)

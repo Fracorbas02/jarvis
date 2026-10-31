@@ -35,6 +35,19 @@ HELP = """\
   /quit        quitte"""
 
 
+def _make_console() -> Console:
+    """Console rich avec couleurs forcées en vrai terminal (sauf NO_COLOR).
+
+    Sans ça, rich se fie à TERM : avec TERM=dumb (certains émulateurs ou
+    lancements via IDE), tout sortirait sans couleur.
+    """
+    if os.environ.get("NO_COLOR"):
+        return Console(no_color=True)
+    if sys.stdout.isatty():
+        return Console(force_terminal=True, color_system="truecolor")
+    return Console()
+
+
 def _banner(console: Console, cfg, tools: McpToolProvider) -> None:
     n = len(tools.names())
     servers = ", ".join(sorted(cfg.mcp_servers)) or "aucun"
@@ -90,7 +103,7 @@ async def amain() -> int:
     agent = Agent(llm, tools, cfg.agent.system_prompt, cfg.agent.max_iterations,
                   stream=True)
 
-    console = Console()
+    console = _make_console()
     _banner(console, cfg, tools)
     display = Display(console)
     history: list[dict] = []
