@@ -159,6 +159,19 @@ def _est_tokens(history: list[dict]) -> int:
     return sum(len(str(m.get("content") or "")) for m in history) // 4
 
 
+def _notify(body: str) -> None:
+    """Notification desktop en fin de tour long.
+
+    OSC 777 (kitty, foot, wezterm, ghostty) + OSC 9 (iTerm2, wezterm, konsole
+    récent) : les terminaux qui ne connaissent pas une séquence l'ignorent.
+    """
+    if not sys.stdout.isatty():
+        return
+    sys.stdout.write(f"\x1b]777;notify;Jarvis;{body}\x07")
+    sys.stdout.write(f"\x1b]9;{body}\x07")
+    sys.stdout.flush()
+
+
 def _banner(cfg, tools: McpToolProvider, server: tuple[str, bool], ctx_max: int | None) -> Panel:
     n = len(tools.names())
     servers = ", ".join(sorted(cfg.mcp_servers)) or "aucun"
@@ -425,6 +438,7 @@ async def amain() -> int:
                 continue
 
             snapshot = list(history)  # agent.turn mute history : on restaure si ça plante
+            t0 = time.monotonic()
             try:
                 reply, history, trace = await agent.turn(
                     history, user,
@@ -438,6 +452,8 @@ async def amain() -> int:
                     display.print_content(reply)
                 display.end_turn()
                 store.save(sid, history)  # la session persiste entre les lancements
+                if time.monotonic() - t0 > 3.0:
+                    _notify("réponse prête")  # tour long : notif si la fenêtre est ailleurs
             except KeyboardInterrupt:
                 history = snapshot
                 display.end_turn()
