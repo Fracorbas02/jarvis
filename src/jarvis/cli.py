@@ -100,28 +100,75 @@ def _make_console() -> Console:
     return Console()
 
 
-async def _server_status(base_url: str) -> tuple[str, bool]:
-    """GET /v1/models : (description, ok). Permet de savoir au démarrage si
-    llama-server répond, plutôt que de le découvrir à la première question."""
+async def _server_info(base_url: str, ctx_fallback: int | None) -> tuple[str, bool, int | None]:
+    """GET /v1/models + /slots : (statut, ok, taille de contexte max).
+
+    La taille du contexte est lue dynamiquement (n_ctx de /slots, sinon
+    /props) : si llama-server est relancé avec un --ctx-size 32k, la TUI le
+    reflète sans rien changer. Fallback : ctx_size de la config.
+    """
+    status, ok = "indisponible", False
+    ctx = ctx_fallback
     try:
         async with httpx.AsyncClient(timeout=5.0) as http:
+            root = base_url.rstrip("/").rsplit("/v1", 1)[0]
             r = await http.get(f"{base_url.rstrip('/')}/models")
-        if r.status_code == 200:
-            ids = [m.get("id", "?") for m in r.json().get("data", [])]
-            return (", ".join(ids) if ids else "modèle chargé"), True
-        return f"HTTP {r.status_code}", False
+            if r.status_code == 200:
+                ids = [m.get("id", "?") for m in r.json().get("data", [])]
+                status, ok = (", ".join(ids) if ids else "modèle chargé"), True
+            else:
+                status = f"HTTP {r.status_code}"
+            for path, keys in (("/slots", ("n_ctx",)), ("/props", ("n_ctx", "context_window"))):
+                try:
+                    p = await http.get(f"{root}{path}")
+                    if p.status_code != 200:
+                        continue
+                    data = p.json()
+                    slots = data if isinstance(data, list) else [data]
+                    for k in keys:
+                        vals = [s[k] for s in slots if isinstance(s, dict) and s.get(k)]
+                        if vals:
+                            ctx = max(vals)
+                            break
+                    if ctx != ctx_fallback:
+                        break
+                except Exception:  # noqa: BLE001 — endpoint optionnel
+                    continue
     except Exception as exc:  # noqa: BLE001 — juste un statut
-        return f"{type(exc).__name__}: {exc}", False
+        status = f"{type(exc).__name__}: {exc}"
+    return status, ok, ctx
 
 
-def _banner(cfg, tools: McpToolProvider, server: tuple[str, bool]) -> Panel:
+async def _ctx_usage(base_url: str) -> int | None:
+    """Usage réel du contexte : max des n_prompt_tokens de /slots (llama-server)."""
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as http:
+            root = base_url.rstrip("/").rsplit("/v1", 1)[0]
+            r = await http.get(f"{root}/slots")
+            if r.status_code == 200:
+                slots = r.json()
+                vals = [s.get("n_prompt_tokens", 0) for s in slots if isinstance(s, dict)]
+                return max(vals) if vals else None
+    except Exception:  # noqa: BLE001 — fallback sur l'estimation
+        pass
+    return None
+
+
+def _est_tokens(history: list[dict]) -> int:
+    """Estimation grossière du contexte utilisé : ~4 caractères par token."""
+    return sum(len(str(m.get("content") or "")) for m in history) // 4
+
+
+def _banner(cfg, tools: McpToolProvider, server: tuple[str, bool], ctx_max: int | None) -> Panel:
     n = len(tools.names())
     servers = ", ".join(sorted(cfg.mcp_servers)) or "aucun"
     srv_style = "green" if server[1] else "red"
+    ctx_txt = f"{ctx_max:,} tok max".replace(",", " ") if ctx_max else "inconnue"
     body = Text.from_markup(
         f"[bold]assistant local[/]\n"
         f"[dim]modèle[/]  {cfg.llm.model} @ {cfg.llm.base_url}\n"
         f"[{srv_style}]serveur[/]  {server[0]}\n"
+        f"[dim]contexte[/]  {ctx_txt}\n"
         f"[dim]outils[/]  {n} chargés ({servers})\n"
         f"[dim]/help[/] pour les commandes"
     )
@@ -211,7 +258,7 @@ async def amain() -> int:
         print(f"config: TOML invalide: {exc}", file=sys.stderr)
         return 2
 
-    llm = LLMClient(**cfg.llm.__dict__)
+    llm = LLMClient(**{k: v for k, v in cfg.llm.__dict__.items() if k != "ctx_size"})
     tools = McpToolProvider(cfg.mcp_servers)
     if cfg.mcp_servers:
         await tools.start()
@@ -220,8 +267,9 @@ async def amain() -> int:
 
     console = _make_console()
     display = Display(console)
-    server = await _server_status(cfg.llm.base_url)
-    display.set_header(_banner(cfg, tools, server))
+    server = await _server_info(cfg.llm.base_url, cfg.llm.ctx_size)
+    ctx_max = server[2]
+    display.set_header(_banner(cfg, tools, (server[0], server[1]), ctx_max))
     hist_file = _setup_readline()
     store = SessionStore(_state_dir())
     # reprend la dernière conversation, comme un contexte qui reste
@@ -244,8 +292,13 @@ async def amain() -> int:
     last_interrupt = 0.0
     try:
         while True:
+            prompt = "\n[bold cyan][toi] › [/]"
+            if ctx_max:
+                usage = await _ctx_usage(cfg.llm.base_url)
+                est = usage if usage is not None else _est_tokens(history)
+                prompt += f"[dim](ctx ~{est}/{ctx_max})[/] "
             try:
-                user = console.input("\n[bold cyan][toi] › [/]").strip()
+                user = console.input(prompt).strip()
             except EOFError:
                 break
             except KeyboardInterrupt:

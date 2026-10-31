@@ -17,6 +17,10 @@ class LLMConfig:
     temperature: float = 0.3
     max_tokens: int = 4096
     timeout: float = 300.0
+    # Taille de contexte max affichée dans la TUI. Par défaut lue sur
+    # GET /props de llama-server (n_ctx) : mettre une valeur ici ne sert que
+    # de fallback si /props est indisponible. Ex: 32768 pour un ctx 32k.
+    ctx_size: int | None = None
     # Kwargs passés au chat template à chaque requête (llama-server).
     # Ex : { enable_thinking = false } pour couper le raisonnement des modèles
     # thinking (Qwen3.6) et gagner la latence en usage interactif.
