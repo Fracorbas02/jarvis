@@ -62,6 +62,7 @@ class Agent:
                 on_llm_end()
 
             if not msg.get("tool_calls"):
+                history.append(msg)  # la réponse finale fait partie de l'historique
                 return msg.get("content") or "", history, trace
 
             history.append(msg)
