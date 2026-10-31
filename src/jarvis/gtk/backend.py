@@ -327,6 +327,18 @@ class GtkBackend:
                                   device: str | None = None) -> None:
         self._run(self._arecord_stt(seconds, device))
 
+    @staticmethod
+    def _pulse_source_exists(source: str) -> bool:
+        """True si la source PipeWire existe encore (sinon ffmpeg -i <source>
+        échoue en silence). 'default' existe toujours."""
+        if source == "default":
+            return True
+        try:
+            return any(s.removeprefix("pulse:") == source
+                       for s, _ in GtkBackend._pactl_sources())
+        except Exception:  # noqa: BLE001 — pactl absent -> on tente tel quel
+            return True
+
     def _record_cfg(self, device: str | None):
         """VoiceConfig cloné avec un record_cmd pointant sur le micro choisi.
 
@@ -339,6 +351,11 @@ class GtkBackend:
         if device and device != "default":
             if device.startswith("pulse:"):
                 source = device[len("pulse:"):]
+                if not self._pulse_source_exists(source):
+                    import logging
+                    logging.getLogger("jarvis.gtk.backend").warning(
+                        "source pulse %s inexistante (renommée ?) -> default", source)
+                    source = "default"
                 return replace(self.cfg.voice, record_cmd=[
                     "ffmpeg", "-loglevel", "error", "-f", "pulse", "-i", source,
                     "-ar", "16000", "-ac", "1", "-f", "s16le", "-"])

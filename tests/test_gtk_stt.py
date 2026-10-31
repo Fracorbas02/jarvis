@@ -132,16 +132,23 @@ def test_pactl_sources_parsing(monkeypatch):
     assert "Mic1" in labels["pulse:alsa_input.pci-0000_d4_00.6.HiFi__Mic1__source"]
 
 
-def test_record_cfg_pulse_source():
+def test_record_cfg_pulse_source(monkeypatch):
     """Un micro choisi au format pulse:<source> produit un record_cmd
-    ffmpeg -f pulse -i <source> ; un device ALSA classique reste arecord -D."""
+    ffmpeg -f pulse -i <source> ; si la source n'existe plus (bus PCI renommé),
+    on retombe sur default. Un device ALSA classique reste arecord -D."""
     from jarvis.config import Config
     from jarvis.gtk.backend import GtkBackend
     b = GtkBackend.__new__(GtkBackend)
     b.cfg = Config()
+    monkeypatch.setattr(GtkBackend, "_pactl_sources",
+                        staticmethod(lambda: [("pulse:alsa_input.pci-0000_69_00.6.analog-stereo", "x")]))
+    # source encore présente -> gardée telle quelle
+    vcfg0 = b._record_cfg("pulse:alsa_input.pci-0000_69_00.6.analog-stereo")
+    assert "alsa_input.pci-0000_69_00.6.analog-stereo" in vcfg0.record_cmd
+    # ancienne source (pci-0000_d4_00.6) disparue -> fallback default
     vcfg = b._record_cfg("pulse:alsa_input.pci-0000_d4_00.6.HiFi__Mic1__source")
+    assert vcfg.record_cmd[vcfg.record_cmd.index("-i") + 1] == "default", vcfg.record_cmd
     assert vcfg.record_cmd[:5] == ["ffmpeg", "-loglevel", "error", "-f", "pulse"]
-    assert "alsa_input.pci-0000_d4_00.6.HiFi__Mic1__source" in vcfg.record_cmd
     assert vcfg.record_cmd[-1] == "-"
     vcfg2 = b._record_cfg("hw:CARD=0,DEV=0")
     assert vcfg2.record_cmd[0] == "arecord" and "-D" in vcfg2.record_cmd

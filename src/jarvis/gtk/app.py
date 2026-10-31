@@ -585,11 +585,17 @@ class JarvisWindow(Adw.ApplicationWindow):
             labels.append(dev)
         self.mic_row.set_model(model)
         self._mic_devices = labels
-        # resélectionne le micro enregistré
+        # resélectionne le micro enregistré ; s'il a disparu (bus PCI changé,
+        # source renommée...), on retombe sur "default" et on resauvegarde
         try:
             idx = labels.index(self.mic_device)
         except ValueError:
             idx = 0
+            if self.mic_device not in ("default",) and labels:
+                self._toast(f"Micro enregistré « {self.mic_device} » introuvable "
+                            f"(renommé ?) → retour sur « {labels[0]} »")
+                self.mic_device = labels[0]
+                save_ui_settings({"mic": self.mic_device})
         self.mic_row.set_selected(idx)
         if error:
             self.mic_row.set_subtitle(error)
