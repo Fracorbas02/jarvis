@@ -561,13 +561,14 @@ class JarvisWindow(Adw.ApplicationWindow):
         """Cloche dessinée en Cairo dans un DrawingArea 16x16, couleur = foreground
         du widget (suit le thème clair/sombre). Aucun thème d'icônes requis."""
         da = Gtk.DrawingArea()
-        da.set_size_request(16, 16)
+        da.set_size_request(24, 24)  # ~1.5x plus grande qu'une icône standard 16px
         da.set_draw_func(self._draw_bell)
         return da
 
     @staticmethod
     def _draw_bell(area, cr, width, height) -> None:
         import math
+        cr.scale(width / 16.0, height / 16.0)  # tracé en repère 16x16, affiché en 24
         c = area.get_color()
         cr.set_source_rgb(c.red, c.green, c.blue)
         # dôme de la cloche
