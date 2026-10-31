@@ -981,6 +981,11 @@ class JarvisWindow(Adw.ApplicationWindow):
         if not busy:
             self.chat_mic.remove_css_class("jarvis-recording")
             self.home_mic_button.remove_css_class("jarvis-recording")
+            if hasattr(self, "home_page"):
+                self.home_page.remove_css_class("jarvis-recording-page")
+            self.mic_level_bar.remove_css_class("jarvis-wave-live")
+            self.mic_level_bar.set_visible(False)
+            self.mic_level_bar.set_value(0)
 
     def _set_mic_level(self, level: float) -> None:
         if hasattr(self, "mic_level_bar"):
