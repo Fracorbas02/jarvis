@@ -85,6 +85,26 @@ def test_unit() -> None:
         assert scaling_mod._monitors_xml_scale(mpath + ".missing") == 0.0
     finally:
         os.unlink(mpath)
+    # env JARVIS_SCALE prioritaire sur tout (hors override)
+    os.environ["JARVIS_SCALE"] = "2"
+    try:
+        assert detect_scale(StubRoot(96, 1920, 1080)) == 2.0
+    finally:
+        del os.environ["JARVIS_SCALE"]
+    # Hyprland : ligne monitor avec scale 2 dans hyprland.conf
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        hyp = Path(d) / "hypr" / "hyprland.conf"
+        hyp.parent.mkdir()
+        hyp.write_text("monitor = eDP-1,2880x1920@60,0x0,2\n"
+                       "# monitor = DP-1,1920x1080,0x0,1\n", encoding="utf-8")
+        os.environ["XDG_CONFIG_HOME"] = d
+        try:
+            assert scaling_mod._hypr_scale() == 2.0
+            assert detect_scale(StubRoot(96, 1920, 1080)) == 2.0
+        finally:
+            del os.environ["XDG_CONFIG_HOME"]
+    assert scaling_mod._hypr_scale() == 0.0  # pas de conf dans ce sandbox
     # géométrie adaptative
     assert adaptive_geometry(StubRoot(96, 1920, 1080)) == "1190x734+365+173"
     # petit écran -> minimum, x centré à 0 (pas négatif)
