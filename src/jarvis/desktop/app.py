@@ -172,6 +172,13 @@ def _debug_scale(root, scale: float, app=None) -> None:
                 fams = sorted(tkfont.families())
                 lines.append(f"[jarvis] debug: font families: Roboto={'Roboto' in fams} "
                              f"n={len(fams)} sample={fams[:8]}")
+                import glob as _glob
+                home_fonts = _glob.glob(os.path.expanduser("~/.fonts/**/*.ttf"), recursive=True) + \
+                             _glob.glob(os.path.expanduser("~/.fonts/*.ttf"))
+                lines.append(f"[jarvis] debug: ~/.fonts ttf={home_fonts}")
+                xdg = os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
+                lines.append(f"[jarvis] debug: XDG_DATA_HOME={xdg} "
+                             f"fonts dir exists={os.path.isdir(os.path.join(xdg, 'fonts'))}")
                 for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont"):
                     f = tkfont.nametofont(name)
                     lines.append(
