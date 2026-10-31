@@ -194,7 +194,16 @@ class JarvisWindow(Adw.ApplicationWindow):
         mic_box.append(mic_icon)
         mic_box.append(Gtk.Label(label="Parler à Jarvis"))
         self.home_mic_button.set_child(mic_box)
-        page.append(self.home_mic_button)
+        # halo brillant derrière le bouton (overlay : halo en dessous, bouton au-dessus)
+        self.mic_glow = Gtk.Box()
+        self.mic_glow.add_css_class("jarvis-mic-glow")
+        self.mic_glow.set_size_request(180, 180)
+        self.mic_glow.set_halign(Gtk.Align.CENTER)
+        self.mic_glow.set_valign(Gtk.Align.CENTER)
+        overlay = Gtk.Overlay()
+        overlay.set_child(self.mic_glow)
+        overlay.add_overlay(self.home_mic_button)
+        page.append(overlay)
         self.home_mic_button.connect("clicked", self._on_home_mic)
 
         hint = Gtk.Label(label="Ctrl+P prompt · Ctrl+O conversations · Ctrl+N nouvelle",
@@ -709,7 +718,7 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.chat_entry.set_sensitive(False)
         self.chat_mic.add_css_class("jarvis-recording")
         self.home_mic_button.add_css_class("jarvis-recording")
-        self.add_css_class("jarvis-recording-page")  # toute la fenêtre pulse
+        self.mic_glow.add_css_class("jarvis-glow-live")  # le halo pulse derrière le bouton
         self._set_chat_hint("Enregistrement…")
         self.mic_level_bar.set_visible(True)
         self.mic_level_bar.add_css_class("jarvis-wave-live")
@@ -983,7 +992,7 @@ class JarvisWindow(Adw.ApplicationWindow):
         if not busy:
             self.chat_mic.remove_css_class("jarvis-recording")
             self.home_mic_button.remove_css_class("jarvis-recording")
-            self.remove_css_class("jarvis-recording-page")
+            self.mic_glow.remove_css_class("jarvis-glow-live")
             self.mic_level_bar.remove_css_class("jarvis-wave-live")
             self.mic_level_bar.set_visible(False)
             self.mic_level_bar.set_value(0)

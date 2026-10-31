@@ -51,23 +51,21 @@ def _css() -> None:
     }
     .jarvis-mic-level { margin-top: 2px; }
     .jarvis-ctx-bar { min-height: 6px; }
-    /* mode enregistrement : TOUTE la fenêtre pulse (classe sur la window) */
-    window.jarvis-recording-page {
-        animation: jarvis-win-pulse 1.2s ease-in-out infinite;
+    /* halo rond et doux derrière le bouton micro, qui pulse en enregistrement */
+    .jarvis-mic-glow {
+        background: radial-gradient(circle,
+            alpha(@accent_bg_color, 0.55) 0%,
+            alpha(@accent_bg_color, 0.20) 45%,
+            transparent 72%);
+        border-radius: 50%;
+        opacity: 0.35;
     }
-    @keyframes jarvis-win-pulse {
-        0%, 100% {
-            background: linear-gradient(160deg,
-                alpha(@accent_bg_color, 0.10) 0%,
-                @window_bg_color 45%,
-                alpha(@accent_bg_color, 0.06) 100%);
-        }
-        50% {
-            background: linear-gradient(160deg,
-                alpha(@accent_bg_color, 0.22) 0%,
-                alpha(@window_bg_color, 0.97) 45%,
-                alpha(@accent_bg_color, 0.16) 100%);
-        }
+    .jarvis-mic-glow.jarvis-glow-live {
+        animation: jarvis-glow-pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes jarvis-glow-pulse {
+        0%, 100% { opacity: 0.35; }
+        50%      { opacity: 1.0; }
     }
     /* vague de niveau en bas de la fenêtre, en accord avec la voix */
     .jarvis-wave-bar {
