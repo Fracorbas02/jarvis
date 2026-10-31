@@ -148,6 +148,19 @@ def main() -> None:
     root.configure(fg_color=BG)
 
     app = DesktopApp(root, args.config, scale=scale)
+    if os.environ.get("JARVIS_DEBUG_SCALE"):
+        import sys
+        import customtkinter as _ctk
+        lbl = _ctk.CTkLabel(app.main, text="x", font=_ctk.CTkFont(size=13))
+        root.update_idletasks()
+        print(f"[jarvis] debug: widget_scaling={_ctk.get_widget_scaling()} "
+              f"window_scaling={_ctk.get_window_scaling()} "
+              f"screen={root.winfo_screenwidth()}x{root.winfo_screenheight()} "
+              f"dpi={root.winfo_fpixels('1i'):.1f} "
+              f"tk_scaling={root.tk.call('tk', 'scaling')} "
+              f"label13_font={lbl._label.cget('font')}",
+              file=sys.stderr)
+        lbl.destroy()
     try:
         root.mainloop()
     except KeyboardInterrupt:
