@@ -79,6 +79,13 @@ def main() -> int:
         # hexpand sur la MessageBox : sinon halign START/END (bulles user/assistant) n'a
         # aucun effet et toutes les bulles s'étalent pleine largeur
         assert "self.set_hexpand(True)" in init_src
+        # la bulle interne suit le halign de la MessageBox (pas de FILL forcée)
+        assert "bubble.set_hexpand(True)" in init_src
+        assert "Align.FILL" not in init_src
+        # blocs de code : jamais de wrap (sinon les sauts de ligne disparaissent)
+        code_src = inspect.getsource(gtk_widgets._code_card)
+        assert "set_wrap(False)" in code_src and "WrapMode.NONE" in code_src
+        assert "Gtk.PolicyType.AUTOMATIC" in code_src  # scroll horizontal
         # webview assistant : cachée à la création (sinon bulle fantôme), affichée au rendu
         assert "self.webview.set_visible(False)" in init_src
         render_src = inspect.getsource(gtk_widgets.MessageBox._render_md)
