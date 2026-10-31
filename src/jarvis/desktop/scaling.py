@@ -174,10 +174,18 @@ def setup_window(root, scale: float) -> None:
     """
     import customtkinter as ctk
 
-    # XWayland non scalé (Xft.dpi=192 sous GNOME scale 2) : Tk travaille en
-    # pixels PHYSIQUES (winfo_screenwidth = 2880). set_widget_scaling(scale)
-    # scale dimensions ET polices des widgets (font 22 -> -44px), la géométrie
-    # reste en pixels physiques -> fenêtre = 62 % de l'écran, texte à l'échelle OS.
+    # Sous Linux, CTk ne détecte pas le DPI (get_window_dpi_scaling -> 1) : il
+    # faut set_widget_scaling(scale) pour scaler dimensions ET polices (CTkFont
+    # passe la taille en pixels négatifs: -size*scale). MAIS Tk applique aussi
+    # son propre tk scaling (Xft.dpi/72 = 2.667 à 192 DPI) aux tailles en POINTS
+    # ; les pixels négatifs sont convertis en points (÷ tk scaling) puis rendus
+    # en pixels (× tk scaling) => double application partielle. On neutralise
+    # donc tk scaling (= 1.0, soit Xft.dpi=72) pour que 1 px demandé = 1 px rendu,
+    # et on laisse CTk faire tout le scaling.
+    try:
+        root.tk.call("tk", "scaling", "-displayof", ".", 1.0)
+    except Exception:  # noqa: BLE001 — best-effort
+        pass
     ctk.set_widget_scaling(scale)
     ctk.set_window_scaling(scale)
     root.maxsize(root.winfo_screenwidth(), root.winfo_screenheight())
