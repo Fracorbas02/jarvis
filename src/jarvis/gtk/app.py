@@ -49,6 +49,7 @@ from ..gpu import detect_gpus, load_gpu_choice
 from .backend import APP_ID, GtkBackend, load_ui_settings, save_ui_settings
 
 ICONS_DIR = Path(__file__).resolve().parent / "icons"
+BELL_SVG = (ICONS_DIR / "scalable" / "actions" / "bell-symbolic.svg").read_bytes()
 from .widgets import (MessagesColumn, assistant_message, error_message,
                       user_message, _css)
 
@@ -151,7 +152,14 @@ class JarvisWindow(Adw.ApplicationWindow):
         self._notif_badge.add_css_class("jarvis-notif-badge")
         self._notif_badge.set_visible(False)
         bell_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
-        bell_box.append(Gtk.Image(icon_name="bell-symbolic"))
+        try:
+            from gi.repository import GdkPixbuf
+            loader = GdkPixbuf.PixbufLoader.new_with_type("svg")
+            loader.write(BELL_SVG)
+            loader.close()
+            bell_box.append(Gtk.Image(pixbuf=loader.get_pixbuf()))
+        except Exception:  # noqa: BLE001 — fallback thème si le SVG échoue
+            bell_box.append(Gtk.Image(icon_name="bell-symbolic"))
         bell_box.append(self._notif_badge)
         self.bell_button = Gtk.Button(tooltip_text="Notifications")
         self.bell_button.set_child(bell_box)
@@ -889,6 +897,7 @@ class JarvisWindow(Adw.ApplicationWindow):
 
     def _on_conv_row_activated(self, _listbox, row) -> None:
         self.backend.load_session(row.sid)
+        self.split.set_show_sidebar(False)  # referme la sidebar après choix
 
     def _on_reset_context(self, _btn) -> None:
         which = self.reset_target.get_active_id() or "llm"
@@ -1051,6 +1060,7 @@ class JarvisWindow(Adw.ApplicationWindow):
             self._replay_history()
             self.stack.set_visible_child_name("chat")
             self.backend.list_sessions()
+            self.split.set_show_sidebar(False)  # referme la sidebar (notify resynchronise le bouton)
         elif t == "sessions_list":
             self._fill_conv_list(event["sessions"])
         elif t == "context_reset":
