@@ -16,8 +16,28 @@ from __future__ import annotations
 import argparse
 import logging
 import queue
+import sys
 
-import gi
+try:
+    import gi
+except ModuleNotFoundError:
+    # PyGObject est un binding SYSTEME : jamais installe par uv/pip.
+    # Installe-le via ton gestionnaire de paquets (voir README, section GTK4).
+    sys.stderr.write(
+        "erreur: module 'gi' (PyGObject) introuvable.\n"
+        "  gi est un paquet SYSTEME (jamais installe par uv/pip) ET le venv uv\n"
+        "  utilise son propre Python isole : il ne voit pas les site-packages\n"
+        "  systeme. Deux etapes :\n"
+        "    1) paquet systeme (une fois) :\n"
+        "         Arch/Manjaro :  sudo pacman -S python-gobject gtk4 libadwaita\n"
+        "         Debian/Ubuntu:  sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1\n"
+        "         Fedora:         sudo dnf install python3-gobject gtk4 libadwaita\n"
+        "    2) recreer le venv sur le Python systeme AVEC les site-packages systeme :\n"
+        "         rm -rf .venv\n"
+        "         uv venv --system-site-packages --python /usr/bin/python3\n"
+        "         uv sync --frozen\n"
+        "  puis relance: uv run jarvis-app\n")
+    raise SystemExit(2) from None
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
@@ -121,6 +141,34 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.mic_button.connect("clicked", self._on_mic)
         header.pack_end(self.mic_button)
 
+        # cloche de notifications (badge compteur) + popover
+        self._notifs: list[str] = []
+        self._notif_badge = Gtk.Label(label="", halign=Gtk.Align.CENTER,
+                                      valign=Gtk.Align.CENTER)
+        self._notif_badge.add_css_class("jarvis-notif-badge")
+        self._notif_badge.set_visible(False)
+        bell_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+        bell_box.append(Gtk.Image(icon_name="notifications-symbolic"))
+        bell_box.append(self._notif_badge)
+        self.bell_button = Gtk.Button(tooltip_text="Notifications")
+        self.bell_button.set_child(bell_box)
+        self.bell_button.connect("clicked", self._on_bell_clicked)
+        header.pack_end(self.bell_button)
+        self._build_notif_popover()
+
+        # usage du contexte (n_ctx) en live, dans le header
+        self.ctx_bar = Gtk.LevelBar(min_value=0, max_value=1, value=0,
+                                    tooltip_text="Usage du contexte")
+        self.ctx_bar.set_size_request(120, -1)
+        self.ctx_bar.add_css_class("jarvis-ctx-bar")
+        self.ctx_label = Gtk.Label(label="ctx ?", tooltip_text="Contexte utilisé")
+        self.ctx_label.add_css_class("dim-label")
+        ctx_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6,
+                          valign=Gtk.Align.CENTER)
+        ctx_box.append(self.ctx_label)
+        ctx_box.append(self.ctx_bar)
+        header.pack_end(ctx_box)
+
         # pages
         self.stack.add_titled_with_icon(self._build_home(), "home", "Accueil",
                                         "go-home-symbolic")
@@ -129,10 +177,7 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.stack.add_titled_with_icon(self._build_settings(), "settings", "R\u00e9glages",
                                         "emblem-system-symbolic")
         toolbar.set_content(self.stack)
-
-        self.toast_overlay = Adw.ToastOverlay()
-        self.toast_overlay.set_child(toolbar)
-        self.set_content(self.toast_overlay)
+        self.set_content(toolbar)
 
     def _build_home(self) -> Gtk.Widget:
         clamp = Adw.Clamp(maximum_size=640, tightening_threshold=480)
@@ -186,23 +231,30 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.messages = MessagesColumn()
         outer.append(self.messages.widget)
 
-        # barre du bas : micro + champ texte + envoyer
+        # barre du bas moderne : conteneur arrondi (carte) avec micro, champ
+        # pill moderne et bouton d'envoi circulaire accentué
         bottom = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8,
                          halign=Gtk.Align.CENTER, margin_top=8, margin_bottom=12,
-                         margin_start=16, margin_end=16)
+                         margin_start=24, margin_end=24)
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6,
+                      hexpand=True, halign=Gtk.Align.CENTER)
+        bar.add_css_class("jarvis-entry-bar")
         self.chat_mic = Gtk.Button(icon_name="audio-input-microphone-symbolic",
                                    tooltip_text="Parler à Jarvis (enregistre puis transcrit)")
-        self.chat_mic.add_css_class("pill")
+        self.chat_mic.add_css_class("circular")
         self.chat_mic.connect("clicked", self._on_mic)
-        bottom.append(self.chat_mic)
-        self.chat_entry = Gtk.Entry(hexpand=True, placeholder_text="Message…")
-        self.chat_entry.add_css_class("pill")
+        bar.append(self.chat_mic)
+        self.chat_entry = Gtk.Entry(hexpand=True,
+                                    placeholder_text="Message à Jarvis…")
+        self.chat_entry.add_css_class("jarvis-entry-modern")
         self.chat_entry.connect("activate", self._on_entry_activate)
-        bottom.append(self.chat_entry)
+        bar.append(self.chat_entry)
         send_btn = Gtk.Button(icon_name="go-next-symbolic", tooltip_text="Envoyer")
-        send_btn.add_css_class("pill")
+        send_btn.add_css_class("circular")
+        send_btn.add_css_class("suggested-action")
         send_btn.connect("clicked", self._on_entry_activate)
-        bottom.append(send_btn)
+        bar.append(send_btn)
+        bottom.append(bar)
         outer.append(bottom)
         hint_row = Gtk.Box(halign=Gtk.Align.CENTER, margin_bottom=8)
         self.chat_hint = Gtk.Label(label="", halign=Gtk.Align.CENTER)
@@ -321,19 +373,29 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.api_switch_row.connect("notify::active", self._on_tts_api_switch)
         g_api.add(self.api_switch_row)
 
-        # modèle TTS
+        # modèle TTS : rempli d'abord avec la liste statique, puis dynamiquement
+        # via GET /v1/models (bouton Rafraîchir + auto après'enregistrement de la clé)
         self.api_model_row = Adw.ComboRow(
             title="Modèle TTS",
-            subtitle="voxtral-mini-tts-2603 = rapide, voxtral-tts-2603 = qualité max")
+            subtitle="liste rafraîchie via l'API (GET /v1/models) ; voxtral-mini-tts-3-0 = dernier (Voxtral TTS 3)")
         from ..mistral_tts import TTS_MODELS
-        api_models = TTS_MODELS
-        self.api_model_row.set_model(Gtk.StringList.new(api_models))
+        self._api_model_ids = list(TTS_MODELS)
+        self.api_model_row.set_model(Gtk.StringList.new(self._api_model_ids))
         try:
-            self.api_model_row.set_selected(api_models.index(tts_api.model))
+            self.api_model_row.set_selected(self._api_model_ids.index(tts_api.model))
         except ValueError:
             self.api_model_row.set_selected(0)
         self.api_model_row.connect("notify::selected", self._on_tts_api_model)
         g_api.add(self.api_model_row)
+
+        row_refresh_models = Adw.ActionRow(
+            title="Lister les modèles TTS du compte (API)",
+            subtitle="GET /v1/models, filtre 'tts' — pour voir les nouveaux modèles (ex. voxtral-mini-tts-3-0)")
+        btn_refresh_models = Gtk.Button(label="Rafraîchir", valign=Gtk.Align.CENTER)
+        btn_refresh_models.connect("clicked",
+                                   lambda b: self.backend.list_mistral_tts_models())
+        row_refresh_models.add_suffix(btn_refresh_models)
+        g_api.add(row_refresh_models)
 
         # voix : presets + voix du workspace (rafraîchie via l'API)
         self.api_voice_row = Adw.ComboRow(
@@ -440,6 +502,54 @@ class JarvisWindow(Adw.ApplicationWindow):
                 continue
         self._toast("Ouvre manuellement : Paramètres > Confidentialité")
 
+    def _build_notif_popover(self) -> None:
+        self.notif_popover = Gtk.Popover()
+        self.notif_popover.set_parent(self.bell_button)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
+                      margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
+        box.set_size_request(320, -1)
+        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        head.append(Gtk.Label(label="Notifications", xalign=0, hexpand=True))
+        clear_btn = Gtk.Button(label="Tout effacer")
+        clear_btn.connect("clicked", lambda b: self._clear_notifs())
+        head.append(clear_btn)
+        box.append(head)
+        self.notif_list = Gtk.ListBox()
+        self.notif_list.add_css_class("boxed-list")
+        self.notif_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        scroll = Gtk.ScrolledWindow(vexpand=True, min_content_height=80,
+                                    max_content_height=360, propagate_natural_height=True)
+        scroll.set_child(self.notif_list)
+        box.append(scroll)
+        self.notif_empty = Gtk.Label(label="Aucune notification", halign=Gtk.Align.CENTER)
+        self.notif_empty.add_css_class("dim-label")
+        box.append(self.notif_empty)
+        self.notif_popover.set_child(box)
+        self._refresh_notif_ui()
+
+    def _on_bell_clicked(self, _btn) -> None:
+        self.notif_popover.popup()
+
+    def _clear_notifs(self) -> None:
+        self._notifs.clear()
+        self._refresh_notif_ui()
+
+    def _refresh_notif_ui(self) -> None:
+        child = self.notif_list.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            self.notif_list.remove(child)
+            child = nxt
+        for text in reversed(self._notifs[-30:]):
+            row = Gtk.Label(label=text, xalign=0, wrap=True, selectable=True,
+                            margin_top=6, margin_bottom=6,
+                            margin_start=8, margin_end=8)
+            self.notif_list.append(row)
+        n = len(self._notifs)
+        self._notif_badge.set_text(str(n) if n < 100 else "99+")
+        self._notif_badge.set_visible(n > 0)
+        self.notif_empty.set_visible(n == 0)
+
     def _build_status_popover(self) -> None:
         self.status_popover = Gtk.Popover()
         self.status_popover.set_parent(self.status_button)
@@ -545,9 +655,10 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.api_key_row.set_subtitle(self._api_key_subtitle())
         self._toast("Clé API enregistrée localement (mistral.json, 0600)"
                     if saved else "Clé API supprimée")
-        # après une nouvelle clé, on peut lister les voix du compte
+        # après une nouvelle clé, on peut lister voix ET modèles du compte
         if saved:
             self.backend.list_mistral_voices()
+            self.backend.list_mistral_tts_models()
 
     def _on_tts_api_switch(self, row, _pspec) -> None:
         self.backend.set_tts_api(enabled=row.get_active())
@@ -555,10 +666,21 @@ class JarvisWindow(Adw.ApplicationWindow):
                     + " (le TTS local reste le secours)")
 
     def _on_tts_api_model(self, row, _pspec) -> None:
-        from ..mistral_tts import TTS_MODELS
         idx = row.get_selected()
-        if 0 <= idx < len(TTS_MODELS):
-            self.backend.set_tts_api(model=TTS_MODELS[idx])
+        models = getattr(self, "_api_model_ids", [])
+        if 0 <= idx < len(models):
+            self.backend.set_tts_api(model=models[idx])
+
+    def _fill_api_models(self, models: list[str], current: str = "") -> None:
+        """Remplit le ComboRow des modèles TTS (liste dynamique API)."""
+        if not models:
+            return
+        self._api_model_ids = list(models)
+        self.api_model_row.set_model(Gtk.StringList.new(self._api_model_ids))
+        sel = 0
+        if current in self._api_model_ids:
+            sel = self._api_model_ids.index(current)
+        self.api_model_row.set_selected(sel)
 
     def _fill_api_voices(self, voices: list[tuple[str, str]], current: str = "") -> None:
         """Remplit le ComboRow des voix. voices = [(label, voice_id)]."""
@@ -643,22 +765,33 @@ class JarvisWindow(Adw.ApplicationWindow):
     def _on_prompt(self, *_args) -> None:
         dialog = Adw.Dialog.new()
         dialog.set_title("Prompt")
-        dialog.set_content_width(560)
-        dialog.set_content_height(360)
+        dialog.set_content_width(640)
+        dialog.set_content_height(420)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10,
-                      margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
-        scroll = Gtk.ScrolledWindow(vexpand=True, hexpand=True, min_content_height=180)
+                      margin_top=14, margin_bottom=14, margin_start=14, margin_end=14)
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.add_css_class("jarvis-entry-bar")
+        scroll = Gtk.ScrolledWindow(vexpand=True, hexpand=True, min_content_height=220)
         self.prompt_view = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR)
-        self.prompt_view.set_top_margin(8)
-        self.prompt_view.set_bottom_margin(8)
-        self.prompt_view.set_left_margin(8)
-        self.prompt_view.set_right_margin(8)
+        self.prompt_view.add_css_class("jarvis-entry-modern")
+        self.prompt_view.set_top_margin(10)
+        self.prompt_view.set_bottom_margin(10)
+        self.prompt_view.set_left_margin(12)
+        self.prompt_view.set_right_margin(12)
         scroll.set_child(self.prompt_view)
-        box.append(scroll)
+        card.append(scroll)
+        box.append(card)
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8,
+                          halign=Gtk.Align.END)
+        cancel = Gtk.Button(label="Annuler")
+        cancel.connect("clicked", lambda b: dialog.close())
+        actions.append(cancel)
         send = Gtk.Button(label="Envoyer", halign=Gtk.Align.END)
         send.add_css_class("suggested-action")
+        send.add_css_class("pill")
         send.connect("clicked", lambda b: self._send_prompt(dialog))
-        box.append(send)
+        actions.append(send)
+        box.append(actions)
         dialog.set_child(box)
         dialog.present(self)
 
@@ -802,6 +935,14 @@ class JarvisWindow(Adw.ApplicationWindow):
                 self._toast(f"Micro indisponible : {event.get('message', '')}")
         elif t == "mic_permission":
             self._on_mic_permission(event.get("state", "unknown"))
+        elif t == "mistral_tts_models":
+            models = event.get("models") or []
+            if models:
+                current = self.backend.cfg.tts_api.model
+                self._fill_api_models(models, current=current)
+                self._toast(f"{len(models)} modèles TTS récupérés depuis l'API")
+            if event.get("error"):
+                self._toast(f"Modèles API : {event['error']}")
         elif t == "mistral_voices":
             voices = [(f"{v.get('name', v['id'])} ({v.get('language', '')}{', ' + v['gender'] if v.get('gender') else ''})"
                        + (" [custom]" if v.get("kind") == "custom" else ""),
@@ -855,6 +996,15 @@ class JarvisWindow(Adw.ApplicationWindow):
         state_txt = labels.get(self._status_state, self._status_state)
         host = event.get("host", "")
         port = event.get("port", "")
+        ctx = event.get("ctx") or {}
+        if ctx.get("n_ctx"):
+            self.ctx_bar.set_value(ctx["used"] / max(1, ctx["n_ctx"]))
+            self.ctx_label.set_text(f"{ctx['used']}/{ctx['n_ctx']} tok")
+            self.ctx_bar.set_tooltip_text(
+                f"Contexte : {ctx['used']} / {ctx['n_ctx']} tokens utilisés")
+        else:
+            self.ctx_bar.set_value(0)
+            self.ctx_label.set_text("ctx ?")
         txt = f"{state_txt} — {host}:{port} — {models}{ctx_txt}"
         self.home_status.set_text(txt)
         self.pop_status_label.set_text(txt + (f"\n{event.get('detail') or ''}"
@@ -925,7 +1075,11 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.chat_hint.set_text(text)
 
     def _toast(self, text: str) -> None:
-        self.toast_overlay.add_toast(Adw.Toast(title=text, timeout=4))
+        """Notification : empilée dans la cloche (badge + popover), jamais en bas."""
+        self._notifs.append(text)
+        if len(self._notifs) > 100:  # borne mémoire (affichage tronqué à 30 de toute façon)
+            del self._notifs[:-100]
+        self._refresh_notif_ui()
 
     def do_close_request(self) -> bool:
         self.backend.stop()

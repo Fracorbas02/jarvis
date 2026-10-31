@@ -480,6 +480,38 @@ class GtkBackend:
         """GET /v1/audio/voices -> événement mistral_voices (preset + custom)."""
         self._run(self._alist_mistral_voices())
 
+    def list_mistral_tts_models(self) -> None:
+        """GET /v1/models (filtre tts) -> événement mistral_tts_models.
+
+        Liste dynamique des modeles TTS du compte (ex. voxtral-mini-tts-3-0),
+        pour ne jamais manquer un nouveau modele dans le combo de l'UI."""
+        self._run(self._alist_mistral_tts_models())
+
+    async def _alist_mistral_tts_models(self) -> None:
+        from ..mistral_tts import (MistralTTSClient, MistralTTSError,
+                                    TTS_MODELS, load_api_key)
+        key = load_api_key()
+        if not key:
+            self.events.put({"type": "mistral_tts_models",
+                             "models": list(TTS_MODELS),
+                             "error": "cle API absente -> liste statique de secours"})
+            return
+        tts_api = self.cfg.tts_api
+        client = MistralTTSClient(key, base_url=tts_api.base_url, model=tts_api.model,
+                                  timeout=20.0)
+        try:
+            models = await client.list_tts_models()
+        except MistralTTSError as exc:
+            self.events.put({"type": "mistral_tts_models",
+                             "models": list(TTS_MODELS), "error": str(exc)})
+        else:
+            if not models:
+                models = list(TTS_MODELS)
+            self.events.put({"type": "mistral_tts_models", "models": models,
+                             "error": ""})
+        finally:
+            await client.aclose()
+
     async def _alist_mistral_voices(self) -> None:
         from ..mistral_tts import (MistralTTSClient, MistralTTSError,
                                     load_api_key)
