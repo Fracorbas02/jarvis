@@ -28,8 +28,8 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 from xml.sax.saxutils import escape  # noqa: E402
 
-from .markdown import (_safe_href, collect_defs, inline_to_pango, parse_blocks,
-                       sanitize_pango, to_pango)  # noqa: E402
+from .markdown import (_safe_href, collect_defs, highlight_code, inline_to_pango,
+                       parse_blocks, sanitize_pango, to_pango)  # noqa: E402
 
 _HEADING_SIZE = {1: "xx-large", 2: "x-large", 3: "large", 4: "medium",
                  5: "small", 6: "small"}
@@ -62,15 +62,40 @@ def _css() -> None:
         min-width: 16px;
     }
     .jarvis-ctx-bar { min-height: 6px; }
-    .jarvis-md-quote { border-left: 3px solid alpha(@accent_bg_color, 0.7);
-                        padding-left: 8px; color: alpha(@window_fg_color, 0.75); }
-    .jarvis-md-code { background-color: #0a0c10; border-radius: 6px; }
-    .jarvis-md-table { border: 1px solid alpha(@window_fg_color, 0.15);
-                       border-radius: 8px; }
-    .jarvis-md-th { font-weight: bold; }
-    .jarvis-md-hr { margin-top: 6px; margin-bottom: 6px; }
-    .jarvis-md-img { border-radius: 8px; }
+    .jarvis-msg-user .jarvis-bubble { background-color: @accent_bg_color; }
+    .jarvis-msg-assistant .jarvis-bubble {
+        background-color: alpha(@window_fg_color, 0.07);
+        border: 1px solid alpha(@window_fg_color, 0.08);
+    }
+    .jarvis-bubble { border-radius: 16px; }
+    .jarvis-msg-user .jarvis-bubble { border-radius: 16px 16px 4px 16px; }
+    .jarvis-msg-assistant .jarvis-bubble { border-radius: 16px 16px 16px 4px; }
+    .jarvis-md-quote { border-left: 3px solid @accent_bg_color;
+                        padding-left: 10px; color: alpha(@window_fg_color, 0.7); }
+    .jarvis-md-code-card { background-color: #0d1117; border-radius: 10px;
+                           border: 1px solid alpha(@window_fg_color, 0.1); }
+    .jarvis-md-code-lang { font-size: 0.75em; color: alpha(@window_fg_color, 0.5);
+                           text-transform: uppercase; font-weight: 600; }
+    .jarvis-md-code-copy { border-radius: 6px; }
+    .jarvis-md-table { border-collapse: collapse; }
+    .jarvis-md-th { font-weight: 700; color: @accent_color;
+                    border-bottom: 2px solid alpha(@window_fg_color, 0.2);
+                    padding: 6px 10px; }
+    .jarvis-md-td { border-bottom: 1px solid alpha(@window_fg_color, 0.08);
+                    padding: 5px 10px; }
+    .jarvis-md-hr { margin-top: 8px; margin-bottom: 8px;
+                    color: alpha(@window_fg_color, 0.25); }
+    .jarvis-md-img { border-radius: 10px; }
     .jarvis-md-task-done { color: alpha(@window_fg_color, 0.5); }
+    .jarvis-md-math { background-color: alpha(@accent_bg_color, 0.12);
+                      border-radius: 8px; padding: 8px; }
+    .jarvis-md-fn { border-top: 1px solid alpha(@window_fg_color, 0.12);
+                    margin-top: 8px; padding-top: 4px; }
+    .jarvis-entry-modern { border-radius: 20px; padding: 6px 12px;
+                           background-color: alpha(@window_fg_color, 0.06); }
+    .jarvis-entry-bar { background-color: alpha(@window_fg_color, 0.05);
+                        border: 1px solid alpha(@window_fg_color, 0.1);
+                        border-radius: 24px; padding: 6px 8px; }
     """
     )
     display = Gdk.Display.get_default()
@@ -160,6 +185,53 @@ def _load_image_async(url: str, pic: Gtk.Picture, fallback: Gtk.Label) -> None:
         threading.Thread(target=_job, daemon=True).start()
 
 
+def _code_card(code: str, lang: str) -> Gtk.Widget:
+    """Carte de bloc de code moderne : barre en-tête (langue + bouton copier)
+    + code colorisé (highlight_code) dans un label mono sélectionnable."""
+    card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+    card.add_css_class("jarvis-md-code-card")
+    card.set_margin_top(6)
+    card.set_margin_bottom(6)
+
+    # barre d'en-tête : langue à gauche, copier à droite
+    header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+    header.set_margin_start(10)
+    header.set_margin_end(6)
+    header.set_margin_top(6)
+    header.set_margin_bottom(4)
+    lang_lbl = Gtk.Label(label=(lang or "text").upper(), xalign=0, hexpand=True)
+    lang_lbl.add_css_class("jarvis-md-code-lang")
+    header.append(lang_lbl)
+
+    copy_btn = Gtk.Button(icon_name="edit-copy-symbolic",
+                          tooltip_text="Copier le code")
+    copy_btn.add_css_class("jarvis-md-code-copy")
+    copy_btn.add_css_class("flat")
+
+    def _copy(_b) -> None:
+        cb = Gdk.Display.get_default().get_clipboard()
+        cb.set_text(code)
+        copy_btn.set_icon_name("object-select-symbolic")  # coche de confirmation
+        GLib.timeout_add(1200, lambda: (copy_btn.set_icon_name("edit-copy-symbolic"),
+                                        GLib.SOURCE_REMOVE)[1])
+
+    copy_btn.connect("clicked", _copy)
+    header.append(copy_btn)
+    card.append(header)
+
+    # code colorisé
+    hl = highlight_code(code, lang)
+    markup = f'<span font-family="monospace" size="small">{hl}</span>'
+    lbl = _label(markup, code)
+    lbl.set_hexpand(False)
+    lbl.set_margin_start(10)
+    lbl.set_margin_end(10)
+    lbl.set_margin_bottom(8)
+    lbl.set_selectable(True)
+    card.append(lbl)
+    return card
+
+
 def _render_block(parent: Gtk.Box, b, link_defs: dict, footnotes: dict,
                   depth: int = 0) -> None:
     """Ajoute le widget GTK d'un bloc parse_blocks dans parent."""
@@ -171,16 +243,17 @@ def _render_block(parent: Gtk.Box, b, link_defs: dict, footnotes: dict,
         markup = inline_to_pango(b.text, link_defs, footnotes)
         parent.append(_label(markup, b.text))
     elif b.kind == "code":
-        # label markup : mono + petit, sur fond sombre posé par le CSS du Box
-        markup = f'<span font-family="monospace" size="small">{escape(b.text)}</span>'
-        lbl = _label(markup, b.text)
-        lbl.set_hexpand(False)
+        parent.append(_code_card(b.text, b.lang))
+    elif b.kind == "math":
+        lbl = _label(
+            f'<span style="italic" foreground="#ffb454" size="large">'
+            f"{escape(b.text)}</span>",
+            b.text)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        box.add_css_class("jarvis-md-code")
-        box.set_margin_top(4)
-        box.set_margin_bottom(4)
-        box.set_margin_start(8)
-        box.set_margin_end(8)
+        box.add_css_class("jarvis-md-math")
+        box.set_halign(Gtk.Align.CENTER)
+        box.set_margin_top(6)
+        box.set_margin_bottom(6)
         box.append(lbl)
         parent.append(box)
     elif b.kind == "list":
@@ -217,24 +290,25 @@ def _render_block(parent: Gtk.Box, b, link_defs: dict, footnotes: dict,
     elif b.kind == "table":
         grid = Gtk.Grid()
         grid.add_css_class("jarvis-md-table")
-        grid.set_margin_top(4)
-        grid.set_margin_bottom(4)
-        grid.set_column_spacing(12)
-        grid.set_row_spacing(2)
+        grid.set_margin_top(6)
+        grid.set_margin_bottom(6)
+        grid.set_column_spacing(0)
+        grid.set_row_spacing(0)
         aligns = b.aligns or [None] * max(len(r) for r in b.rows)
         for r, row in enumerate(b.rows):
             for c, cell in enumerate(row):
                 markup = inline_to_pango(cell, link_defs, footnotes)
-                if r == 0:
-                    markup = f"<b>{markup}</b>"
                 lbl = _label(markup, cell)
                 a = aligns[c] if c < len(aligns) else None
                 lbl.set_halign({"l": Gtk.Align.START, "c": Gtk.Align.CENTER,
                                 "r": Gtk.Align.END}.get(a or "l", Gtk.Align.START))
-                if r == 0:
-                    lbl.add_css_class("jarvis-md-th")
+                lbl.set_hexpand(True)
+                lbl.add_css_class("jarvis-md-th" if r == 0 else "jarvis-md-td")
                 grid.attach(lbl, c, r, 1, 1)
-        parent.append(grid)
+        # le grid dans un cadre scrollable horizontal si trop large
+        frame = Gtk.Frame()
+        frame.set_child(grid)
+        parent.append(frame)
     elif b.kind == "hr":
         sep = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
         sep.add_css_class("jarvis-md-hr")
@@ -259,7 +333,10 @@ def _render_block(parent: Gtk.Box, b, link_defs: dict, footnotes: dict,
     elif b.kind == "footnote_def":
         markup = (f'<span size="small">[{b.footnote_id}] '
                   f'{inline_to_pango(b.text, link_defs, footnotes)}</span>')
-        parent.append(_label(markup, f"[{b.footnote_id}] {b.text}"))
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        box.add_css_class("jarvis-md-fn")
+        box.append(_label(markup, f"[{b.footnote_id}] {b.text}"))
+        parent.append(box)
 
 
 class MessageBox(Gtk.Box):

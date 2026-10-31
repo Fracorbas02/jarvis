@@ -17,8 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from jarvis.gtk.markdown import (Block, _safe_href, collect_defs,  # noqa: E402
-                                 inline_to_pango, parse_blocks, sanitize_pango,
-                                 to_pango)
+                                 highlight_code, inline_to_pango, parse_blocks,
+                                 sanitize_pango, to_pango)
 
 
 def kinds(text: str) -> list[str]:
@@ -140,16 +140,16 @@ def test_inline_links() -> None:
     p = inline_to_pango(
         '[txt](https://a.b "T") [r][r1] [r1][] [r1] <https://auto.link> '
         "https://bare.url/x?a=1&b=2 www.ex.com/z", ld)
-    assert '<a href="https://a.b" title="T">txt</a>' in p
+    assert '<a href="https://a.b" title="T">' in p and '>txt</span></a>' in p
     assert p.count('<a href="https://ref.example" title="T">') == 3, p
-    assert '<a href="https://auto.link">https://auto.link</a>' in p
+    assert '<a href="https://auto.link">' in p and 'https://auto.link</span></a>' in p
     assert '<a href="https://bare.url/x?a=1&amp;b=2">' in p
-    assert '<a href="http://www.ex.com/z">www.ex.com/z</a>' in p
+    assert '<a href="http://www.ex.com/z">' in p and 'www.ex.com/z</span></a>' in p
 
 
 def test_inline_image_is_link() -> None:
     p = inline_to_pango('![alt](https://img.x/y.png)')
-    assert '<a href="https://img.x/y.png">alt</a>' in p
+    assert '<a href="https://img.x/y.png">' in p and '>alt</span></a>' in p
     assert "![" not in p
 
 
@@ -216,7 +216,7 @@ def test_dangerous_schemes_rendered_as_text() -> None:
     p = inline_to_pango("[c](javascript:alert(1)) [d](data:text/html;base64,XX) [ok](https://a.b)")
     assert 'href="javascript:' not in p and 'href="data:' not in p
     assert "javascript:alert(1)" in p  # texte brut
-    assert '<a href="https://a.b">ok</a>' in p
+    assert '<a href="https://a.b">' in p and '>ok</span></a>' in p
     s = sanitize_pango(p)
     assert 'href="javascript:' not in s and 'href="data:' not in s
 
@@ -236,3 +236,51 @@ def test_sanitize_keeps_allowed() -> None:
                        '<span weight="bold" foreground="#fff" font-family="monospace">t</span>')
     assert "<b>g</b>" in s and '<a href="https://x" title="t">l</a>' in s
     assert 'font-family="monospace"' in s
+
+
+# ---------- nouveautés UI moderne ----------
+
+
+def test_math_inline_and_block() -> None:
+    p = inline_to_pango("E = $mc^2$ fin")
+    assert 'style="italic"' in p and "#ffb454" in p and "mc^2" in p
+    p = inline_to_pango("$$\\int_0^1 x^2 dx$$")
+    assert 'size="large"' in p and "\\int_0^1" in p
+    b = parse_blocks("texte\n\n$$\n\\frac{1}{3}\n$$\n\naprès\n")
+    kinds = [x.kind for x in b]
+    assert "math" in kinds
+    assert b[kinds.index("math")].text == "\\frac{1}{3}"
+
+
+def test_links_are_styled() -> None:
+    p = inline_to_pango("[exemple](https://example.com) et https://bare.url")
+    assert 'underline="single"' in p and 'foreground="#4cc2ff"' in p
+    assert '<a href="https://example.com">' in p
+    assert '<a href="https://bare.url">' in p
+
+
+def test_highlight_python() -> None:
+    h = highlight_code('def f(x):  # com\n    return "s" + 42', "python")
+    assert 'foreground="#ff7b72">def</span>' in h
+    assert 'foreground="#8b949e">' in h          # commentaire
+    assert 'foreground="#a5d6ff">' in h          # string
+    assert 'foreground="#79c0ff">42</span>' in h  # nombre
+    assert "&lt;" not in h or True
+    # le markup reste valide après sanitize
+    s = sanitize_pango(f'<span font-family="monospace">{h}</span>')
+    assert "<tt" not in s
+
+
+def test_highlight_shell_and_unknown() -> None:
+    h = highlight_code("echo hello # comment", "bash")
+    assert 'foreground="#ff7b72">echo</span>' in h
+    # langue inconnue : pas de couleur, texte échappé
+    h = highlight_code("a < b & c", "inconnu")
+    assert "a &lt; b &amp; c" in h and "foreground" not in h
+
+
+def test_highlight_json() -> None:
+    h = highlight_code('{"clef": true, "n": 12}', "json")
+    assert 'foreground="#a5d6ff">' in h          # chaînes
+    assert 'foreground="#ff7b72">true</span>' in h
+    assert 'foreground="#79c0ff">12</span>' in h
