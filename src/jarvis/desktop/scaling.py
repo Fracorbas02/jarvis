@@ -182,8 +182,15 @@ def setup_window(root, scale: float) -> None:
     # en pixels (× tk scaling) => double application partielle. On neutralise
     # donc tk scaling (= 1.0, soit Xft.dpi=72) pour que 1 px demandé = 1 px rendu,
     # et on laisse CTk faire tout le scaling.
+    # Neutraliser le tk scaling de X11 (Xft.dpi/72 = 2.667 à 192 DPI) : Tk
+    # convertit les tailles de police en pixels négatifs en points via ce
+    # facteur (÷ 2.667) avant de les rendre, d'où un texte ~2.7x trop petit.
+    # tk scaling = 1.0 ne suffit pas sous X11 (la ressource Xft.dpi domine) :
+    # on la pose aussi via les options X de la fenêtre.
     try:
         root.tk.call("tk", "scaling", "-displayof", ".", 1.0)
+        root.tk.call("option", "add", "*TkDefaultFont", "fixed 13")
+        root.tk.call("option", "add", "*font", "fixed 13")
     except Exception:  # noqa: BLE001 — best-effort
         pass
     ctk.set_widget_scaling(scale)
