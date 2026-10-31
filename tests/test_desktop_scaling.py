@@ -62,6 +62,29 @@ def test_unit() -> None:
         assert detect_scale(StubRoot(192, 3840, 2160)) == 2.0
     finally:
         scaling_mod._gsettings_scale = orig
+    # monitors.xml (GNOME >= 46 Wayland : scaling-factor gsettings supprimé)
+    import tempfile
+    monitors = (
+        '<monitors version="2"><monitor><spec><connector>DP-1</connector></spec>'
+        '<logicalmonitor><x>0</x><y>0</y><scale>2</scale>'
+        '<monitor><spec><connector>DP-1</connector></spec></monitor>'
+        '</logicalmonitor></monitor></monitors>'
+    )
+    with tempfile.NamedTemporaryFile("w", suffix=".xml", delete=False) as f:
+        f.write(monitors)
+        mpath = f.name
+    try:
+        assert scaling_mod._monitors_xml_scale(mpath) == 2.0
+        orig_mx = scaling_mod._monitors_xml_scale
+        scaling_mod._monitors_xml_scale = lambda path=None: 2.0
+        try:
+            assert detect_scale(StubRoot(96, 1920, 1080)) == 2.0
+            assert detect_scale(StubRoot(192, 3840, 2160)) == 2.0
+        finally:
+            scaling_mod._monitors_xml_scale = orig_mx
+        assert scaling_mod._monitors_xml_scale(mpath + ".missing") == 0.0
+    finally:
+        os.unlink(mpath)
     # géométrie adaptative
     assert adaptive_geometry(StubRoot(96, 1920, 1080)) == "1190x734+365+173"
     # petit écran -> minimum, x centré à 0 (pas négatif)

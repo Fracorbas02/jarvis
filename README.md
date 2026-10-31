@@ -106,7 +106,8 @@ uv run jarvis-app --scale 2   # forcer le facteur d'échelle (défaut: auto)
 La fenêtre est redimensionnable (sash déplaçable entre la sidebar et la zone
 principale) et s'adapte à la résolution de l'écran (62 % x 68 %, centrée).
 Le facteur d'échelle est détecté automatiquement (DPI de l'écran, hints
-`GDK_SCALE`/`QT_SCREEN_SCALE_FACTORS`, override `--scale`) et appliqué avant
+`GDK_SCALE`/`QT_SCREEN_SCALE_FACTORS`, gsettings GNOME, `monitors.xml`
+GNOME >= 46, override `--scale`) et appliqué avant
 la création des widgets : dimensions et polices suivent le scaling GNOME
 (200 % → tout est x2).
 

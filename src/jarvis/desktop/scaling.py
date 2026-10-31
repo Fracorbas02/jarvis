@@ -29,7 +29,9 @@ def _clamp(scale: float) -> float:
 
 def _gsettings_scale() -> float:
     """Échelle de l'OS lue via gsettings (utile sous GNOME Wayland, où le DPI
-    X11 peut rester à 96). Best-effort : 0 si indisponible."""
+    X11 peut rester à 96). Best-effort : 0 si indisponible.
+    Note : depuis GNOME 46, la clé scaling-factor n’existe plus —
+    le scale est dans monitors.xml (voir _monitors_xml_scale)."""
     import subprocess
     for key in ("scaling-factor", "text-scaling-factor"):
         try:
@@ -44,10 +46,36 @@ def _gsettings_scale() -> float:
     return 0.0
 
 
+def _monitors_xml_scale(path=None) -> float:
+    """Échelle lue dans monitors.xml ($XDG_CONFIG_HOME/monitors.xml, défaut
+    ~/.config/monitors.xml) : c'est là que GNOME >= 46 stocke le scale de
+    chaque écran en Wayland (la clé gsettings scaling-factor y est supprimée),
+    et aussi en X11 avec scaling fractionnaire. On prend le max des <scale>
+    des <logicalmonitor>. Best-effort : 0 si absent/illisible."""
+    import xml.etree.ElementTree as ET
+    if path is None:
+        cfg = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
+            os.path.expanduser("~"), ".config")
+        path = os.path.join(cfg, "monitors.xml")
+    try:
+        root = ET.parse(path).getroot()
+    except Exception:  # noqa: BLE001 — best-effort
+        return 0.0
+    scales = []
+    for lm in root.iter("logicalmonitor"):
+        el = lm.find("scale")
+        if el is not None and el.text:
+            try:
+                scales.append(float(el.text))
+            except ValueError:
+                pass
+    return max(scales) if scales else 0.0
+
+
 def detect_scale(root: _Root, override: float | None = None) -> float:
     """Facteur d'échelle de l'OS : override > max(env GDK_SCALE/QT, gsettings
-    GNOME, DPI X11). Le max des indices couvre X11 (Xft.dpi) et Wayland
-    (gsettings scaling-factor) où un seul des deux est renseigné."""
+    GNOME, monitors.xml GNOME>=46, DPI X11). Le max des indices couvre X11
+    (Xft.dpi) et Wayland (monitors.xml) où un seul des deux est renseigné."""
     if override is not None:
         return _clamp(override)
     hints = [1.0]
@@ -59,6 +87,7 @@ def detect_scale(root: _Root, override: float | None = None) -> float:
             except ValueError:
                 pass
     hints.append(_gsettings_scale())
+    hints.append(_monitors_xml_scale())
     dpi = root.winfo_fpixels("1i")
     if dpi > 0:
         hints.append(dpi / BASE_DPI)
