@@ -386,8 +386,13 @@ class JarvisWindow(Adw.ApplicationWindow):
                 f"{event.get('seconds', 0):.0f}s d'audio · protocole "
                 f"{event.get('protocol', '?')} · serveur {event.get('server', '?')}")
         if event.get("audio_rms") is not None:
-            meta += f" · niveau audio RMS {event['audio_rms']:.1f}"
+            meta += f" \u00b7 RMS {event['audio_rms']:.1f}"
+        if event.get("wav_bytes"):
+            meta += f" \u00b7 wav {event['wav_bytes'] // 1024} Ko ({event.get('wav_path', '')})"
         self.stt_result_meta.set_text(meta)
+        if not text and event.get("audio_rms") is not None and event["audio_rms"] < 50:
+            self._toast("RMS ~0 : le micro n'a rien capt\u00e9 (mauvaise source ?) — "
+                        "v\u00e9rifie R\u00e9glages > Voix")
 
     def _build_settings(self) -> Gtk.Widget:
         scroll = Gtk.ScrolledWindow(vexpand=True, hexpand=True)

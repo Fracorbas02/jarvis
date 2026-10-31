@@ -430,7 +430,9 @@ class GtkBackend:
                              "elapsed": time.monotonic() - t0,
                              "protocol": self.cfg.voice.stt.protocol,
                              "server": f"{st.host}:{st.port}",
-                             "audio_rms": audio_rms})
+                             "audio_rms": audio_rms,
+                             "wav_path": str(path),
+                             "wav_bytes": path.stat().st_size if path.is_file() else 0})
         except VoiceError as exc:
             self.events.put({"type": "voice_error", "message": str(exc)})
         except Exception as exc:  # noqa: BLE001 — JAMAIS laisser la coroutine mourir en silence
