@@ -33,6 +33,7 @@ ffmpeg pour capturer du 16 kHz mono, ffplay/aplay/paplay/play pour écouter.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import shutil
 import subprocess
@@ -45,6 +46,8 @@ import httpx
 from .config import VoiceConfig, VoiceServerConfig
 
 SAMPLE_RATE = 16000
+
+log = logging.getLogger("jarvis.voice")
 
 
 class VoiceError(RuntimeError):
@@ -491,6 +494,7 @@ class RealtimeSTTClient:
                 except ValueError:
                     continue
                 etype = ev.get("type", "")
+                log.debug("ws /v1/realtime event: %s %s", etype, str(ev)[:200])
                 if etype in ("conversation.item.input_audio_transcription.completed",
                              "transcription.completed"):
                     tr = ev.get("transcription")
@@ -518,6 +522,10 @@ class RealtimeSTTClient:
                                "input_audio_buffer.speech_stopped"):
                     if etype == "response.done" and texts:
                         break
+                # le completed peut arriver avant response.done : on sort dès qu’on a
+                # un texte non vide (certains builds ne renvoient pas response.done)
+                if any(t.strip() for t in texts):
+                    break
             return " ".join(t for t in texts if t).strip()
         finally:
             try:

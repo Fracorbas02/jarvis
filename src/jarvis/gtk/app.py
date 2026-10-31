@@ -1117,11 +1117,15 @@ def main(argv: list[str] | None = None) -> int:
                                      description="Interface GTK4 de Jarvis")
     parser.add_argument("--config", default=None,
                         help="chemin vers config.toml (défaut: JARVIS_CONFIG ou ./config.toml)")
+    parser.add_argument("--debug-stt", action="store_true",
+                        help="log DEBUG des événements websocket STT (/v1/realtime)")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(name)s %(levelname)s %(message)s")
     # les requ\u00eates de statut (httpx) polluent le terminal toutes les 2 s
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    if args.debug_stt:
+        logging.getLogger("jarvis.voice").setLevel(logging.DEBUG)
     app = JarvisApp(config_path=args.config)
     return app.run([])
 
