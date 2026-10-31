@@ -151,6 +151,19 @@ async def amain() -> int:
         gtk_backend.save_ui_settings({"mic_permission_asked": True})
         assert gtk_backend.load_ui_settings()["mic_permission_asked"] is True
 
+        # reset_context sur serveur NON géré -> événement context_reset ok=False
+        # (llama-server mock non lancé par server_mod : _proc est None)
+        from jarvis import server as server_mod
+        server_mod._proc = None
+        await backend._areset("llm", None, None)
+        ev = backend.events.get_nowait()
+        assert ev["type"] == "context_reset" and ev["which"] == "llm" and ev["ok"] is False, ev
+
+        # reset STT non géré -> ok=False aussi
+        await backend._areset("stt", None, None)
+        ev = backend.events.get_nowait()
+        assert ev["type"] == "context_reset" and ev["which"] == "stt" and ev["ok"] is False, ev
+
         # server_ctx_usage ne lève jamais, même serveur absent
         usage = await server_ctx_usage("http://127.0.0.1:1/v1")
         assert usage["n_ctx"] is None and usage["used"] == 0, usage

@@ -228,6 +228,33 @@ class JarvisWindow(Adw.ApplicationWindow):
 
     def _build_chat(self) -> Gtk.Widget:
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, vexpand=True)
+
+        # barre d'actions de la conversation : nouvelle / ouvrir / reset contexte
+        conv_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8,
+                           halign=Gtk.Align.CENTER, margin_top=8)
+        btn_new = Gtk.Button(label="Nouvelle", icon_name="list-add-symbolic",
+                             tooltip_text="Nouvelle conversation (Ctrl+N)")
+        btn_new.connect("clicked", lambda b: self._on_new_session())
+        conv_bar.append(btn_new)
+        btn_open = Gtk.Button(label="Ouvrir…", icon_name="document-open-symbolic",
+                              tooltip_text="Ouvrir une conversation passée (Ctrl+O)")
+        btn_open.connect("clicked", lambda b: self._on_sessions())
+        conv_bar.append(btn_open)
+        self.btn_reset = Gtk.Button(label="Reset contexte",
+                                    icon_name="view-refresh-symbolic",
+                                    tooltip_text="Redémarre le llama-server géré par Jarvis "
+                                                 "(nouveau contexte vierge) — LLM, STT ou TTS")
+        self.btn_reset.connect("clicked", self._on_reset_context)
+        conv_bar.append(self.btn_reset)
+        # choix de la cible du reset
+        self.reset_target = Gtk.ComboBoxText()
+        for key, label in (("llm", "LLM (llama-server)"), ("stt", "STT (whisper)"),
+                           ("tts", "TTS (synthèse)")):
+            self.reset_target.append(key, label)
+        self.reset_target.set_active(0)
+        conv_bar.append(self.reset_target)
+        outer.append(conv_bar)
+
         self.messages = MessagesColumn()
         outer.append(self.messages.widget)
 
@@ -784,6 +811,27 @@ class JarvisWindow(Adw.ApplicationWindow):
     def _on_new_session(self, *_args) -> None:
         self.backend.new_session()
 
+    def _on_reset_context(self, _btn) -> None:
+        which = self.reset_target.get_active_id() or "llm"
+        d = Adw.AlertDialog.new(
+            "Reset du contexte ?",
+            {"llm": "Redémarre le llama-server géré par Jarvis avec le même modèle : "
+                    "l'historique du modèle repart à zéro (contexte vierge). "
+                    "La conversation affichée est conservée.",
+             "stt": "Redémarre le serveur STT (whisper.cpp) géré par Jarvis.",
+             "tts": "Redémarre le serveur TTS géré par Jarvis."}[which]
+            + "\nUn serveur lancé à la main (non géré) ne sera pas touché.")
+        d.add_response("cancel", "Annuler")
+        d.add_response("reset", "Redémarrer")
+        d.set_response_appearance("reset", Adw.ResponseAppearance.DESTRUCTIVE)
+        d.connect("response", lambda dlg, resp: self._do_reset(which) if resp == "reset" else None)
+        d.present(self)
+
+    def _do_reset(self, which: str) -> None:
+        self._toast(f"Reset du contexte ({which}) : redémarrage…")
+        self.btn_reset.set_sensitive(False)
+        self.backend.reset_context(which, ctx_size=int(self._ctx))
+
     def _on_sessions(self, *_args) -> None:
         self.backend.list_sessions()
 
@@ -923,6 +971,11 @@ class JarvisWindow(Adw.ApplicationWindow):
             self.stack.set_visible_child_name("chat")
         elif t == "sessions_list":
             self._show_sessions_dialog(event["sessions"])
+        elif t == "context_reset":
+            self.btn_reset.set_sensitive(True)
+            mark = "✓" if event.get("ok") else "✗"
+            self._toast(f"{mark} Reset {event.get('which', '?')} : {event.get('detail', '')}")
+            self._refresh_status()
         return GLib.SOURCE_REMOVE
 
     def _on_turn_done(self, event: dict) -> None:
