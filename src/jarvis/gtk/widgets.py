@@ -496,11 +496,9 @@ class MessageBox(Gtk.Box):
         self.content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         if role == "user":
             self.content_box.add_css_class("jarvis-text")
-        bubble.set_hexpand(False)
-        bubble.set_halign(Gtk.Align.FILL)
-        # la bulle ne fait pas toute la largeur : max ~80%
-        bubble.set_size_request(-1, -1)
-        self.content_box.set_hexpand(False)
+        # la bulle interne suit le halign de la MessageBox (START/END) et ne fait
+        # pas toute la largeur (max-width 80% via CSS)
+        bubble.set_hexpand(True)
         bubble.append(self.content_box)
         self._md_buffer = ""
         self.webview = None
