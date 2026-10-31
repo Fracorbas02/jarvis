@@ -127,12 +127,13 @@ def _debug_scale(root, scale: float) -> None:
     import customtkinter as _ctk
     lines: list[str] = []
     try:
+        from customtkinter.windows.widgets.scaling.scaling_tracker import ScalingTracker
         lbl = _ctk.CTkLabel(root, text="x", font=_ctk.CTkFont(size=13))
         root.update_idletasks()
         lines.append(
             f"[jarvis] debug: scale={scale} "
-            f"widget_scaling={_ctk.get_widget_scaling()} "
-            f"window_scaling={_ctk.get_window_scaling()} "
+            f"widget_scaling={ScalingTracker.get_widget_scaling(lbl)} "
+            f"window_scaling={ScalingTracker.get_window_scaling(root)} "
             f"screen={root.winfo_screenwidth()}x{root.winfo_screenheight()} "
             f"dpi={root.winfo_fpixels('1i'):.1f} "
             f"tk_scaling={root.tk.call('tk', 'scaling')} "
