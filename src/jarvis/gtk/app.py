@@ -666,7 +666,7 @@ class JarvisWindow(Adw.ApplicationWindow):
                 self.messages.add(user_message(str(content)))
             elif role == "assistant" and content:
                 box = assistant_message()
-                box.set_text(str(content))
+                box.set_markdown(str(content))
                 self.messages.add(box)
 
     def _show_sessions_dialog(self, sessions: list[dict]) -> None:

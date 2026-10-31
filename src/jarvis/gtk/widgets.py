@@ -1,8 +1,9 @@
 """Widgets de la conversation GTK4 : bulles de messages, reasoning, outils.
 
-Pas de rendu Markdown (pas de dépendance markdown dans le projet) : le texte
-est affiché brut, sélectionnable, avec un style par rôle. Le raisonnement du
-modèle est repliable (Adw.ExpanderRow) et grisé/italique.
+Les réponses de l'assistant sont rendues en Markdown via le markup Pango
+(voir markdown.py : titres, **gras**, *italique*, `code`, listes, blocs ```)
+re-rendu à chaque fragment streamé ; le texte utilisateur est échappé.
+Le raisonnement du modèle est repliable (Adw.ExpanderRow) et grisé/italique.
 """
 
 from __future__ import annotations
@@ -13,6 +14,8 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gdk, GLib, Gtk, Pango  # noqa: E402
+
+from .markdown import to_pango  # noqa: E402
 
 
 def _css() -> None:
@@ -75,7 +78,8 @@ class MessageBox(Gtk.Box):
             bubble.append(self.reasoning_row)
 
         self.text_label = Gtk.Label(xalign=0, wrap=True, selectable=True,
-                                    use_markup=False, wrap_mode=Pango.WrapMode.WORD_CHAR)
+                                    use_markup=True, wrap_mode=Pango.WrapMode.WORD_CHAR)
+        self._md_buffer = ""
         if role == "user":
             self.text_label.add_css_class("jarvis-text")
         bubble.append(self.text_label)
@@ -88,12 +92,24 @@ class MessageBox(Gtk.Box):
         self.append(self.meta_label)
 
     def set_text(self, text: str) -> None:
-        self.text_label.set_text(text)
+        """Texte brut (rôle user/system) : échappé puis affiché en markup."""
+        from xml.sax.saxutils import escape
+        self._md_buffer = text
+        self.text_label.set_markup(escape(text))
+        self.text_label.set_visible(bool(text))
+
+    def set_markdown(self, text: str) -> None:
+        """Texte markdown (réponse assistant) rendu en markup Pango."""
+        self._md_buffer = text
+        self.text_label.set_markup(to_pango(text))
         self.text_label.set_visible(bool(text))
 
     def append_text(self, fragment: str) -> None:
-        cur = self.text_label.get_text()
-        self.text_label.set_text(cur + fragment)
+        """Ajoute un fragment streamé et re-rend tout le Markdown : les
+        marqueurs qui se ferment en cours de route (ex. "**bo" + "ld**")
+        sont pris en compte au fragment suivant."""
+        self._md_buffer += fragment
+        self.text_label.set_markup(to_pango(self._md_buffer))
         self.text_label.set_visible(True)
 
     def append_reasoning(self, fragment: str) -> None:

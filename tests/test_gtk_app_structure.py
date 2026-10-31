@@ -58,6 +58,13 @@ def main() -> int:
                         "_on_server_status", "_on_turn_done", "_replay_history"):
             assert hasattr(gtk_app.JarvisWindow, handler), handler
 
+        # rendu Markdown des réponses : MessageBox.set_markdown / append_text
+        import jarvis.gtk.widgets as gtk_widgets
+        assert hasattr(gtk_widgets.MessageBox, "set_markdown")
+        assert hasattr(gtk_widgets.MessageBox, "append_text")
+        import jarvis.gtk.markdown as gtk_md
+        assert callable(gtk_md.to_pango) and callable(gtk_md.parse_markdown)
+
         # main() parse --config sans lancer la boucle GTK
         captured = {}
 
@@ -72,7 +79,7 @@ def main() -> int:
             rc = gtk_app.main(["--config", "/tmp/x.toml"])
         assert rc == 0
         assert captured["config_path"] == "/tmp/x.toml", captured
-        print("OK  gtk app structure (main/JarvisApp/JarvisWindow handlers)")
+        print("OK  gtk app structure (main/JarvisApp/JarvisWindow handlers + markdown)")
         return 0
 
 

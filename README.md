@@ -118,8 +118,9 @@ UI native GTK4, qui ne touche à rien d'autre que la partie graphique
   **menu (Ctrl+P)**, avec les conversations (Ctrl+O) et la lecture TTS.
 - **Conversation** : centrée sur l'échange — barre du bas avec micro (STT
   local : record → transcribe → tour LLM) + champ texte + envoyer ; réponses
-  en streaming avec raisonnement repliable et appels d'outils en lignes
-  ✓/✗ + durée.
+  en streaming **rendues en Markdown** (titres, **gras**, *italique*, `code`,
+  listes, blocs ``` — markup Pango, re-rendu à chaque fragment), avec
+  raisonnement repliable et appels d'outils en lignes ✓/✗ + durée.
 - **Réglages** (vrai onglet) : thème (système/sombre/clair), GPU utilisé par les
   serveurs locaux (persisté dans `~/.config/jarvis/gpu.json`), taille de
   contexte (`--ctx-size`), liste des outils MCP, micro utilisé (arecord -L,
@@ -232,7 +233,8 @@ src/jarvis/
               #  classés par mode (LLM/TTS/STT) par heuristique de nom
   gtk/        # interface GTK4 / libadwaita (seule UI graphique) : app (fenêtre
               #  Adw : accueil micro, conversation, réglages), widgets (bulles,
-              #  reasoning repliable, outils), backend (boucle asyncio + queue
+              #  reasoning repliable, outils), markdown (rendu Markdown -> markup
+              #  Pango), backend (boucle asyncio + queue
               #  + sessions + statut serveur) -> `uv run jarvis-app`
   gtk/        # interface GTK4 / libadwaita (refonte UI) : app (fen\u00eatre Adw :
               #  accueil "Lancer", conversation, r\u00e9glages), widgets (bulles,
