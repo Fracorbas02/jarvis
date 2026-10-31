@@ -863,7 +863,11 @@ async def record_wav(seconds: float, voice_cfg: VoiceConfig,
 
     async def _stop_after(proc, secs: float):
         """Laisse tourner `secs`, puis arrête le process proprement (SIGTERM,
-        SIGKILL en dernier recours) et récupère sa sortie."""
+        SIGKILL en dernier recours) et récupère sa sortie.
+
+        Surveille la sortie en parallèle : si le binaire s'arrête de lui-même
+        (fin de fichier, erreur), on ne bloque PAS les `secs` complètes — un
+        enregistrement "6 s" ne doit pas produire un WAV de 0,05 s."""
         try:
             return await asyncio.wait_for(proc.communicate(), timeout=secs)
         except TimeoutError:
@@ -881,9 +885,16 @@ async def record_wav(seconds: float, voice_cfg: VoiceConfig,
         # "-" en dernier élément = sortie stdout du binaire (arecord/ffmpeg) :
         # on le GARDE (ffmpeg exige une sortie explicite, "At least one output
         # file must be specified" sinon).
+        # -t <seconds> pour ffmpeg : il s'arrête de lui-même à la durée voulue
+        # (sinon on le tue au bout de `seconds` et on perd le buffer interne :
+        # c'est ce qui produisait des WAV de 0,05 s)
+        if cmd[0] == "ffmpeg" or binary == "ffmpeg":
+            argv = [a for a in argv]
+            if "-t" not in argv:
+                argv += ["-t", str(seconds)]
         proc = await asyncio.create_subprocess_exec(
             *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        pcm, err = await _stop_after(proc, seconds)
+        pcm, err = await _stop_after(proc, seconds + 10.0)  # marge : laisse ffmpeg finir seul
         # arecord/ffmpeg coupés par SIGTERM renvoient un code non nul : ce n'est
         # pas une erreur tant qu'on a du PCM exploitable.
         if not pcm:
