@@ -47,8 +47,13 @@ CLI et les interfaces les lancent automatiquement avec le GGUF choisi :
 whisper-server --host 127.0.0.1 --port 8178 -m ~/models/stt/Q4_K_M.gguf -ngl 99
 
 # STT alternatif : llama-server + modèle audio llama.cpp (ex. Voxtral Mini
-# 4B Realtime), sert POST /v1/audio/transcriptions (OpenAI-compatible)
-llama-server -m ~/models/stt/Q4_K_M.gguf   --host 127.0.0.1 --port 8178 -ngl 99 --jinja --ctx-size 8192
+# 4B Realtime), sert POST /v1/audio/transcriptions (OpenAI-compatible).
+# Nécessite llama.cpp >= b11675 (architecture voxtral_realtime, livrée dans
+# la release v0.8.0) : un build plus ancien échoue au chargement avec
+# « unknown model architecture: 'voxtral_realtime' » (l'app remonte cette
+# erreur dans le statut du serveur STT).
+llama-server -m ~/models/stt/Q4_K_M.gguf \
+  --host 127.0.0.1 --port 8178 -ngl 99 --jinja --ctx-size 8192
 ```
 
 Le protocole STT se choisit dans `config.toml` (`[voice.stt] protocol =

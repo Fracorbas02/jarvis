@@ -85,6 +85,46 @@ def resolve_model_path(model: str | Path, models_root: Path | None = None) -> Pa
 _procs: dict[str, subprocess.Popen] = {}
 
 
+# Erreurs de chargement d'un GGUF par un binaire trop vieux : on les remonte
+# telles quelles dans le statut (au lieu du seul « mort (code N) »).
+_MODEL_LOAD_ERRORS = (
+    "unknown model architecture",
+    "failed to load model",
+    "error loading model",
+    "unsupported model",
+    "unknown architecture",
+)
+
+
+def _tail_log(log_path: Path, max_bytes: int = 4000) -> str:
+    """Derniers octets d'un log de serveur voix (décodé best-effort)."""
+    try:
+        with open(log_path, "rb") as fh:
+            fh.seek(0, 2)
+            size = fh.tell()
+            fh.seek(max(0, size - max_bytes))
+            return fh.read().decode(errors="replace").strip()
+    except OSError:
+        return ""
+
+
+def _load_error_detail(log_path: Path) -> str:
+    """Extrait la ligne d'erreur de chargement la plus parlante du log, ou "".
+
+    Ex. « 0.00.219 E llama_model_load: error loading model: unknown model
+    architecture: 'voxtral_realtime' » -> « error loading model: unknown model
+    architecture: 'voxtral_realtime' » (on coupe le timestamp/préfixe de log).
+    """
+    tail = _tail_log(log_path)
+    for line in reversed(tail.splitlines()):
+        low = line.lower()
+        hits = [(low.find(err), err) for err in _MODEL_LOAD_ERRORS if err in low]
+        if hits:
+            start = min(h[0] for h in hits)
+            return line[start:start + 300].strip()
+    return ""
+
+
 def _log_path(name: str) -> Path:
     log_dir = Path(os.environ.get("JARVIS_LOG_DIR", Path.home() / ".cache" / "jarvis"))
     return log_dir / f"voice-{name}.log"
@@ -192,8 +232,12 @@ async def start_voice_server(name: str, vcfg: VoiceServerConfig,
     while asyncio.get_running_loop().time() < deadline:
         if proc.poll() is not None:
             _procs.pop(name, None)
-            return VoiceServerStatus(name, "offline", host, port,
-                                     detail=f"{vcfg.binary} mort (code {proc.returncode}), voir {log_path}")
+            detail = f"{vcfg.binary} mort (code {proc.returncode})"
+            load_err = _load_error_detail(log_path)
+            if load_err:
+                detail += f" : {load_err}"
+            detail += f", voir {log_path}"
+            return VoiceServerStatus(name, "offline", host, port, detail=detail)
         # /health répond ? -> prêt. (state "managed" seul ne suffit pas :
         # le proc peut être vivant mais le modèle pas encore chargé)
         st = await voice_server_status(name, vcfg, timeout=1.0)
@@ -204,8 +248,12 @@ async def start_voice_server(name: str, vcfg: VoiceServerConfig,
         # sans que /health l'ait vu : re-vérifie après chaque tour
         if proc.poll() is not None:
             _procs.pop(name, None)
-            return VoiceServerStatus(name, "offline", host, port,
-                                     detail=f"{vcfg.binary} mort (code {proc.returncode}), voir {log_path}")
+            detail = f"{vcfg.binary} mort (code {proc.returncode})"
+            load_err = _load_error_detail(log_path)
+            if load_err:
+                detail += f" : {load_err}"
+            detail += f", voir {log_path}"
+            return VoiceServerStatus(name, "offline", host, port, detail=detail)
     return VoiceServerStatus(name, "managed", host, port,
                              detail="démarrage en cours (chargement long)")
 

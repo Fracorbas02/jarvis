@@ -217,6 +217,50 @@ def test_load_config_protocol(tmp_path):
     assert cfg.voice.tts.protocol == "whisper"  # défaut inchangé
 
 
+def test_load_error_detail(tmp_path):
+    """_load_error_detail extrait l'erreur de chargement du log (ex. binaire
+    llama-server trop vieux pour l'architecture voxtral_realtime)."""
+    from jarvis.voice import _load_error_detail
+    log = tmp_path / "voice-stt.log"
+    log.write_text(
+        "0.00.160.343 I srv  llama_server: initializing ...\n"
+        "0.00.219.665 E llama_model_load: error loading model: "
+        "unknown model architecture: 'voxtral_realtime'\n"
+        "0.00.272.635 E srv  llama_server: exiting due to model loading error\n",
+        encoding="utf-8")
+    out = _load_error_detail(log)
+    assert "unknown model architecture: 'voxtral_realtime'" in out, out
+    # log sans erreur de chargement -> ""
+    log2 = tmp_path / "ok.log"
+    log2.write_text("0.00.1 I srv  all good\n", encoding="utf-8")
+    assert _load_error_detail(log2) == ""
+    assert _load_error_detail(tmp_path / "inexistant.log") == ""
+
+
+def test_start_voice_server_reports_load_error(tmp_path, monkeypatch):
+    """Un binaire qui meurt au chargement du modèle -> statut offline avec
+    l'erreur extraite du log (et non juste « mort (code N) »)."""
+    import asyncio
+    from jarvis.voice import start_voice_server
+    fake = tmp_path / "fake-server"
+    fake.write_text(
+        "#!/bin/sh\n"
+        "echo \"0.00.219 E llama_model_load: error loading model: "
+        "unknown model architecture: 'voxtral_realtime'\" >&2\n"
+        "exit 1\n",
+        encoding="utf-8")
+    fake.chmod(0o755)
+    model = tmp_path / "m.gguf"
+    model.write_bytes(b"GGUF")
+    monkeypatch.setenv("JARVIS_LOG_DIR", str(tmp_path))
+    vcfg = VoiceServerConfig(binary=str(fake), base_url="http://127.0.0.1:59997",
+                             model=str(model), ready_timeout=5.0)
+    st = asyncio.run(start_voice_server("stt", vcfg))
+    assert st.state == "offline", st
+    assert "mort (code 1)" in st.detail, st.detail
+    assert "unknown model architecture: 'voxtral_realtime'" in st.detail, st.detail
+
+
 def test_voice_config_defaults():
     cfg = VoiceConfig()
     assert cfg.stt.binary == "whisper-server"
@@ -240,6 +284,7 @@ if __name__ == "__main__":
     test_voice_config_defaults()
     import tempfile
     test_load_config_protocol(Path(tempfile.mkdtemp()))
+    test_load_error_detail(Path(tempfile.mkdtemp()))
     print("OK")
 
 def test_gpu_choice_persistence(tmp_path, monkeypatch) -> None:

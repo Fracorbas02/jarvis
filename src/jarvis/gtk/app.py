@@ -340,8 +340,12 @@ class JarvisWindow(Adw.ApplicationWindow):
                   "offline": "hors ligne"}
         state_txt = labels.get(self._stt_state, self._stt_state)
         txt = f"{state_txt} — {event.get('host', '')}:{event.get('port', '')}"
-        if event.get("detail") and self._stt_state == "offline":
-            txt += f" ({event['detail']})"
+        detail = event.get("detail") or ""
+        if detail and self._stt_state == "offline":
+            txt += f" ({detail})"
+            if "unknown model architecture" in detail.lower():
+                txt += (" — llama-server trop ancien pour ce modèle : "
+                        "il faut llama.cpp >= b11675 (release v0.8.0)")
         self.stt_status_row.set_subtitle(txt)
         self.stt_cfg_row.set_subtitle(
             f"protocole {event.get('protocol', '?')} · binaire "
