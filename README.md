@@ -144,6 +144,19 @@ uv run jarvis-app                 # fenêtre native GTK4 (PyGObject + libadwaita
 uv run jarvis-app --config /chemin/config.toml
 ```
 
+> **Dépendances système (PAS installées par uv/pip)** : PyGObject (`gi`) vient du
+> système. Si `uv run jarvis-app` plante avec `ModuleNotFoundError: No module named 'gi'` :
+> ```sh
+> # Arch/Manjaro :  sudo pacman -S python-gobject gtk4 libadwaita
+> # Debian/Ubuntu :  sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1
+> # Fedora :        sudo dnf install python3-gobject gtk4 libadwaita
+> ```
+> Pour **refaire un `uv sync` propre** (une dep a sauté) : c'est le dossier
+> **`.venv`** qu'il faut supprimer, jamais `uv.lock` :
+> ```sh
+> rm -rf .venv && uv sync --frozen
+> ```
+
 UI native GTK4, qui ne touche à rien d'autre que la partie graphique
 (le cœur LLM + MCP + voix + sessions est réutilisé tel quel) :
 

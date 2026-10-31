@@ -16,8 +16,22 @@ from __future__ import annotations
 import argparse
 import logging
 import queue
+import sys
 
-import gi
+try:
+    import gi
+except ModuleNotFoundError:
+    # PyGObject est un binding SYSTEME : jamais installe par uv/pip.
+    # Installe-le via ton gestionnaire de paquets (voir README, section GTK4).
+    sys.stderr.write(
+        "erreur: module 'gi' (PyGObject) introuvable.\n"
+        "  Ce n'est PAS une dependance pip/uv : installe les paquets systeme GTK4 :\n"
+        "    Arch/Manjaro :  sudo pacman -S python-gobject gtk4 libadwaita\n"
+        "    Debian/Ubuntu:  sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1\n"
+        "    Fedora:         sudo dnf install python3-gobject gtk4 libadwaita\n"
+        "  puis relance: uv run jarvis-app\n"
+        "  (pour refaire un uv sync propre: rm -rf .venv && uv sync --frozen)\n")
+    raise SystemExit(2) from None
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
