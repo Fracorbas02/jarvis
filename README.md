@@ -186,6 +186,11 @@ UI native GTK4, qui ne touche à rien d'autre que la partie graphique
   d'enregistrement réel de 0,5 s qui déclenche la demande système GNOME ;
   le dialogue ne se remontre plus ensuite, flag `mic_permission_asked`
   dans `ui.json`).
+- **Notifications en cloche** : plus de toasts en bas de fenêtre — cloche dans
+  le header avec badge compteur, clic = popover listant les notifications +
+  « Tout effacer ».
+- **Barre d'usage du contexte en live** dans le header (`used/n_ctx` tokens,
+  LevelBar, via GET /slots à chaque poll de statut).
 - Popover de statut serveur (icône réseau) : en ligne / géré / hors ligne,
   modèle servi, usage réel du contexte (GET /slots), start/stop du serveur géré.
 

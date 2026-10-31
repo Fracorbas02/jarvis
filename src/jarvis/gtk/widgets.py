@@ -52,6 +52,16 @@ def _css() -> None:
     .jarvis-bubble { border-radius: 14px; }
     .jarvis-meta { font-size: 0.8em; color: alpha(@window_fg_color, 0.45); }
     .jarvis-home-title { font-size: 44px; font-weight: 700; }
+    .jarvis-notif-badge {
+        background-color: @error_color;
+        color: #ffffff;
+        border-radius: 10px;
+        font-size: 0.75em;
+        font-weight: 700;
+        padding: 1px 5px;
+        min-width: 16px;
+    }
+    .jarvis-ctx-bar { min-height: 6px; }
     .jarvis-md-quote { border-left: 3px solid alpha(@accent_bg_color, 0.7);
                         padding-left: 8px; color: alpha(@window_fg_color, 0.75); }
     .jarvis-md-code { background-color: #0a0c10; border-radius: 6px; }
