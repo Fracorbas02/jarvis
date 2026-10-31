@@ -65,7 +65,8 @@ def main() -> int:
         assert hasattr(gtk_widgets.MessageBox, "set_markdown")
         assert hasattr(gtk_widgets.MessageBox, "append_text")
         import jarvis.gtk.markdown as gtk_md
-        assert callable(gtk_md.to_pango) and callable(gtk_md.parse_markdown)
+        assert callable(gtk_md.to_pango) and callable(gtk_md.parse_blocks)
+        assert callable(gtk_md.inline_to_pango) and callable(gtk_md.sanitize_pango)
 
         # main() parse --config sans lancer la boucle GTK
         captured = {}

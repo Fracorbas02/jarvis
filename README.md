@@ -151,8 +151,10 @@ UI native GTK4, qui ne touche à rien d'autre que la partie graphique
   **menu (Ctrl+P)**, avec les conversations (Ctrl+O) et la lecture TTS.
 - **Conversation** : centrée sur l'échange — barre du bas avec micro (STT
   local : record → transcribe → tour LLM) + champ texte + envoyer ; réponses
-  en streaming **rendues en Markdown** (titres, **gras**, *italique*, `code`,
-  listes, blocs ``` — markup Pango, re-rendu à chaque fragment), avec
+  en streaming **rendues en Markdown complet** (CommonMark + GFM : titres,
+  **gras**/*italique*/`code`/~~barré~~, liens cliquables, images, listes
+  puces/numérotées/tâches, citations, tableaux, blocs ```, footnotes,
+  séparateurs — widgets GTK natifs, re-rendu à chaque fragment), avec
   raisonnement repliable et appels d'outils en lignes ✓/✗ + durée.
 - **Réglages** (vrai onglet) : thème (système/sombre/clair), GPU utilisé par les
   serveurs locaux (persisté dans `~/.config/jarvis/gpu.json`), taille de
@@ -271,8 +273,8 @@ src/jarvis/
               #  classés par mode (LLM/TTS/STT) par heuristique de nom
   gtk/        # interface GTK4 / libadwaita (seule UI graphique) : app (fenêtre
               #  Adw : accueil micro, conversation, réglages), widgets (bulles,
-              #  reasoning repliable, outils), markdown (rendu Markdown -> markup
-              #  Pango), backend (boucle asyncio + queue
+              #  reasoning repliable, outils), markdown (parseur CommonMark+GFM
+              #  -> widgets GTK), backend (boucle asyncio + queue
               #  + sessions + statut serveur) -> `uv run jarvis-app`
 mcp_servers/  # nettools (ping/dig/traceroute/whois/ss/ip/TLS/HTTP),
               #  sysinfo (disques/mémoire/GPU/processus/journalctl),
