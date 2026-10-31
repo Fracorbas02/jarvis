@@ -95,5 +95,58 @@ command = ["uv", "run", "python", "mcp_servers/memory.py"]
 # Faits persistants dans ~/.cache/jarvis/memory.md
 # (surchargeable: export JARVIS_MEMORY_FILE=/chemin/memoire.md)
 
+[mcp.servers.notes]
+command = ["uv", "run", "python", "mcp_servers/notes.py"]
+# Notes par sujet dans ~/.cache/jarvis/notes/<sujet>.md
+# (surchargeable: export JARVIS_NOTES_DIR=/chemin/notes)
+
+[mcp.servers.textutils]
+command = ["uv", "run", "python", "mcp_servers/textutils.py"]
+
+# --- Veille sécurité (API publiques) ---
+
+[mcp.servers.kev]
+command = ["uv", "run", "python", "mcp_servers/kev.py"]
+# Catalogue CISA KEV (exploitées activement), sans clé.
+
+[mcp.servers.epss]
+command = ["uv", "run", "python", "mcp_servers/epss.py"]
+# Score EPSS (FIRST), sans clé (~300 req/min).
+# Token optionnel pour plus de débit: export FIRST_API_KEY=...
+
+[mcp.servers.ghsa]
+command = ["uv", "run", "python", "mcp_servers/ghsa.py"]
+# Advisories GitHub (REST public). Sans token: 60 req/h.
+# Token optionnel (5000 req/h): export GITHUB_TOKEN=ghp_...
+
+[mcp.servers.exploitdb]
+command = ["uv", "run", "python", "mcp_servers/exploitdb.py"]
+# searchsploit local si installé, sinon API exploit-db.com. Lecture seule.
+
+# --- Réseau avancé / système ---
+
+[mcp.servers.scan]
+command = ["uv", "run", "python", "mcp_servers/scan.py"]
+# nmap -sT limité au LAN/localhost sauf allow_public=True explicite.
+
+[mcp.servers.snmp]
+command = ["uv", "run", "python", "mcp_servers/snmp.py"]
+# net-snmp, GET/WALK uniquement. Communauté: paramètre ou JARVIS_SNMP_COMMUNITY.
+
+[mcp.servers.lan]
+command = ["uv", "run", "python", "mcp_servers/lan.py"]
+
+[mcp.servers.docker]
+command = ["uv", "run", "python", "mcp_servers/docker.py"]
+# Lecture seule: ps/stats/logs/images/inspect/system df.
+
+# --- Web ---
+
+[mcp.servers.fetch]
+command = ["uv", "run", "python", "mcp_servers/fetch.py"]
+
+[mcp.servers.rss]
+command = ["uv", "run", "python", "mcp_servers/rss.py"]
+
 [mcp.servers.echo]
 command = ["uv", "run", "python", "mcp_servers/echo.py"]
