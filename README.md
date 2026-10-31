@@ -145,17 +145,21 @@ uv run jarvis-app --config /chemin/config.toml
 ```
 
 > **Dépendances système (PAS installées par uv/pip)** : PyGObject (`gi`) vient du
-> système. Si `uv run jarvis-app` plante avec `ModuleNotFoundError: No module named 'gi'` :
+> système, et le venv uv utilise son propre Python isolé qui ne voit pas les
+> site-packages système. Si `uv run jarvis-app` plante avec
+> `ModuleNotFoundError: No module named 'gi'` :
 > ```sh
-> # Arch/Manjaro :  sudo pacman -S python-gobject gtk4 libadwaita
-> # Debian/Ubuntu :  sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1
-> # Fedora :        sudo dnf install python3-gobject gtk4 libadwaita
+> # 1) paquet système (une fois) :
+> #    Arch/Manjaro :  sudo pacman -S python-gobject gtk4 libadwaita
+> #    Debian/Ubuntu:  sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1
+> #    Fedora :        sudo dnf install python3-gobject gtk4 libadwaita
+> # 2) venv sur le Python système AVEC site-packages système (sinon gi reste invisible) :
+> rm -rf .venv
+> uv venv --system-site-packages --python /usr/bin/python3
+> uv sync --frozen
 > ```
 > Pour **refaire un `uv sync` propre** (une dep a sauté) : c'est le dossier
-> **`.venv`** qu'il faut supprimer, jamais `uv.lock` :
-> ```sh
-> rm -rf .venv && uv sync --frozen
-> ```
+> **`.venv`** qu'il faut supprimer, jamais `uv.lock` (voir ci-dessus).
 
 UI native GTK4, qui ne touche à rien d'autre que la partie graphique
 (le cœur LLM + MCP + voix + sessions est réutilisé tel quel) :

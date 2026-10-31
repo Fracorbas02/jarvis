@@ -25,12 +25,18 @@ except ModuleNotFoundError:
     # Installe-le via ton gestionnaire de paquets (voir README, section GTK4).
     sys.stderr.write(
         "erreur: module 'gi' (PyGObject) introuvable.\n"
-        "  Ce n'est PAS une dependance pip/uv : installe les paquets systeme GTK4 :\n"
-        "    Arch/Manjaro :  sudo pacman -S python-gobject gtk4 libadwaita\n"
-        "    Debian/Ubuntu:  sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1\n"
-        "    Fedora:         sudo dnf install python3-gobject gtk4 libadwaita\n"
-        "  puis relance: uv run jarvis-app\n"
-        "  (pour refaire un uv sync propre: rm -rf .venv && uv sync --frozen)\n")
+        "  gi est un paquet SYSTEME (jamais installe par uv/pip) ET le venv uv\n"
+        "  utilise son propre Python isole : il ne voit pas les site-packages\n"
+        "  systeme. Deux etapes :\n"
+        "    1) paquet systeme (une fois) :\n"
+        "         Arch/Manjaro :  sudo pacman -S python-gobject gtk4 libadwaita\n"
+        "         Debian/Ubuntu:  sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1\n"
+        "         Fedora:         sudo dnf install python3-gobject gtk4 libadwaita\n"
+        "    2) recreer le venv sur le Python systeme AVEC les site-packages systeme :\n"
+        "         rm -rf .venv\n"
+        "         uv venv --system-site-packages --python /usr/bin/python3\n"
+        "         uv sync --frozen\n"
+        "  puis relance: uv run jarvis-app\n")
     raise SystemExit(2) from None
 
 gi.require_version("Gtk", "4.0")
