@@ -40,6 +40,24 @@ model = "~/models/tts/voxtral-4b-tts-q4_k.gguf"
 # device = "Vulkan0"                            # nom ggml pour --device (répartition multi-GPU, sinon choix global Réglages)
 # env = { "CUDA_VISIBLE_DEVICES" = "1" }
 
+# TTS via l'API Mistral (Voxtral) au lieu du serveur local llama-server.
+# Utilisé quand "Lire les réponses à voix haute" est activé dans l'app :
+# si enabled=true et qu'une clé est enregistrée (Réglages > Voix API,
+# ou export MISTRAL_API_KEY), les réponses passent par l'API Mistral ;
+# sinon on retombe sur le serveur TTS local ci-dessus.
+#   POST {base_url}/v1/audio/speech  {"model", "input", "voice_id", "response_format"}
+#   GET  {base_url}/v1/audio/voices   (liste des voix preset + workspace)
+# Modèles : voxtral-mini-tts-2603 (rapide, recommandé), voxtral-tts-2603 (qualité max).
+# Voix preset : voice_592 (Marie, FR), voice_3137 (Manon, FR), gb_jane_neutral (EN-GB),
+# en_paul_neutral (EN-US), voice_481 (Heidi, DE)... ou une voix clonée de ton workspace.
+# La clé API n'est PAS dans ce fichier : ~/.config/jarvis/mistral.json (chmod 600).
+# [voice.tts_api]
+# enabled = true
+# base_url = "https://api.mistral.ai"
+# model = "voxtral-mini-tts-2603"
+# voice_id = "voice_592"          # Marie, français
+# response_format = "mp3"         # mp3 | wav | pcm | flac | opus
+
 # Enregistrement micro (CLI) et lecture des WAV produits.
 # "-" en dernier élément de record_cmd = chemin du WAV temporaire concaténé.
 # [voice]
