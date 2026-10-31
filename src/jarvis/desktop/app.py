@@ -36,11 +36,10 @@ class DesktopApp:
         self.ctrl = DesktopController(config_path)
 
         # Fenêtre redimensionnable ; la sidebar est sur un sash déplaçable.
-        # PanedWindow = Tk brut : ses dimensions (sashwidth, width, minsize) sont
-        # en unités LOGIQUES (sous Wayland scale 2, 1 unité = 2 px physiques),
-        # donc on ne multiplie PAS par scale ici (CTk le fait déjà pour ses widgets).
+        # XWayland non scalé : Tk en pixels physiques, on scale donc aussi les
+        # dimensions du PanedWindow brut (comme CTk le fait pour ses widgets).
         root.resizable(True, True)
-        sash = max(3, round(6))
+        sash = max(3, round(6 * scale))
         self.pw = tk.PanedWindow(root, orient="horizontal", bg=BG, bd=0,
                                  sashwidth=sash, sashpad=0, opaqueresize=True,
                                  handlepad=0)
@@ -49,10 +48,11 @@ class DesktopApp:
         self.sidebar = Sidebar(self.pw, self.ctrl,
                                on_mode_change=self.show_mode,
                                on_reset=self.on_reset)
-        self.pw.add(self.sidebar, width=SIDEBAR_W, minsize=SIDEBAR_MIN)
+        self.pw.add(self.sidebar, width=int(SIDEBAR_W * scale),
+                    minsize=int(SIDEBAR_MIN * scale))
 
         self.main = ctk.CTkFrame(self.pw, fg_color=BG, corner_radius=0)
-        self.pw.add(self.main, minsize=MAIN_MIN)
+        self.pw.add(self.main, minsize=int(MAIN_MIN * scale))
         self.main.grid_rowconfigure(0, weight=1)
         self.main.grid_columnconfigure(0, weight=1)
 

@@ -162,32 +162,6 @@ def adaptive_minsize() -> tuple[int, int]:
     return 880, 560
 
 
-def _scaled_geometry(root: _Root, scale: float) -> str:
-    """Géométrie adaptative exprimée en unités LOGIQUES (Tk sous Wayland scale 2
-    prend des coordonnées en pixels logiques = physiques / scale) : la fenêtre
-    fera bien 62 % x 68 % de l'écran logique affiché."""
-    sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
-    g = adaptive_geometry(root)
-    w, rest = g.split("x", 1)
-    hh, xy = rest.split("+", 1)
-    x, y = xy.split("+", 1)
-    return (f"{max(round(int(w) / scale), round(adaptive_minsize()[0] / scale))}x"
-            f"{max(round(int(hh) / scale), round(adaptive_minsize()[1] / scale))}+"
-            f"{round(int(x) / scale)}+{round(int(y) / scale)}")
-
-
-def set_font_scaling(scale: float) -> None:
-    """Scale UNIQUEMENT les polices CTk (pas les dimensions de widgets).
-
-    set_widget_scaling(scale) scale aussi les dimensions (pixels) des widgets,
-    ce qui double la taille de la fenêtre sous Wayland scale 2 (Tk travaille
-    en unités logiques, XWayland multiplie par 2 → fenêtre 2x trop grande).
-    set_font_scaling ne touche qu'aux CTkFont : les polices suivent l'échelle
-    de l'OS, la géométrie reste en unités logiques."""
-    import customtkinter as ctk
-    ctk.set_font_scaling(scale)
-
-
 def setup_window(root, scale: float) -> None:
     """Applique le scaling puis configure la fenêtre (géométrie adaptative,
     redimensionnable).
@@ -200,12 +174,13 @@ def setup_window(root, scale: float) -> None:
     """
     import customtkinter as ctk
 
-    # Polices seules scalées (set_font_scaling) : set_widget_scaling(scale)
-    # doublerait aussi les dimensions sous Wayland (fenêtre 2x trop grande).
-    ctk.set_font_scaling(scale)
-    ctk.set_window_scaling(1.0)
+    # XWayland non scalé (Xft.dpi=192 sous GNOME scale 2) : Tk travaille en
+    # pixels PHYSIQUES (winfo_screenwidth = 2880). set_widget_scaling(scale)
+    # scale dimensions ET polices des widgets (font 22 -> -44px), la géométrie
+    # reste en pixels physiques -> fenêtre = 62 % de l'écran, texte à l'échelle OS.
+    ctk.set_widget_scaling(scale)
+    ctk.set_window_scaling(scale)
     root.maxsize(root.winfo_screenwidth(), root.winfo_screenheight())
-    root.minsize(round(adaptive_minsize()[0] / scale),
-                  round(adaptive_minsize()[1] / scale))
-    root.geometry(_scaled_geometry(root, scale))
+    root.minsize(*adaptive_minsize())
+    root.geometry(adaptive_geometry(root))
     root.resizable(True, True)
