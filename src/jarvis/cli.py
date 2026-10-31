@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
 import sys
 from pathlib import Path
 
@@ -36,13 +37,19 @@ HELP = """\
 
 
 def _make_console() -> Console:
-    """Console rich avec couleurs forcées en vrai terminal (sauf NO_COLOR).
+    """Console rich : couleurs forcées en vrai terminal (sauf NO_COLOR).
 
-    Sans ça, rich se fie à TERM : avec TERM=dumb (certains émulateurs ou
-    lancements via IDE), tout sortirait sans couleur.
+    Nettoie os.environ (lu par défaut par rich) : COLUMNS/LINES figeraient la
+    largeur, et TERM=dumb ferait retomber rich sur 80x25 au lieu de lire la
+    taille réelle du tty. La taille des panneaux live est de toute façon
+    relue par ioctl à chaque rendu (tui._LiveRegion.tty_width).
     """
     if os.environ.get("NO_COLOR"):
         return Console(no_color=True)
+    os.environ.pop("COLUMNS", None)
+    os.environ.pop("LINES", None)
+    if os.environ.get("TERM", "") == "dumb":
+        os.environ["TERM"] = "xterm-256color"
     if sys.stdout.isatty():
         return Console(force_terminal=True, color_system="truecolor")
     return Console()
@@ -106,6 +113,11 @@ async def amain() -> int:
     console = _make_console()
     _banner(console, cfg, tools)
     display = Display(console)
+    loop = asyncio.get_running_loop()
+    try:
+        loop.add_signal_handler(signal.SIGWINCH, display.on_resize)
+    except (NotImplementedError, AttributeError):
+        pass  # Windows / pas de signaux : le repaint suivra au prochain token
     history: list[dict] = []
     verbose = False
     try:

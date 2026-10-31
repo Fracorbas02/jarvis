@@ -19,6 +19,7 @@ la sortie, pratique pour les logs.
 from __future__ import annotations
 
 import json
+import os
 import time
 from dataclasses import dataclass
 
@@ -64,13 +65,25 @@ class _LiveRegion:
     def __init__(self, console: Console):
         self.console = console
         self.height = 0
+        self._last = None  # dernier renderable, pour repaint sur SIGWINCH
+
+    def tty_width(self) -> int:
+        """Largeur réelle du terminal (ioctl), pas le fallback rich (80 si TERM=dumb)."""
+        try:
+            return os.get_terminal_size(self.console.file.fileno()).columns
+        except (OSError, ValueError):
+            return self.console.width
 
     def _render_lines(self, renderable) -> list[str]:
-        options = self.console.options
+        # max_width = width - 1 : une ligne faisant exactement la largeur du
+        # terminal mettrait son dernier caractere en "pending wrap" — le
+        # terminal le renverrait a la ligne suivante (bordure droite perdue).
+        options = self.console.options.update(max_width=max(1, self.tty_width() - 1))
         return ["".join(seg.text for seg in line)
                 for line in self.console.render_lines(renderable, options)]
 
     def repaint(self, renderable) -> None:
+        self._last = renderable
         lines = self._render_lines(renderable)
         f = self.console.file
         if self.height and self.console.is_terminal:
@@ -237,6 +250,13 @@ class Display:
         self.content_started = False
         self.last_tool_results = self.tool_results
         self.tool_results = []
+
+    # -- redimensionnement ------------------------------------------------------
+    def on_resize(self) -> None:
+        """Re-rend les zones live actives avec la nouvelle taille (SIGWINCH)."""
+        for region in (self._reasoning, self._content, self._tool):
+            if region.height and region._last is not None:
+                region.repaint(region._last)
 
     # -- consultation ----------------------------------------------------------
     def show_reasoning(self) -> None:
