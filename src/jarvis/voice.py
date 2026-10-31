@@ -742,14 +742,16 @@ async def ensure_voice_server(name: str, vcfg: VoiceServerConfig,
 
 
 async def transcribe_file(voice_cfg: VoiceConfig, wav_path: str | Path,
-                          language: str | None = "fr") -> str:
-    """Transcription d'un fichier audio via le serveur STT (démarré si besoin)."""
+                          language: str | None = "fr", on_status=None) -> str:
+    """Transcription d'un fichier audio via le serveur STT (démarré si besoin).
+    Toute la cascade (batch -> chat multimodal -> WS /v1/realtime) est dans
+    STTClient.transcribe ; on_status relaie les phases ("transcription en cours…")."""
     st = await ensure_voice_server("stt", voice_cfg.stt)
     if st.state == "offline":
         raise VoiceError(f"serveur STT indisponible : {st.detail}")
     client = STTClient(voice_cfg.stt.base_url, protocol=voice_cfg.stt.protocol)
     try:
-        return await client.transcribe(wav_path, language=language)
+        return await client.transcribe(wav_path, language=language, on_status=on_status)
     finally:
         await client.aclose()
 
@@ -772,15 +774,16 @@ async def transcribe_vad(voice_cfg: VoiceConfig, device: str | None = None,
                 "arecord", "-q", "-t", "raw", "-D", device,
                 "-f", "S16_LE", "-r", "16000", "-c", "1", "-"])
     if on_status:
-        on_status("recording")
-    path = await record_wav_vad(vcfg, max_seconds=max_seconds, on_chunk=on_chunk)
+        on_status("parle")
+    path = await record_wav_vad(vcfg, max_seconds=max_seconds, on_chunk=on_chunk,
+                                on_status=on_status)
     rms = _pcm_rms(path.read_bytes()[44:])  # saute le header WAV
     st = await ensure_voice_server("stt", voice_cfg.stt)
     if st.state == "offline":
         raise VoiceError(f"serveur STT indisponible : {st.detail}")
     client = STTClient(voice_cfg.stt.base_url, protocol=voice_cfg.stt.protocol)
     try:
-        text = await client.transcribe(path, language=language)
+        text = await client.transcribe(path, language=language, on_status=on_status)
     finally:
         await client.aclose()
     if on_status:

@@ -408,9 +408,11 @@ async def _cmd_stt(cfg, console, args: str) -> None:
     """/stt [fichier.wav] : transcription ; sans argument, enregistre 5 s de micro."""
     path = Path(args.strip()).expanduser() if args.strip() else None
     if path is None:
+        def _phase(msg: str) -> None:
+            console.print(f"[dim]{msg}[/]")
         console.print("[dim]enregistrement depuis le micro, jusqu'à la fin de parole (VAD)…[/]")
         try:
-            path = await record_wav_vad(cfg.voice, max_seconds=60.0)
+            path = await record_wav_vad(cfg.voice, max_seconds=60.0, on_status=_phase)
         except VoiceError as exc:
             console.print(f"[bold red]erreur enregistrement:[/] {exc}")
             return
@@ -419,6 +421,7 @@ async def _cmd_stt(cfg, console, args: str) -> None:
         console.print(f"[bold red]erreur:[/] fichier introuvable : {path}")
         return
     try:
+        console.print("[dim]transcription en cours…[/]")
         text = await transcribe_file(cfg.voice, path, language="fr")
     except VoiceError as exc:
         console.print(f"[bold red]erreur STT:[/] {exc}")
