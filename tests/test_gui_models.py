@@ -35,12 +35,17 @@ def test_discover_models_tmp(tmp_path=None):
         sub.mkdir()
         (sub / "ggml-base.en.gguf").write_bytes(b"x" * 1024)
         (root / "kokoro.onnx.gguf").write_bytes(b"x" * 512)
+        # répertoires dédiés stt/ et tts/ (noms de fichiers opaques)
+        (root / "stt").mkdir()
+        (root / "stt" / "Q4_K_M.gguf").write_bytes(b"x" * 256)
+        (root / "tts").mkdir()
+        (root / "tts" / "voxtral-4b-tts-q4_k.gguf").write_bytes(b"x" * 128)
         # un doublon via un sous-répertoire ne doit apparaître qu'une fois
         found = discover_models(extra_dirs=[root], use_defaults=False)
         assert [m.name for m in found["llm"]] == ["Qwen3.6-Q4.gguf"]
         assert found["llm"][0].size_bytes == 2048
-        assert [m.name for m in found["stt"]] == ["ggml-base.en.gguf"]
-        assert [m.name for m in found["tts"]] == ["kokoro.onnx.gguf"]
+        assert [m.name for m in found["stt"]] == ["ggml-base.en.gguf", "Q4_K_M.gguf"]
+        assert [m.name for m in found["tts"]] == ["kokoro.onnx.gguf", "voxtral-4b-tts-q4_k.gguf"]
 
 
 def test_discover_models_real_dirs():

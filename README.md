@@ -1,16 +1,16 @@
 # Jarvis — app pilote
 
-Assistant local : LLM auto-hébergé (llama.cpp/Vulkan) + outils exposés via MCP.
-La voix (STT local, TTS) arrive en toute dernière phase ; ce dépôt est d'abord
-le harnais agentique.
+Assistant local : LLM auto-hébergé (llama.cpp/Vulkan) + outils exposés via MCP
++ voix locale (STT whisper.cpp, TTS llama.cpp avec Voxtral 4B TTS).
 
 ## Phases
 
-1. **Boucle agent CLI** (ce squelette) : chat REPL + tool calling sur MCP, LLM via
+1. **Boucle agent CLI** : chat REPL + tool calling sur MCP, LLM via
    `llama-server` (API OpenAI-compatible).
 2. **Outils** : MCP servers dédiés (diag réseau, CVE, exec shell restreint...).
-3. **Voix** : micro permanent (VAD → STT local → agent), TTS via l'API Voxtral.
-   Barge-in/full-duplex : évaluer Pipecat à ce moment-là, pas avant.
+3. **Voix** : STT local (whisper.cpp) + TTS local (llama-server + modèle de
+   synthèse, ex. Voxtral 4B TTS) — voir « Voix locale » ci-dessous.
+   Barge-in/full-duplex (micro permanent VAD → agent) : évaluer Pipecat, pas avant.
 
 ## Servir le LLM
 
@@ -35,6 +35,40 @@ modèle tient côté GPU.
 
 Note : depuis llama.cpp v0.7.0 le port par défaut de `llama-server` est 9931,
 et `-fa` requiert une valeur explicite (`on|off|auto`).
+
+## Voix locale (STT + TTS)
+
+Deux serveurs indépendants du llama-server principal, configurés dans
+`config.toml` (`[voice.stt]` / `[voice.tts]`) ; s'ils ne répondent pas, le
+CLI et les interfaces les lancent automatiquement avec le GGUF choisi :
+
+```sh
+# STT : whisper.cpp (ggml), sert POST /inference
+whisper-server --host 127.0.0.1 --port 8178 -m ~/models/stt/Q4_K_M.gguf -ngl 99
+
+# TTS : llama-server avec un modèle de synthèse, sert POST /v1/audio/speech
+# (et POST /tts sur les builds récents)
+llama-server -m ~/models/tts/voxtral-4b-tts-q4_k.gguf \
+  --host 127.0.0.1 --port 9932 -ngl 99 --jinja -fa on
+```
+
+La découverte des modèles classe un GGUF en STT/TTS si son **répertoire
+parent** s'appelle `stt/` ou `tts/` (ex. `~/models/stt/Q4_K_M.gguf`),
+sinon par heuristique de nom (`whisper`/`ggml-` → STT,
+`voxtral`/`tts`/`piper`/… → TTS, reste → LLM).
+
+Commandes CLI :
+
+- `/tts <texte>` : synthétise en WAV (écrit dans `~/.cache/jarvis/`) et le joue ;
+- `/stt [fichier.wav]` : transcrit le fichier, ou enregistre 5 s de micro
+  (arecord, fallback ffmpeg) s'il n'y a pas d'argument ;
+- `/voice` : statut des deux serveurs voix.
+
+Dans la GUI web (`jarvis-gui`) et l'app desktop (`jarvis-app`), les panneaux
+TTS/STT ont leur propre statut + boutons démarrer/arrêter, la synthèse avec
+lecture dans le navigateur (web) / lecture du WAV (desktop), et la
+transcription par upload de fichier ou — web uniquement — enregistrement
+micro via `getUserMedia` (nécessite localhost/HTTPS).
 
 ## Installation et lancement
 
@@ -178,19 +212,23 @@ Boucle agent end-to-end contre un mock OpenAI-compatible + un MCP server d'echo.
 
 ```
 src/jarvis/
-  config.py   # chargement TOML
+  config.py   # chargement TOML (dont [voice.stt] / [voice.tts])
   llm.py      # client OpenAI-compatible (llama-server), streaming SSE + tools
+  voice.py    # voix locale : clients STT (whisper-server /inference) et TTS
+              #  (llama-server /v1/audio/speech + fallback /tts), gestion des
+              #  processus serveurs voix, record/play WAV (arecord/ffmpeg/ffplay)
   mcp.py      # agrégation d'MCP servers stdio -> schémas outils
   agent.py    # boucle tool-calling (streaming activable, hooks d'affichage)
   tui.py      # couche d'affichage rich : panneau thinking repliable, réponse
               #  en Markdown (live), statut des outils, /thinking et /tool N
-  cli.py      # REPL (bannière, prompt, commandes /help /tools /verbose ...)
+  cli.py      # REPL (bannière, prompt, /help /tools /verbose /tts /stt /voice ...)
   gui/        # interface web locale (NiceGUI) : app, sidebar, chat_view,
-              #  voice_views, models (découverte), server (statut llama-server),
+              #  voice_views (TTS/STT fonctionnels), models (découverte),
+              #  server (statut llama-server),
               #  backend (pont agent + streaming) -> `uv run jarvis-gui`
   desktop/    # application desktop (customtkinter) : app, sidebar, chat_panel,
-              #  voice_panel, controller (boucle asyncio + queue vers Tk)
-              #  -> `uv run jarvis-app`
+              #  voice_panel (TTS/STT fonctionnels), controller (boucle asyncio
+              #  + queue vers Tk, appels voix inclus) -> `uv run jarvis-app`
 mcp_servers/  # nettools (ping/dig/traceroute), cve (NVD 2.0 : détail CVE,
               #  recherche par mots-clés + fenêtre de jours, veille), echo (test)
 bench/       # mesure tok/s / TTFT

@@ -40,6 +40,8 @@ from .llm import LLMClient
 from .mcp import McpToolProvider
 from .sessions import SessionStore
 from .tui import Display
+from .voice import (VoiceError, play_wav, record_wav, stop_all_voice_servers,
+                    synthesize, transcribe_file, voice_server_status)
 
 HELP = """\
 [bold]commandes[/]
@@ -58,11 +60,14 @@ HELP = """\
                    (le modèle peut aussi appeler l'outil jarvis__compact seul)
   /reset           efface l'historique de conversation
   /verbose         bascule les logs console en DEBUG (fichier: ~/.cache/jarvis/jarvis.log)
+  /tts <texte>     synthétise le texte en WAV (serveur TTS local, démarré si besoin)
+  /stt [fichier]   transcrit un WAV ; sans argument, enregistre 5 s de micro d'abord
+  /voice           statut des serveurs voix (STT whisper-server, TTS llama-server)
   /quit            quitte (ou Ctrl+D)"""
 
 COMMANDS = ["/help", "/tools", "/thinking", "/tool", "/history", "/undo",
             "/copy", "/save", "/sessions", "/load", "/new", "/compact",
-            "/reset", "/verbose", "/quit"]
+            "/reset", "/verbose", "/tts", "/stt", "/voice", "/quit"]
 
 
 def _state_dir() -> Path:
@@ -328,6 +333,63 @@ def _export_markdown(history: list[dict], path: Path) -> int:
     return n
 
 
+async def _voice_status_lines(cfg) -> list[str]:
+    """Lignes de statut des deux serveurs voix (STT / TTS)."""
+    lines = []
+    for name, vcfg in (("stt", cfg.voice.stt), ("tts", cfg.voice.tts)):
+        st = await voice_server_status(name, vcfg)
+        label = "STT whisper-server" if name == "stt" else "TTS llama-server"
+        lines.append(f"[dim]{label}[/] {st.host}:{st.port} — "
+                     f"{'en ligne' if st.state == 'online' else 'géré par jarvis' if st.state == 'managed' else 'hors ligne'}"
+                     + (f" ({st.detail})" if st.detail and st.state == "offline" else ""))
+    return lines
+
+
+async def _cmd_tts(cfg, console, args: str) -> None:
+    """/tts <texte> : démarre le serveur TTS si besoin, synthétise, joue le WAV."""
+    text = args.strip()
+    if not text:
+        console.print("[dim]usage: /tts <texte à synthétiser>[/]")
+        return
+    try:
+        t0 = time.monotonic()
+        wav = await synthesize(cfg.voice, text, auto_start=True)
+    except VoiceError as exc:
+        console.print(f"[bold red]erreur TTS:[/] {exc}")
+        return
+    out = _state_dir() / f"tts-{datetime.now():%H%M%S}.wav"
+    out.write_bytes(wav)
+    console.print(f"[dim]WAV écrit : {out} ({len(wav) / 1024:.0f} Ko, "
+                  f"{time.monotonic() - t0:.1f}s)[/]")
+    try:
+        player = await play_wav(out, cfg.voice)
+        console.print(f"[dim]lecture via {player}[/]")
+    except VoiceError as exc:
+        console.print(f"[yellow]lecture impossible:[/] {exc}")
+
+
+async def _cmd_stt(cfg, console, args: str) -> None:
+    """/stt [fichier.wav] : transcription ; sans argument, enregistre 5 s de micro."""
+    path = Path(args.strip()).expanduser() if args.strip() else None
+    if path is None:
+        console.print("[dim]enregistrement 5 s depuis le micro…[/]")
+        try:
+            path = await record_wav(5.0, cfg.voice)
+        except VoiceError as exc:
+            console.print(f"[bold red]erreur enregistrement:[/] {exc}")
+            return
+        console.print(f"[dim]WAV enregistré : {path}[/]")
+    elif not path.is_file():
+        console.print(f"[bold red]erreur:[/] fichier introuvable : {path}")
+        return
+    try:
+        text = await transcribe_file(cfg.voice, path, language="fr")
+    except VoiceError as exc:
+        console.print(f"[bold red]erreur STT:[/] {exc}")
+        return
+    console.print(f"[bold cyan]transcription[/] : {text or '(vide)'}")
+
+
 async def amain() -> int:
     _setup_logging()
     try:
@@ -531,6 +593,17 @@ async def amain() -> int:
                     console.print(f"[dim]usage: /tool N "
                                   f"(1..{max(len(display.last_tool_results), 1)})[/]")
                 continue
+            if user.startswith("/tts"):
+                await _cmd_tts(cfg, console, user[len("/tts"):])
+                continue
+            if user.startswith("/stt"):
+                await _cmd_stt(cfg, console, user[len("/stt"):])
+                continue
+            if user == "/voice":
+                for line in await _voice_status_lines(cfg):
+                    console.print(line)
+                console.print("[dim]/tts <texte> pour synthétiser, /stt [wav] pour transcrire[/]")
+                continue
 
             snapshot = list(history)  # agent.turn mute history : on restaure si ça plante
             t0 = time.monotonic()
@@ -564,6 +637,7 @@ async def amain() -> int:
     finally:
         await tools.stop()
         await llm.aclose()
+        await stop_all_voice_servers(cfg.voice)
     return 0
 
 

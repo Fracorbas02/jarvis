@@ -18,13 +18,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import queue
+import tempfile
 import threading
 from pathlib import Path
 
 from ..gui import server as server_mod
 from ..gui.backend import GuiBackend
 from ..gui.models import discover_models
+from ..voice import (VoiceError, play_wav, record_wav, start_voice_server,
+                     stop_voice_server, synthesize, transcribe_bytes,
+                     voice_server_status)
 
 log = logging.getLogger("jarvis.desktop.controller")
 
@@ -128,3 +133,111 @@ class DesktopController:
         st = await server_mod.stop_server(self.backend.cfg.llm.base_url)
         self.events.put({"type": "server_stopped", "state": st.state, "host": st.host,
                          "port": st.port, "models": st.models, "detail": st.detail})
+
+    # ---------- voix (STT / TTS) ----------
+
+    def refresh_voice_status(self, mode: str) -> None:
+        if self.backend is None:
+            return
+        self._run(self._avoice_status(mode))
+
+    async def _avoice_status(self, mode: str) -> None:
+        vcfg = self.backend.cfg.voice
+        scfg = vcfg.stt if mode == "stt" else vcfg.tts
+        st = await voice_server_status(mode, scfg)
+        self.events.put({"type": "voice_status", "mode": mode, "state": st.state,
+                         "host": st.host, "port": st.port, "detail": st.detail})
+
+    def start_voice_server(self, mode: str, model_path: str | None = None) -> None:
+        if self.backend is None:
+            return
+        self._run(self._astart_voice(mode, model_path))
+
+    async def _astart_voice(self, mode: str, model_path: str | None) -> None:
+        vcfg = self.backend.cfg.voice
+        scfg = vcfg.stt if mode == "stt" else vcfg.tts
+        st = await start_voice_server(mode, scfg, model_path=model_path)
+        self.events.put({"type": "voice_status", "mode": mode, "state": st.state,
+                         "host": st.host, "port": st.port, "detail": st.detail})
+
+    def stop_voice_server(self, mode: str) -> None:
+        if self.backend is None:
+            return
+        self._run(self._astop_voice(mode))
+
+    async def _astop_voice(self, mode: str) -> None:
+        vcfg = self.backend.cfg.voice
+        scfg = vcfg.stt if mode == "stt" else vcfg.tts
+        st = await stop_voice_server(mode, scfg)
+        self.events.put({"type": "voice_status", "mode": mode, "state": st.state,
+                         "host": st.host, "port": st.port, "detail": st.detail})
+
+    def tts_synthesize(self, mode: str, text: str, voice: str | None) -> None:
+        if self.backend is None:
+            return
+        self._run(self._atts(mode, text, voice))
+
+    async def _atts(self, mode: str, text: str, voice: str | None) -> None:
+        vcfg = self.backend.cfg.voice
+        try:
+            wav = await synthesize(vcfg, text, voice=voice)
+            out = Path(tempfile.gettempdir()) / f"jarvis-tts-{os.getpid()}.wav"
+            out.write_bytes(wav)
+            self.events.put({"type": "tts_done", "path": str(out),
+                             "bytes": len(wav)})
+        except VoiceError as exc:
+            self.events.put({"type": "tts_error", "message": str(exc)})
+
+    def stt_transcribe_bytes(self, mode: str, data: bytes, filename: str) -> None:
+        if self.backend is None:
+            return
+        self._run(self._astt_bytes(mode, data, filename))
+
+    async def _astt_bytes(self, mode: str, data: bytes, filename: str) -> None:
+        vcfg = self.backend.cfg.voice
+        try:
+            text = await transcribe_bytes(vcfg, data, filename=filename)
+            self.events.put({"type": "stt_done", "text": text})
+        except VoiceError as exc:
+            self.events.put({"type": "stt_error", "message": str(exc)})
+
+    def stt_transcribe_file(self, path: str) -> None:
+        if self.backend is None:
+            return
+        self._run(self._astt_file(path))
+
+    async def _astt_file(self, path: str) -> None:
+        from ..voice import transcribe_file
+        vcfg = self.backend.cfg.voice
+        try:
+            text = await transcribe_file(vcfg, path, language="fr")
+            self.events.put({"type": "stt_done", "text": text})
+        except VoiceError as exc:
+            self.events.put({"type": "stt_error", "message": str(exc)})
+
+    def stt_record(self, seconds: float = 5.0) -> None:
+        if self.backend is None:
+            return
+        self._run(self._arecord(seconds))
+
+    async def _arecord(self, seconds: float) -> None:
+        vcfg = self.backend.cfg.voice
+        try:
+            path = await record_wav(seconds, vcfg)
+            self.events.put({"type": "stt_recorded", "path": str(path)})
+            await self._astt_file(str(path))
+        except VoiceError as exc:
+            self.events.put({"type": "stt_error", "message": str(exc)})
+
+    def play_wav_file(self, path: str) -> None:
+        if self.backend is None:
+            return
+        self._run(self._aplay(path))
+
+    async def _aplay(self, path: str) -> None:
+        vcfg = self.backend.cfg.voice
+        try:
+            player = await play_wav(path, vcfg)
+            self.events.put({"type": "wav_played", "player": player, "path": path})
+        except VoiceError as exc:
+            self.events.put({"type": "wav_error", "message": str(exc)})

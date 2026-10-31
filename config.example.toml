@@ -20,6 +20,28 @@ quand c'est pertinent plutôt que de deviner ; cite ce que les outils te retourn
 Pour la veille CVE : « récentes » signifie les derniers jours/mois — passe days à
 search_cve au lieu de chercher sans fenêtre de date."""
 
+# Voix locale : deux serveurs indépendants du llama-server principal.
+# S'ils ne répondent pas, l'app les lance elle-même avec le GGUF indiqué
+# (modèle en chemin relatif à ~/models ou absolu).
+
+[voice.stt]
+binary = "whisper-server"                      # binaire whisper.cpp (examples/server)
+base_url = "http://127.0.0.1:8178"
+model = "~/models/stt/Q4_K_M.gguf"              # ggml whisper (ex. ggml-large-v3)
+# extra_args = ["-ngl", "99"]                   # ex. offload GPU whisper.cpp
+
+[voice.tts]
+binary = "llama-server"                         # sert POST /v1/audio/speech et /tts
+base_url = "http://127.0.0.1:9932"
+model = "~/models/tts/voxtral-4b-tts-q4_k.gguf"
+# extra_args = ["-ngl", "99", "--jinja", "-fa", "on"]
+
+# Enregistrement micro (CLI) et lecture des WAV produits.
+# "-" en dernier élément de record_cmd = chemin du WAV temporaire concaténé.
+# [voice]
+# record_cmd = ["arecord", "-q", "-f", "S16_LE", "-r", "16000", "-c", "1", "-"]
+# play_cmd   = ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"]
+
 # MCP servers stdio : name = commande (list). Préfixe des outils : "<name>__<tool>".
 # C'est l'interface stable du projet : les serveurs évoluent, le harnais jamais.
 
