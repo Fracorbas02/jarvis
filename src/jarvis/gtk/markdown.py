@@ -22,7 +22,8 @@ Inline supporté :
   <https://...> et URLs nues https://... ;
 - ![alt](url "titre") -> bloc image ;
 - [^id] -> appel de footnote (exposant) ;
-- échappements \\* \\_ \\` \\\\ etc.
+- échappements \\* \\_ \\` \\\\ etc. ;
+- maths $...$ / $$...$$ (rendu PNG via matplotlib.mathtext, voir render_math_png).
 
 Le parseur est tolérant au streaming : un fence/bloc non fermé reste ouvert
 jusqu'au fragment suivant (re-rendu complet à chaque fragment).
@@ -612,6 +613,50 @@ def highlight_code(code: str, lang: str) -> str:
                 parts.append(f'<span foreground="{color}">{esc}</span>')
         out.append("".join(parts))
     return "\n".join(out)
+
+
+# ---------- rendu des équations (matplotlib.mathtext -> PNG) ----------
+
+_MATH_CACHE: dict[str, bytes] = {}
+
+
+def render_math_png(tex: str, fontsize: float = 15.0, color: str = "#e6edf3") -> bytes | None:
+    """Rend une formule LaTeX en PNG (matplotlib.mathtext, moteur interne :
+    pas besoin de LaTeX installé). Retourne les bytes PNG, ou None si échec.
+    Mis en cache (la formule ne change pas entre deux re-rendus de streaming)."""
+    key = f"{tex}|{fontsize}|{color}"
+    if key in _MATH_CACHE:
+        return _MATH_CACHE[key]
+    try:
+        import io
+        import matplotlib
+        matplotlib.use("Agg")
+        from matplotlib.figure import Figure
+        # taille au plus juste : parse renvoie un RasterParse (w, h, depth, glyphs, rects)
+        from matplotlib import mathtext
+        parser = mathtext.MathTextParser("agg")
+        dpi = 150
+        res = parser.parse(f"${tex}$", dpi=dpi)
+        width, height, depth = float(res[0]), float(res[1]), float(res[2])
+        if width <= 0 or height <= 0:
+            # repli : taille fixe raisonnable
+            width, height, depth = 300.0, 40.0, 10.0
+        w_in = width / dpi + 0.15
+        h_in = (height + depth) / dpi + 0.15
+        fig = Figure(figsize=(w_in, h_in), dpi=dpi)
+        fig.patch.set_alpha(0.0)
+        y = depth / (height + depth) if (height + depth) > 0 else 0.5
+        fig.text(0.03, max(0.05, min(y, 0.95)), f"${tex}$",
+                 fontsize=fontsize, color=color)
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", transparent=True)
+        data = buf.getvalue()
+        if data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 100:
+            _MATH_CACHE[key] = data
+            return data
+    except Exception:  # noqa: BLE001 — formule invalide, matplotlib absent...
+        return None
+    return None
 
 
 def collect_defs(text: str) -> tuple[dict, dict]:

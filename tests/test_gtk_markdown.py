@@ -18,7 +18,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from jarvis.gtk.markdown import (Block, _safe_href, collect_defs,  # noqa: E402
                                  highlight_code, inline_to_pango, parse_blocks,
-                                 sanitize_pango, to_pango)
+                                 render_math_png, sanitize_pango, to_pango)
 
 
 def kinds(text: str) -> list[str]:
@@ -284,3 +284,12 @@ def test_highlight_json() -> None:
     assert 'foreground="#a5d6ff">' in h          # chaînes
     assert 'foreground="#ff7b72">true</span>' in h
     assert 'foreground="#79c0ff">12</span>' in h
+
+
+def test_render_math_png() -> None:
+    d = render_math_png(r"\int_0^1 x^2\,dx = \frac{1}{3}")
+    assert d is not None and d[:8] == b"\x89PNG\r\n\x1a\n" and len(d) > 100
+    d2 = render_math_png(r"E = mc^2", fontsize=13)
+    assert d2 is not None and d2[:8] == b"\x89PNG\r\n\x1a\n"
+    # cache : même objet
+    assert render_math_png(r"\int_0^1 x^2\,dx = \frac{1}{3}") is d

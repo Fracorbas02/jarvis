@@ -29,7 +29,8 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 from xml.sax.saxutils import escape  # noqa: E402
 
 from .markdown import (_safe_href, collect_defs, highlight_code, inline_to_pango,
-                       parse_blocks, sanitize_pango, to_pango)  # noqa: E402
+                       parse_blocks, render_math_png, sanitize_pango,
+                       to_pango)  # noqa: E402
 
 _HEADING_SIZE = {1: "xx-large", 2: "x-large", 3: "large", 4: "medium",
                  5: "small", 6: "small"}
@@ -78,11 +79,20 @@ def _css() -> None:
                            text-transform: uppercase; font-weight: 600; }
     .jarvis-md-code-copy { border-radius: 6px; }
     .jarvis-md-table { border-collapse: collapse; }
-    .jarvis-md-th { font-weight: 700; color: @accent_color;
-                    border-bottom: 2px solid alpha(@window_fg_color, 0.2);
-                    padding: 6px 10px; }
-    .jarvis-md-td { border-bottom: 1px solid alpha(@window_fg_color, 0.08);
-                    padding: 5px 10px; }
+    .jarvis-md-th {
+        font-weight: 700; color: @accent_color;
+        background-color: alpha(@accent_bg_color, 0.25);
+        border: 1px solid alpha(@window_fg_color, 0.25);
+        border-bottom: 2px solid alpha(@accent_bg_color, 0.8);
+        padding: 7px 12px;
+    }
+    .jarvis-md-td {
+        border: 1px solid alpha(@window_fg_color, 0.18);
+        padding: 6px 12px;
+    }
+    .jarvis-md-table-wrap { border-radius: 10px; }
+    .jarvis-md-fn-flash { background-color: alpha(@accent_bg_color, 0.35);
+                          border-radius: 6px; }
     .jarvis-md-hr { margin-top: 8px; margin-bottom: 8px;
                     color: alpha(@window_fg_color, 0.25); }
     .jarvis-md-img { border-radius: 10px; }
@@ -105,11 +115,19 @@ def _css() -> None:
 
 
 def _open_uri(uri: str) -> None:
-    """Ouvre un lien dans le navigateur (best-effort, jamais bloquant)."""
+    """Ouvre un lien externe (navigateur). Best-effort, jamais bloquant."""
+    import subprocess
     try:
         Gio.AppInfo.launch_default_for_uri(uri, None)
+        return
     except Exception:  # noqa: BLE001
         pass
+    for cmd in (["xdg-open", uri], ["gio", "open", uri]):
+        try:
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return
+        except Exception:  # noqa: BLE001
+            continue
 
 
 def _label(markup: str, raw: str, selectable: bool = True) -> Gtk.Label:
@@ -130,7 +148,12 @@ def _set_markup_safe(lbl: Gtk.Label, markup: str, raw: str) -> None:
         ok = False
     if ok:
         lbl.set_markup(markup)
-        lbl.connect("activate-link", lambda _l, uri: (_open_uri(uri), True)[1])
+        def _on_link(lbl, uri):
+            if uri.startswith("#"):
+                return False  # ancre interne : laisser GTK gérer (scroll)
+            _open_uri(uri)
+            return True
+        lbl.connect("activate-link", _on_link)
     else:
         lbl.set_text(raw)
 
@@ -209,10 +232,26 @@ def _code_card(code: str, lang: str) -> Gtk.Widget:
     copy_btn.add_css_class("flat")
 
     def _copy(_b) -> None:
-        cb = Gdk.Display.get_default().get_clipboard()
-        cb.set_text(code)
-        copy_btn.set_icon_name("object-select-symbolic")  # coche de confirmation
-        GLib.timeout_add(1200, lambda: (copy_btn.set_icon_name("edit-copy-symbolic"),
+        ok = False
+        try:
+            cb = copy_btn.get_clipboard()  # clipboard associé au widget (display)
+            cb.set_text(code)
+            ok = True
+        except Exception:  # noqa: BLE001
+            ok = False
+        if not ok:
+            # fallback CLI (Wayland sans clipboard GTK, etc.)
+            import subprocess
+            for cmd in (["wl-copy"], ["xclip", "-selection", "clipboard"],
+                        ["xsel", "--clipboard", "--input"]):
+                try:
+                    subprocess.run(cmd, input=code.encode(), timeout=3, check=True)
+                    ok = True
+                    break
+                except Exception:  # noqa: BLE001
+                    continue
+        copy_btn.set_icon_name("object-select-symbolic" if ok else "dialog-error-symbolic")
+        GLib.timeout_add(1500, lambda: (copy_btn.set_icon_name("edit-copy-symbolic"),
                                         GLib.SOURCE_REMOVE)[1])
 
     copy_btn.connect("clicked", _copy)
@@ -232,6 +271,58 @@ def _code_card(code: str, lang: str) -> Gtk.Widget:
     return card
 
 
+def _math_widget(tex: str, block: bool = False) -> Gtk.Widget:
+    """Équation rendue en image PNG (matplotlib.mathtext) dans un Gtk.Picture,
+   chargée en thread ; fallback : label italique orange si échec."""
+    import threading
+
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    box.set_halign(Gtk.Align.CENTER if block else Gtk.Align.START)
+    if block:
+        box.add_css_class("jarvis-md-math")
+        box.set_margin_top(6)
+        box.set_margin_bottom(6)
+
+    png = render_math_png(tex, fontsize=16.0 if block else 13.0)
+
+    if png is not None:
+        pic = Gtk.Picture()
+        pic.set_content_fit(Gtk.ContentFit.SCALE_DOWN)
+        pic.set_can_shrink(True)
+        box.append(pic)
+
+        def _job() -> None:
+            # le rendu est déjà fait (cache) ; on décode juste le PNG
+            GLib.idle_add(_show, png)
+
+        def _show(data: bytes) -> bool:
+            try:
+                from gi.repository import GdkPixbuf
+                loader = GdkPixbuf.PixbufLoader()
+                loader.write(data)
+                loader.close()
+                pixbuf = loader.get_pixbuf()
+                if pixbuf is not None:
+                    if block and pixbuf.get_width() > 560:
+                        h = round(pixbuf.get_height() * 560 / pixbuf.get_width())
+                        pixbuf = pixbuf.scale_simple(560, h, GdkPixbuf.InterpType.BILINEAR)
+                    pic.set_paintable(Gdk.Texture.new_for_pixbuf(pixbuf))
+            except Exception:  # noqa: BLE001
+                box.remove(pic)
+                box.append(_label(
+                    f'<span style="italic" foreground="#ffb454">'
+                    f"{escape(tex)}</span>", tex))
+            return GLib.SOURCE_REMOVE
+
+        threading.Thread(target=_job, daemon=True).start()
+    else:
+        size = ' size="large"' if block else ""
+        box.append(_label(
+            f'<span style="italic" foreground="#ffb454"{size}>{escape(tex)}</span>',
+            tex))
+    return box
+
+
 def _render_block(parent: Gtk.Box, b, link_defs: dict, footnotes: dict,
                   depth: int = 0) -> None:
     """Ajoute le widget GTK d'un bloc parse_blocks dans parent."""
@@ -245,17 +336,7 @@ def _render_block(parent: Gtk.Box, b, link_defs: dict, footnotes: dict,
     elif b.kind == "code":
         parent.append(_code_card(b.text, b.lang))
     elif b.kind == "math":
-        lbl = _label(
-            f'<span style="italic" foreground="#ffb454" size="large">'
-            f"{escape(b.text)}</span>",
-            b.text)
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        box.add_css_class("jarvis-md-math")
-        box.set_halign(Gtk.Align.CENTER)
-        box.set_margin_top(6)
-        box.set_margin_bottom(6)
-        box.append(lbl)
-        parent.append(box)
+        parent.append(_math_widget(b.text, block=True))
     elif b.kind == "list":
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         box.set_margin_start(12 * depth)
@@ -294,6 +375,8 @@ def _render_block(parent: Gtk.Box, b, link_defs: dict, footnotes: dict,
         grid.set_margin_bottom(6)
         grid.set_column_spacing(0)
         grid.set_row_spacing(0)
+        grid.set_margin_start(2)
+        grid.set_margin_end(2)
         aligns = b.aligns or [None] * max(len(r) for r in b.rows)
         for r, row in enumerate(b.rows):
             for c, cell in enumerate(row):
@@ -305,10 +388,14 @@ def _render_block(parent: Gtk.Box, b, link_defs: dict, footnotes: dict,
                 lbl.set_hexpand(True)
                 lbl.add_css_class("jarvis-md-th" if r == 0 else "jarvis-md-td")
                 grid.attach(lbl, c, r, 1, 1)
-        # le grid dans un cadre scrollable horizontal si trop large
-        frame = Gtk.Frame()
-        frame.set_child(grid)
-        parent.append(frame)
+        # wrapper arrondi + scroll horizontal si le tableau dépasse
+        wrap = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        wrap.add_css_class("jarvis-md-table-wrap")
+        scroll = Gtk.ScrolledWindow(hexpand=True, min_content_width=0)
+        scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+        scroll.set_child(grid)
+        wrap.append(scroll)
+        parent.append(wrap)
     elif b.kind == "hr":
         sep = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
         sep.add_css_class("jarvis-md-hr")
@@ -333,8 +420,11 @@ def _render_block(parent: Gtk.Box, b, link_defs: dict, footnotes: dict,
     elif b.kind == "footnote_def":
         markup = (f'<span size="small">[{b.footnote_id}] '
                   f'{inline_to_pango(b.text, link_defs, footnotes)}</span>')
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         box.add_css_class("jarvis-md-fn")
+        # ancre nommée pour le scroll depuis l'exposant [^id]
+        box.set_name(f"fn-{b.footnote_id}")
+        box._jarvis_fn_id = b.footnote_id  # pour le flash au clic
         box.append(_label(markup, f"[{b.footnote_id}] {b.text}"))
         parent.append(box)
 
@@ -429,6 +519,60 @@ class MessageBox(Gtk.Box):
             _render_block(self.content_box, b, link_defs, footnotes)
         if not self.content_box.get_first_child():
             self.content_box.append(_label("", ""))
+        self._connect_footnote_anchors()
+
+    def _connect_footnote_anchors(self) -> None:
+        """Clic sur un exposant [^id] : scroll vers la définition fn-<id> dans la
+        bulle et flash visuel (au lieu d'ouvrir une URI externe)."""
+        def walk(w):
+            if isinstance(w, Gtk.Label):
+                def on_link(lbl, uri):
+                    if uri.startswith("#fn-"):
+                        fid = uri[4:]
+                        target = self._find_footnote_box(fid)
+                        if target is not None:
+                            target.grab_focus()
+                            target.add_css_class("jarvis-md-fn-flash")
+                            GLib.timeout_add(1200, lambda: (
+                                target.remove_css_class("jarvis-md-fn-flash"),
+                                GLib.SOURCE_REMOVE)[1])
+                            # scroll dans la colonne de messages
+                            anc = self.get_ancestor(MessagesColumn)
+                            if anc is not None:
+                                GLib.idle_add(self._scroll_to_widget, anc, target)
+                        return True  # on a géré
+                    return False
+                lbl.connect("activate-link", on_link)
+            for c in w.get_children() if hasattr(w, "get_children") else []:
+                walk(c)
+        walk(self.content_box)
+
+    def _find_footnote_box(self, fid: str):
+        def walk(w):
+            if getattr(w, "_jarvis_fn_id", None) == fid:
+                return w
+            for c in w.get_children() if hasattr(w, "get_children") else []:
+                r = walk(c)
+                if r is not None:
+                    return r
+            return None
+        return walk(self.content_box)
+
+    @staticmethod
+    def _scroll_to_widget(column: "MessagesColumn", target: Gtk.Widget) -> bool:
+        # scroll la ScrolledWindow de la colonne pour amener target en vue
+        scroll = column.widget
+        vadj = scroll.get_vadjustment()
+        y = target.get_allocation().y if target.get_allocated_height() else 0
+        # position relative approximative via translate_coordinates
+        try:
+            _ok, ty = target.translate_coordinates(column, 0, 0)
+            if _ok:
+                y = ty
+        except Exception:  # noqa: BLE001
+            pass
+        vadj.set_value(max(0.0, min(y - 40, vadj.get_upper())))
+        return GLib.SOURCE_REMOVE
 
     # ---------- reasoning / outils / meta ----------
 
