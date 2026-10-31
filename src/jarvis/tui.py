@@ -19,6 +19,7 @@ la sortie, pratique pour les logs.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass
@@ -67,12 +68,16 @@ class _LiveRegion:
         self.height = 0
         self._last = None  # dernier renderable, pour repaint sur SIGWINCH
 
-    def tty_width(self) -> int:
-        """Largeur réelle du terminal (ioctl), pas le fallback rich (80 si TERM=dumb)."""
+    def tty_size(self) -> tuple[int, int]:
+        """Taille réelle du terminal (ioctl), pas le fallback rich (80x25 si TERM=dumb)."""
         try:
-            return os.get_terminal_size(self.console.file.fileno()).columns
+            s = os.get_terminal_size(self.console.file.fileno())
+            return s.columns, s.lines
         except (OSError, ValueError):
-            return self.console.width
+            return self.console.width, self.console.height
+
+    def tty_width(self) -> int:
+        return self.tty_size()[0]
 
     def _render_lines(self, renderable) -> list[str]:
         # max_width = width - 1 : une ligne faisant exactement la largeur du
@@ -82,19 +87,38 @@ class _LiveRegion:
         return ["".join(seg.text for seg in line)
                 for line in self.console.render_lines(renderable, options)]
 
-    def repaint(self, renderable) -> None:
-        self._last = renderable
-        lines = self._render_lines(renderable)
+    def _write_lines(self, lines: list[str]) -> None:
         f = self.console.file
-        if self.height and self.console.is_terminal:
-            f.write(f"\x1b[{self.height}A")  # remonte, sans effacer
         for line in lines:
             f.write(line)
             f.write("\x1b[0K")  # efface le résidu de l'ancienne ligne
             f.write("\n")  # après chaque ligne : le curseur est height lignes plus bas
-        if len(lines) < self.height:
-            f.write("\x1b[0J")  # lignes en trop en dessous (zone raccourcie)
         f.flush()
+
+    def repaint(self, renderable) -> None:
+        self._last = renderable
+        lines = self._render_lines(renderable)
+        if self.console.is_terminal:
+            tty_h = self.tty_size()[1]
+            if self.height and self.height < tty_h - 1:
+                # mode normal : remonte et réimprime en écrasant
+                self.console.file.write(f"\x1b[{self.height}A")
+                self._write_lines(lines)
+                if len(lines) < self.height:
+                    self.console.file.write("\x1b[0J")  # lignes en trop (zone raccourcie)
+                    self.console.file.flush()
+                self.height = len(lines)
+                return
+            if self.height >= tty_h - 1:
+                # la zone dépasse l'écran : remonter serait clampé en haut de
+                # l'écran et on réimprimerait par-dessus le reste. On ajoute
+                # seulement les lignes nouvelles en dessous (le haut de la zone
+                # est de toute façon dans le scrollback).
+                self._write_lines(lines[self.height:])
+                self.height = max(self.height, len(lines))
+                return
+        # non-terminal (pipe) ou première frame : tout imprimer
+        self._write_lines(lines)
         self.height = len(lines)
 
     def keep(self, renderable) -> None:
@@ -103,10 +127,18 @@ class _LiveRegion:
         self.height = 0
 
     def clear(self) -> None:
-        """Efface la zone (remontée + effacement global, une seule fois)."""
-        if self.height and self.console.is_terminal:
-            self.console.file.write(f"\x1b[{self.height}A\x1b[0J")
-            self.console.file.flush()
+        """Efface la zone (remontée + effacement global, une seule fois).
+
+        Si la zone est plus grande que l'écran, remonter serait clampé en haut
+        et \\x1b[0J effacerait tout l'écran (bannière comprise) : on abandonne
+        alors l'effacement, le contenu reste dans le scrollback.
+        """
+        if self.console.is_terminal and self.height:
+            tty_h = self.tty_size()[1]
+            if self.height < tty_h - 1:
+                f = self.console.file
+                f.write(f"\x1b[{self.height}A\x1b[0J")
+                f.flush()
         self.height = 0
 
 
@@ -243,7 +275,7 @@ class Display:
             title=f"[{style}]{mark} {t.name} · {t.duration:.2f}s[/]",
             border_style=style, box=box.ROUNDED, padding=(0, 1),
         )
-        if len(t.result.splitlines()) > 30:
+        if len(t.result.splitlines()) > 30 and self.console.is_terminal:
             with self.console.pager(styles=True):
                 self.console.print(panel)
         else:
@@ -278,6 +310,12 @@ class Display:
         affichés (re-rendus à la nouvelle largeur), puis la zone live courante.
         Hors streaming (attente au prompt), on ne touche à rien.
         """
+        try:
+            self._resize_redraw()
+        except Exception:  # noqa: BLE001 — un resize ne doit jamais tuer la boucle
+            logging.getLogger("jarvis.tui").debug("on_resize a levé", exc_info=True)
+
+    def _resize_redraw(self) -> None:
         if not self.console.is_terminal:
             return
         active = [r for r in (self._reasoning, self._content, self._tool) if r.height]
@@ -304,8 +342,14 @@ class Display:
         panel = Panel(Text(r.text, style=DIM),
                       title=f"[{DIM}]↯ réflexion · {r.duration:.1f}s · ~{r.tokens} tok[/]",
                       border_style=DIM, box=box.ROUNDED, padding=(0, 1))
-        if len(r.text.splitlines()) > 30:
+        if len(r.text.splitlines()) > 30 and self.console.is_terminal:
             with self.console.pager(styles=True):
                 self.console.print(panel)
         else:
             self._emit(panel)
+
+    def reset_blocks(self) -> None:
+        """Oublie tout ce qui a été affiché (commande /reset)."""
+        self._blocks.clear()
+        self.last_reasoning = None
+        self.last_tool_results = []
