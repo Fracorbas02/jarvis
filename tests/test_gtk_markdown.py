@@ -16,8 +16,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from jarvis.gtk.markdown import (Block, collect_defs, inline_to_pango,  # noqa: E402
-                                 parse_blocks, sanitize_pango, to_pango)
+from jarvis.gtk.markdown import (Block, _safe_href, collect_defs,  # noqa: E402
+                                 inline_to_pango, parse_blocks, sanitize_pango,
+                                 to_pango)
 
 
 def kinds(text: str) -> list[str]:
@@ -196,6 +197,38 @@ def test_sanitize_neutralizes_invalid_tags() -> None:
     assert "&lt;script&gt;" in s and "<script>" not in s
     assert "<tt" not in s and "&lt;tt" in s
     assert '<span size="large">' in s
+
+
+def test_safe_href_schemas() -> None:
+    assert _safe_href("https://x") == "https://x"
+    assert _safe_href("HTTPS://X") == "HTTPS://X"
+    assert _safe_href("mailto:a@b.c") == "mailto:a@b.c"
+    assert _safe_href("#ancre") == "#ancre"
+    assert _safe_href("/relatif") == "/relatif"
+    assert _safe_href("page.html") == "page.html"
+    assert _safe_href("javascript:alert(1)") is None
+    assert _safe_href("data:text/html,x") is None
+    assert _safe_href("file:///etc/passwd") is None
+    assert _safe_href("vbscript:x") is None
+
+
+def test_dangerous_schemes_rendered_as_text() -> None:
+    p = inline_to_pango("[c](javascript:alert(1)) [d](data:text/html;base64,XX) [ok](https://a.b)")
+    assert 'href="javascript:' not in p and 'href="data:' not in p
+    assert "javascript:alert(1)" in p  # texte brut
+    assert '<a href="https://a.b">ok</a>' in p
+    s = sanitize_pango(p)
+    assert 'href="javascript:' not in s and 'href="data:' not in s
+
+
+def test_sanitize_blocks_bad_href_and_unknown_tags() -> None:
+    assert sanitize_pango('<a href="javascript:alert(1)">c</a>').count("<a ") == 0
+    assert sanitize_pango('<script>x</script>').count("<script>") == 0
+    # attribut non whitelisté -> balise littérale échappée (guillemets inclus)
+    out = sanitize_pango('<span onclick="evil()">t</span>')
+    # la balise ouvrante est rendue littérale et échappée : plus de '<span' actif,
+    # l'attribut n'est plus dans une balise (guillemets échappés en &quot;)
+    assert "<span" not in out and "&lt;span onclick=&quot;" in out
 
 
 def test_sanitize_keeps_allowed() -> None:

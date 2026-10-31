@@ -41,6 +41,32 @@ import re
 from dataclasses import dataclass, field
 from xml.sax.saxutils import escape
 
+# Schémas d'URL autorisés dans les href (sinon le lien est rendu en texte) :
+# http/https/mailto + ancres #... et chemins relatifs. Bloque javascript:,
+# data:, file:, etc.
+_ALLOWED_SCHEMES = ("http://", "https://", "mailto:", "#", "/", "./", "../")
+
+
+def _esc_attr(text: str) -> str:
+    """Échappe un attribut (href/title) : & < > ET guillemets."""
+    return escape(text, {'"': "&quot;", "'": "&#x27;"})
+
+
+def _safe_href(url: str) -> str | None:
+    """Retourne l'URL si son schéma est autorisé (ou relatif/ancre), sinon None."""
+    u = url.strip()
+    if not u:
+        return None
+    low = u.lower()
+    if low.startswith(_ALLOWED_SCHEMES):
+        return u
+    if "://" in low or low.split(":", 1)[0] in ("javascript", "data", "file", "vbscript"):
+        return None
+    # relatif sans schéma explicite
+    if ":" not in low.split("/", 1)[0]:
+        return u
+    return None
+
 
 # ---------- blocs ----------
 
@@ -74,7 +100,7 @@ _LINK_DEF_RE = re.compile(r'^\s{0,3}\[([^\]]+)\]:\s*(\S+)(?:\s+"([^"]*)")?\s*$')
 _FOOTNOTE_DEF_RE = re.compile(r'^\s{0,3}\[\^([^\]]+)\]:\s*(.*)$')
 _INDENT_CODE_RE = re.compile(r"^(?: {4}|\t)(.*)$")
 _IMG_LINE_RE = re.compile(
-    r'^\s{0,3}!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)\s*$')
+    r'^\s{0,3}!\[([^\]]*)\]\(([^\s"\')]+)(?:\s+"([^"]*)")?\)\s*$')
 
 
 def _split_table_row(line: str) -> list[str]:
@@ -323,9 +349,9 @@ _INLINE_RE = re.compile(
     r"|<((?:https?://|mailto:)[^>\s]+)>"                           # 1: <url> autolink
     r"|(\\[\\`*_{}\[\]()#+\-.!>~|])"                              # 2: échappement
     r"|(`+)([^`\n]*?)\3"                                           # 3-4: `code`
-    r"|!\[([^\]]*)\]\(([^)\s]+)(?:\s+\"([^\"]*)\")?\)"            # 5-7: ![alt](url "t")
+    r"|!\[([^\]]*)\]\(([^\s\"\')]+)(?:\s+\"([^\"]*)\")?\)"            # 5-7: ![alt](url "t")
     r"|\[\^([^\]]+)\]"                                             # 8: [^id] footnote
-    r"|\[([^\]]+)\]\(([^)\s]+)(?:\s+\"([^\"]*)\")?\)"             # 9-11: [txt](url "t")
+    r"|\[([^\]]+)\]\(([^\s\"\')]+)(?:\s+\"([^\"]*)\")?\)"             # 9-11: [txt](url "t")
     r"|\[([^\]]+)\]\[([^\]]*)\]"                                   # 12-13: [txt][id]
     r"|\[([^\]]+)\]"                                               # 14: [txt] ref courte
     r"|(?<![\w<])((?:https?://|www\.)[^\s<>()]+[^\s<>().,;:!?\'\"\]<])"  # 15: url nue
@@ -346,9 +372,9 @@ def inline_to_pango(text: str, link_defs: dict | None = None,
     for m in _INLINE_RE.finditer(text):
         if m.start() > pos:
             out.append(escape(text[pos:m.start()]))
-        if m.group(1):                       # <url> autolink
+        if m.group(1):                       # <url> autolink (regex: http/https/mailto)
             url = m.group(1)
-            out.append(f'<a href="{escape(url)}">{escape(url)}</a>')
+            out.append(f'<a href="{_esc_attr(url)}">{escape(url)}</a>')
         elif m.group(2):                     # échappement \x -> x
             out.append(escape(m.group(2)[1:]))
         elif m.group(3):                     # `code`
@@ -356,39 +382,55 @@ def inline_to_pango(text: str, link_defs: dict | None = None,
                        f"{escape(m.group(4))}</span>")
         elif m.group(5) is not None:         # image inline -> alt cliquable
             alt, url, title = m.group(5), m.group(6), m.group(7) or ""
-            t = f' title="{escape(title)}"' if title else ""
-            out.append(f'<a href="{escape(url)}"{t}>{escape(alt or url)}</a>')
+            safe = _safe_href(url)
+            if safe is None:
+                out.append(escape(m.group(0)))
+            else:
+                t = f' title="{_esc_attr(title)}"' if title else ""
+                out.append(f'<a href="{_esc_attr(safe)}"{t}>{escape(alt or safe)}</a>')
         elif m.group(8):                     # footnote [^id] -> exposant
             fid = m.group(8)
             num = list(footnotes).index(fid) + 1 if fid in footnotes else fid
-            out.append(f'<a href="#fn-{escape(fid)}">'
+            out.append(f'<a href="#fn-{_esc_attr(fid)}">'
                        f'<span size="x-small" rise="6000">[{escape(str(num))}]</span></a>')
         elif m.group(9):                     # [txt](url "titre")
             txt, url, title = m.group(9), m.group(10), m.group(11) or ""
-            t = f' title="{escape(title)}"' if title else ""
-            inner = inline_to_pango(txt, link_defs, footnotes)
-            out.append(f'<a href="{escape(url)}"{t}>{inner}</a>')
+            safe = _safe_href(url)
+            if safe is None:
+                out.append(escape(m.group(0)))
+            else:
+                t = f' title="{_esc_attr(title)}"' if title else ""
+                inner = inline_to_pango(txt, link_defs, footnotes)
+                out.append(f'<a href="{_esc_attr(safe)}"{t}>{inner}</a>')
         elif m.group(12):                    # [txt][id] / [txt][]
             txt, ref = m.group(12), (m.group(13) or m.group(12)).lower()
             if ref in link_defs:
                 url, title = link_defs[ref]
-                t = f' title="{escape(title)}"' if title else ""
-                inner = inline_to_pango(txt, link_defs, footnotes)
-                out.append(f'<a href="{escape(url)}"{t}>{inner}</a>')
+                safe = _safe_href(url)
+                if safe is None:
+                    out.append(escape(m.group(0)))
+                else:
+                    t = f' title="{_esc_attr(title)}"' if title else ""
+                    inner = inline_to_pango(txt, link_defs, footnotes)
+                    out.append(f'<a href="{_esc_attr(safe)}"{t}>{inner}</a>')
             else:
                 out.append(escape(m.group(0)))
         elif m.group(14):                    # [txt] référence courte
             ref = m.group(14).lower()
             if ref in link_defs:
                 url, title = link_defs[ref]
-                t = f' title="{escape(title)}"' if title else ""
-                out.append(f'<a href="{escape(url)}"{t}>{escape(m.group(14))}</a>')
+                safe = _safe_href(url)
+                if safe is None:
+                    out.append(escape(m.group(0)))
+                else:
+                    t = f' title="{_esc_attr(title)}"' if title else ""
+                    out.append(f'<a href="{_esc_attr(safe)}"{t}>{escape(m.group(14))}</a>')
             else:
                 out.append(escape(m.group(0)))
         elif m.group(15):                    # url nue
             url = m.group(15)
-            href = url if url.startswith("http") else f"http://{url}"
-            out.append(f'<a href="{escape(href)}">{escape(url)}</a>')
+            href = url if url.lower().startswith(("http://", "https://")) else f"http://{url}"
+            out.append(f'<a href="{_esc_attr(href)}">{escape(url)}</a>')
         elif m.group(16):                    # ***...***
             inner = inline_to_pango(m.group(17), link_defs, footnotes)
             out.append(f"<b><i>{inner}</i></b>")
@@ -464,7 +506,11 @@ def to_pango(text: str) -> str:
         elif b.kind == "hr":
             parts.append("――――――――\n")
         elif b.kind == "image":
-            parts.append(f'<a href="{escape(b.url)}">{escape(b.text or b.url)}</a>\n')
+            safe = _safe_href(b.url)
+            if safe is None:
+                parts.append(escape(b.text or b.url) + "\n")
+            else:
+                parts.append(f'<a href="{_esc_attr(safe)}">{escape(b.text or safe)}</a>\n')
         elif b.kind == "footnote_def":
             parts.append(f'<span size="small">[{escape(b.footnote_id)}] '
                          f"{inline_to_pango(b.text, link_defs, footnotes)}</span>\n")
@@ -487,20 +533,55 @@ _ALLOWED_TAGS = {
     "sup": set(),
 }
 _ATTR_RE = re.compile(r'([a-zA-Z-]+)="([^"]*)"')
-_TAG_RE = re.compile(r'</?([a-zA-Z]+)((?:\s+[a-zA-Z-]+="[^"]*")*)\s*/?>')
+# une balise = <nom suivi d'attributs nom="valeur" (valeur pouvant contenir des
+# espaces/échappés) ; on capture tout jusqu'au '>' final pour ne rien laisser
+# passer (ex. " onclick=..." après une URL contenant un guillemet)
+_TAG_RE = re.compile(r'<(/?)([a-zA-Z]+)((?:\s+[^>]*?)?)>')
 
 
 def sanitize_pango(markup: str) -> str:
-    """Garde uniquement les balises/attributs Pango supportés ; le reste est
-    rendu littéral (échappé). Garantit que set_markup ne peut pas échouer."""
-    def _sub(m: re.Match) -> str:
-        tag = m.group(1).lower()
-        attrs = m.group(2) or ""
+    """Whitelist stricte : seules des balises Pango complètes et bien formées
+    de _ALLOWED_TAGS passent (attributs filtrés ; pour <a>, href validé par
+    _safe_href). Toute autre balise est remplacée par son texte échappé, et
+    tout '<' orphelin devient &lt;. Garantit que set_markup ne peut ni échouer
+    ni propager un schéma dangereux."""
+    out: list[str] = []
+    i = 0
+    n = len(markup)
+    while i < n:
+        lt = markup.find("<", i)
+        if lt < 0:
+            out.append(markup[i:])
+            break
+        out.append(markup[i:lt])
+        m = _TAG_RE.match(markup, lt)
+        if not m:
+            out.append("&lt;")
+            i = lt + 1
+            continue
+        closing = m.group(1) == "/"
+        tag = m.group(2).lower()
+        attrs = m.group(3) or ""
         allowed = _ALLOWED_TAGS.get(tag)
-        if allowed is None:
-            return escape(m.group(0))
-        closing = m.group(0).startswith("</")
-        keep = [f'{a}="{v}"' for a, v in _ATTR_RE.findall(attrs) if a in allowed]
-        inner = (" " + " ".join(keep)) if keep else ""
-        return f"</{tag}{inner}>" if closing else f"<{tag}{inner}>"
-    return _TAG_RE.sub(_sub, markup)
+        pairs = _ATTR_RE.findall(attrs)
+        consumed = "".join(f' {a}="{v}"' for a, v in pairs)
+        ok = allowed is not None and consumed.strip() == attrs.strip()
+        if ok:
+            keep = []
+            for a, v in pairs:
+                if a not in allowed:
+                    ok = False
+                    break
+                if tag == "a" and a == "href" and not closing and _safe_href(v) is None:
+                    ok = False
+                    break
+                keep.append(f'{a}="{v}"')
+            if ok:
+                inner = (" " + " ".join(keep)) if keep else ""
+                out.append(f"</{tag}{inner}>" if closing else f"<{tag}{inner}>")
+                i = m.end()
+                continue
+        # balise refusée : on émet son texte échappé (guillemets inclus)
+        out.append(_esc_attr(m.group(0)))
+        i = m.end()
+    return "".join(out)

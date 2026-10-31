@@ -26,8 +26,9 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
+from xml.sax.saxutils import escape  # noqa: E402
 
-from .markdown import (collect_defs, inline_to_pango, parse_blocks,
+from .markdown import (_safe_href, collect_defs, inline_to_pango, parse_blocks,
                        sanitize_pango, to_pango)  # noqa: E402
 
 _HEADING_SIZE = {1: "xx-large", 2: "x-large", 3: "large", 4: "medium",
@@ -160,9 +161,8 @@ def _render_block(parent: Gtk.Box, b, link_defs: dict, footnotes: dict,
         markup = inline_to_pango(b.text, link_defs, footnotes)
         parent.append(_label(markup, b.text))
     elif b.kind == "code":
-        from xml.sax.saxutils import escape as _esc
         # label markup : mono + petit, sur fond sombre posé par le CSS du Box
-        markup = f'<span font-family="monospace" size="small">{_esc(b.text)}</span>'
+        markup = f'<span font-family="monospace" size="small">{escape(b.text)}</span>'
         lbl = _label(markup, b.text)
         lbl.set_hexpand(False)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -230,15 +230,17 @@ def _render_block(parent: Gtk.Box, b, link_defs: dict, footnotes: dict,
         sep.add_css_class("jarvis-md-hr")
         parent.append(sep)
     elif b.kind == "image":
+        if _safe_href(b.url) is None:
+            # schéma non autorisé (javascript:, data:, file:...) -> juste le texte
+            parent.append(_label(escape(b.text or b.url), b.text or b.url))
+            return
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         pic = Gtk.Picture()
         pic.add_css_class("jarvis-md-img")
         pic.set_content_fit(Gtk.ContentFit.CONTAIN)
         pic.set_size_request(-1, 120)
         pic.set_visible(False)
-        alt_markup = (f'<a href="{b.url}" title="{b.title}">{b.text or b.url}</a>')
-        from xml.sax.saxutils import escape as _esc
-        alt = _label(f'<a href="{_esc(b.url)}">{_esc(b.text or b.url)}</a>', b.text or b.url)
+        alt = _label(f'<a href="{escape(b.url)}">{escape(b.text or b.url)}</a>', b.text or b.url)
         alt.set_visible(False)
         box.append(pic)
         box.append(alt)
@@ -295,18 +297,18 @@ class MessageBox(Gtk.Box):
         bubble.append(self.content_box)
         self._md_buffer = ""
 
-    @property
-    def text_label(self) -> Gtk.Label:
-        """Premier label du contenu (compat)."""
-        child = self.content_box.get_first_child()
-        return child if isinstance(child, Gtk.Label) else Gtk.Label()
-
         self.tools_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         bubble.append(self.tools_box)
 
         self.meta_label = Gtk.Label(xalign=0, wrap=True)
         self.meta_label.add_css_class("jarvis-meta")
         self.append(self.meta_label)
+
+    @property
+    def text_label(self) -> Gtk.Label:
+        """Premier label du contenu (compat)."""
+        child = self.content_box.get_first_child()
+        return child if isinstance(child, Gtk.Label) else Gtk.Label()
 
     # ---------- contenu ----------
 
@@ -316,7 +318,6 @@ class MessageBox(Gtk.Box):
 
     def set_text(self, text: str) -> None:
         """Texte brut (rôles user/system) : un seul label échappé."""
-        from xml.sax.saxutils import escape
         self._md_buffer = text
         self._clear_content()
         if text:
