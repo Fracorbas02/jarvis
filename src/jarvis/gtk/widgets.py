@@ -15,7 +15,7 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gdk, GLib, Gtk, Pango  # noqa: E402
 
-from .markdown import to_pango  # noqa: E402
+from .markdown import sanitize_pango, to_pango  # noqa: E402
 
 
 def _css() -> None:
@@ -91,17 +91,32 @@ class MessageBox(Gtk.Box):
         self.meta_label.add_css_class("jarvis-meta")
         self.append(self.meta_label)
 
+    def _apply_markup(self, markup: str, raw: str) -> None:
+        """set_markup avec filet de sécurité : si Pango refuse le markup (balise
+        ou attribut non supporté), on retombe sur le texte brut plutôt que de
+        bloquer l'affichage (set_markup en échec ne fait que logger un warning
+        Gtk et garde l'ancien contenu)."""
+        markup = sanitize_pango(markup)
+        try:
+            ok = Pango.parse_markup(markup, -1, "\0")[0]
+        except Exception:  # noqa: BLE001 — parse_markup lui-même en erreur
+            ok = False
+        if ok:
+            self.text_label.set_markup(markup)
+        else:
+            self.text_label.set_text(raw)
+
     def set_text(self, text: str) -> None:
         """Texte brut (rôle user/system) : échappé puis affiché en markup."""
         from xml.sax.saxutils import escape
         self._md_buffer = text
-        self.text_label.set_markup(escape(text))
+        self._apply_markup(escape(text), text)
         self.text_label.set_visible(bool(text))
 
     def set_markdown(self, text: str) -> None:
         """Texte markdown (réponse assistant) rendu en markup Pango."""
         self._md_buffer = text
-        self.text_label.set_markup(to_pango(text))
+        self._apply_markup(to_pango(text), text)
         self.text_label.set_visible(bool(text))
 
     def append_text(self, fragment: str) -> None:
@@ -109,7 +124,7 @@ class MessageBox(Gtk.Box):
         marqueurs qui se ferment en cours de route (ex. "**bo" + "ld**")
         sont pris en compte au fragment suivant."""
         self._md_buffer += fragment
-        self.text_label.set_markup(to_pango(self._md_buffer))
+        self._apply_markup(to_pango(self._md_buffer), self._md_buffer)
         self.text_label.set_visible(True)
 
     def append_reasoning(self, fragment: str) -> None:

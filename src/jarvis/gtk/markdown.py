@@ -5,7 +5,7 @@ ici un sous-ensemble suffisant pour les réponses de LLM et on produit du
 markup Pango (Gtk.Label.set_markup) :
 
 - blocs : titres #..######, listes -/*/+ (puce •), blocs de code ``` ;
-- inline : **gras**, *italique* / _italique_, `code`, ~~barré~~.
+- inline : **gras**, *italique* / _italique_, ***gras italique***, `code`, ~~barré~~.
 
 Le parseur est volontairement tolérant au streaming : un marqueur non fermé
 (fréquent en plein stream, ex. "**bo" puis "ld**") est rendu tel quel, et
@@ -34,7 +34,13 @@ _LIST_RE = re.compile(r"^\s*[-*+]\s+(.*)$")
 # inline : délimiteurs ouvrants/fermants. `code` est prioritaire (pas de
 # mise en forme imbriquée à l'intérieur).
 _INLINE_RE = re.compile(
-    r"(`[^`\n]*`)|(\*\*[^*\n]+\*\*)|(__[^_\n]+__)|(\*[^*\n]+\*)|(_[^_\n]+_)|(~~[^~\n]+~~)"
+    r"(`[^`\n]*`)"                       # 1: `code`
+    r"|((\*\*\*|___)[^\n]+?(\*\*\*|___))"  # 2: ***gras italique*** / ___...___
+    r"|(\*\*[^*\n]+\*\*)"             # 3: **gras**
+    r"|(__[^_\n]+__)"                    # 4: __gras__
+    r"|(\*[^*\n]+\*)"                   # 5: *italique*
+    r"|(_[^_\n]+_)"                      # 6: _italique_
+    r"|(~~[^~\n]+~~)"                    # 7: ~~barré~~
 )
 
 
@@ -48,6 +54,8 @@ def _parse_inline(text: str, base: frozenset[str] = frozenset()) -> list[Segment
         tok = m.group(0)
         if tok.startswith("`"):
             out.append(Segment(tok[1:-1], base | {"code"}))
+        elif tok.startswith("***") or tok.startswith("___"):
+            out.append(Segment(tok[3:-3], base | {"bold", "italic"}))
         elif tok.startswith("**") or tok.startswith("__"):
             out.append(Segment(tok[2:-2], base | {"bold"}))
         elif tok.startswith("~~"):
@@ -107,7 +115,8 @@ def segments_to_pango(segments: list[Segment]) -> str:
             # bloc de code complet (plusieurs lignes) : fond sombre + mono
             t = _wrap(t, "span", background="#0a0c10", font_family="monospace")
         elif "code" in seg.style:
-            t = _wrap(t, "tt", font_family="monospace", foreground="#d2a8ff")
+            # <tt> n'accepte aucun attribut en Pango markup -> <span>
+            t = _wrap(t, "span", font_family="monospace", foreground="#d2a8ff")
         for tag, style in (("b", "bold"), ("i", "italic"), ("s", "strike")):
             if style in seg.style:
                 t = _wrap(t, tag)
@@ -125,3 +134,31 @@ def segments_to_pango(segments: list[Segment]) -> str:
 def to_pango(text: str) -> str:
     """Markdown brut -> markup Pango (pour Gtk.Label.set_markup)."""
     return segments_to_pango(parse_markdown(text))
+
+# Balises/attributs Pango autorisés en sortie de segments_to_pango ; toute
+# autre balise (ex. <tt font-family=...>, que Pango refuse) est neutralisée
+# par sanitize_pango().
+_ALLOWED_TAGS = {
+    "b": set(),
+    "i": set(),
+    "s": set(),
+    "span": {"size", "weight", "foreground", "background", "font-family"},
+}
+_ATTR_RE = re.compile(r'([a-zA-Z-]+)="([^"]*)"')
+_TAG_RE = re.compile(r'</?([a-zA-Z]+)((?:\s+[a-zA-Z-]+="[^"]*")*)\s*/?>')
+
+
+def sanitize_pango(markup: str) -> str:
+    """Garde uniquement les balises/attributs Pango supportés ; le reste est
+    rendu littéral (échappé). Garantit que set_markup ne peut pas échouer."""
+    def _sub(m: re.Match) -> str:
+        tag = m.group(1).lower()
+        attrs = m.group(2) or ""
+        allowed = _ALLOWED_TAGS.get(tag)
+        if allowed is None:
+            return escape(m.group(0))
+        closing = m.group(0).startswith("</")
+        keep = [f'{a}="{v}"' for a, v in _ATTR_RE.findall(attrs) if a in allowed]
+        inner = (" " + " ".join(keep)) if keep else ""
+        return f"</{tag}{inner}>" if closing else f"<{tag}{inner}>"
+    return _TAG_RE.sub(_sub, markup)

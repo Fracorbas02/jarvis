@@ -15,7 +15,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from jarvis.gtk.markdown import Segment, parse_markdown, to_pango  # noqa: E402
+from jarvis.gtk.markdown import (Segment, parse_markdown, sanitize_pango,  # noqa: E402
+                             to_pango)
 
 
 def texts(segs: list[Segment]) -> str:
@@ -107,7 +108,8 @@ def test_pango_bold_italic_code() -> None:
     p = to_pango("du **gras** et *ital* et `code` et ~~barré~~\n")
     assert "<b>gras</b>" in p
     assert "<i>ital</i>" in p
-    assert "<tt" in p and "code" in p and "monospace" in p
+    # <tt> n'accepte aucun attribut en Pango -> <span font-family="monospace">
+    assert "<tt" not in p and '<span font-family="monospace"' in p and "code" in p
     assert "<s>barré</s>" in p
     assert "**" not in p and "~~" not in p and "`" not in p
 
@@ -136,7 +138,35 @@ def test_pango_echappe_le_xml() -> None:
 def test_pango_dans_code_aussi_échappé() -> None:
     p = to_pango("`x < y & z`\n")
     assert "&lt;" in p and "&amp;" in p
-    assert "<tt" in p
+    assert "<tt" not in p and '<span font-family="monospace"' in p
+
+
+def test_bold_italic_triple() -> None:
+    segs = parse_markdown("***gras italique*** et ___pareil___\n")
+    by_text = {s.text: s.style for s in segs}
+    assert by_text["gras italique"] == frozenset({"bold", "italic"})
+    assert by_text["pareil"] == frozenset({"bold", "italic"})
+    p = to_pango("***gras italique***\n")
+    assert "<b>" in p and "<i>" in p and "***" not in p
+
+
+def test_pango_jamais_de_tt_avec_attributs() -> None:
+    # régression : <tt font-family=...> fait échouer Pango.parse_markup
+    # (warning Gtk + set_markup ignoré). Le code inline doit être un <span>.
+    for src in ("`code`\n", "texte `x < y` **gras**\n", "```\nbloc\n```\n"):
+        assert "<tt" not in to_pango(src)
+
+
+def test_sanitize_pango_neutralise_les_balises_invalides() -> None:
+    s = sanitize_pango('<script>x</script> <tt font-family="m">c</tt> <span size="large">ok</span>')
+    assert "&lt;script&gt;" in s and "<script>" not in s
+    assert "<tt" not in s and "&lt;tt" in s
+    assert '<span size="large">' in s
+
+
+def test_sanitize_pango_garde_les_balises_autorisees() -> None:
+    s = sanitize_pango('<b>g</b><i>i</i><s>s</s><span weight="bold" foreground="#fff">t</span>')
+    assert s == '<b>g</b><i>i</i><s>s</s><span weight="bold" foreground="#fff">t</span>'
 
 
 def test_pango_streaming_partiel() -> None:
