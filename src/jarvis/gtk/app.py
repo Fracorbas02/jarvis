@@ -86,7 +86,6 @@ class JarvisWindow(Adw.ApplicationWindow):
 
     def _build_ui(self) -> None:
         toolbar = Adw.ToolbarView()
-        self.set_content(toolbar)
 
         header = Adw.HeaderBar()
         toolbar.add_top_bar(header)
@@ -661,6 +660,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    # les requ\u00eates de statut (httpx) polluent le terminal toutes les 2 s
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     app = JarvisApp(config_path=args.config)
     return app.run([])
 
