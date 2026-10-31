@@ -246,19 +246,21 @@ def main() -> None:
     ctk.set_appearance_mode("dark")
     ctk.set_default_color_theme("blue")
 
-    root = ctk.CTk()
-    root.title("Jarvis")
-
-    # Curseur souris : sous XWayland scale 2, XCURSOR_SIZE n'est pas propagé
-    # et le curseur reste en 24px (minuscule sur écran HiDPI) dans les widgets
-    # Tk bruts (PanedWindow sash, Text du chat). XCURSOR_SIZE ne suffit pas
-    # (lu une seule fois par libXcursor) : on pose explicitement le curseur
-    # sur chaque widget concerné, après création de l'app.
+    # Curseur souris AVANT toute création de fenêtre : libXcursor lit
+    # XCURSOR_SIZE une seule fois au chargement. Sous XWayland scale 2 sans
+    # cette variable, le curseur reste en 24px (minuscule sur écran HiDPI).
     if "XCURSOR_SIZE" not in os.environ:
         try:
-            os.environ["XCURSOR_SIZE"] = str(int(24 * detect_scale(root)))
+            import tkinter as _tk
+            _probe = _tk.Tk()
+            _s = detect_scale(_probe)
+            _probe.destroy()
+            os.environ["XCURSOR_SIZE"] = str(int(24 * _s))
         except Exception:  # noqa: BLE001
             pass
+
+    root = ctk.CTk()
+    root.title("Jarvis")
 
     # Scaling HiDPI (GNOME) + fenêtre adaptative et redimensionnable.
     # setup_window applique set_*_scaling AVANT la création des widgets
