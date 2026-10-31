@@ -169,11 +169,19 @@ def _debug_scale(root, scale: float, app=None) -> None:
                 f"sidebar_w={app.sidebar.winfo_width()} chat_w={app.chat.winfo_width()}")
             try:
                 import tkinter.font as tkfont
+                fams = sorted(tkfont.families())
+                lines.append(f"[jarvis] debug: font families: Roboto={'Roboto' in fams} "
+                             f"n={len(fams)} sample={fams[:8]}")
                 for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont"):
                     f = tkfont.nametofont(name)
                     lines.append(
                         f"[jarvis] debug: named font {name}: actual={f.actual()} "
                         f"measure(JARVIS)={f.measure('JARVIS')}px")
+                # tester un spec pixel -44 avec famille connue vs Roboto
+                for spec in (("Roboto", -44, "bold"), ("DejaVu Sans", -44, "bold"), ("fixed", -44)):
+                    ff = _tkf.Font(family=spec[0], size=spec[1], weight=spec[2] if len(spec) > 2 else "normal")
+                    lines.append(f"[jarvis] debug: Font{spec} actual={ff.actual()} measure={ff.measure('JARVIS')}px")
+                    ff.destroy()
             except Exception:
                 pass
             # hauteur réelle d'un label JARVIS (titre sidebar)
