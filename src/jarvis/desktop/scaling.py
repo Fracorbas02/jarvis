@@ -27,23 +27,42 @@ def _clamp(scale: float) -> float:
     return max(MIN_SCALE, min(MAX_SCALE, scale))
 
 
+def _gsettings_scale() -> float:
+    """Échelle de l'OS lue via gsettings (utile sous GNOME Wayland, où le DPI
+    X11 peut rester à 96). Best-effort : 0 si indisponible."""
+    import subprocess
+    for key in ("scaling-factor", "text-scaling-factor"):
+        try:
+            out = subprocess.run(
+                ["gsettings", "get", "org.gnome.desktop.interface", key],
+                capture_output=True, text=True, timeout=2).stdout.strip()
+            value = float(out.split()[-1]) if out else 0.0
+            if value > 1.0:
+                return value
+        except Exception:  # noqa: BLE001 — best-effort
+            continue
+    return 0.0
+
+
 def detect_scale(root: _Root, override: float | None = None) -> float:
-    """Facteur d'échelle de l'écran : override > env > DPI X11."""
+    """Facteur d'échelle de l'OS : override > max(env GDK_SCALE/QT, gsettings
+    GNOME, DPI X11). Le max des indices couvre X11 (Xft.dpi) et Wayland
+    (gsettings scaling-factor) où un seul des deux est renseigné."""
     if override is not None:
         return _clamp(override)
+    hints = [1.0]
     for var in ("GDK_SCALE", "QT_SCREEN_SCALE_FACTORS"):
         raw = os.environ.get(var, "")
         if raw:
             try:
-                first = float(raw.split(",")[0].split(";")[0])
+                hints.append(float(raw.split(",")[0].split(";")[0]))
             except ValueError:
-                continue
-            if first > 1.0:
-                return _clamp(first)
+                pass
+    hints.append(_gsettings_scale())
     dpi = root.winfo_fpixels("1i")
     if dpi > 0:
-        return _clamp(dpi / BASE_DPI)
-    return 1.0
+        hints.append(dpi / BASE_DPI)
+    return _clamp(max(hints))
 
 
 def adaptive_geometry(root: _Root, width_ratio: float = 0.62,
