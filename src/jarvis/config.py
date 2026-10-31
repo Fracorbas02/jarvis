@@ -60,7 +60,8 @@ class VoiceConfig:
     # binaire d'enregistrement micro (arecord par défaut, fallback ffmpeg) ;
     # "-" en dernier élément = le chemin du WAV temporaire y est concaténé
     record_cmd: list[str] = field(
-        default_factory=lambda: ["arecord", "-q", "-f", "S16_LE", "-r", "16000", "-c", "1", "-"])
+        default_factory=lambda: ["arecord", "-q", "-t", "raw", "-f", "S16_LE",
+                                 "-r", "16000", "-c", "1", "-"])
     # lecteur audio pour les WAV produits (ffplay/aplay/paplay/play)
     play_cmd: list[str] = field(
         default_factory=lambda: ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"])
@@ -82,7 +83,7 @@ class TTSAPIConfig:
 
     enabled   : si true, les réponses lues à voix haute passent par l'API
     base_url  : racine de l'API (défaut https://api.mistral.ai)
-    model     : modèle TTS (voxtral-mini-tts-2603 recommandé, voxtral-tts-2603 qualité max)
+    model     : modèle TTS (défaut voxtral-mini-tts-3-0 = Voxtral TTS 3, dernier ; ou 2603/latest)
     voice_id  : voix (preset "voice_592"/"gb_jane_neutral" ou voix clonée du workspace)
     response_format : mp3 (défaut) | wav | pcm | flac | opus
     La clé API n'est PAS ici : elle vit dans ~/.config/jarvis/mistral.json
@@ -90,7 +91,7 @@ class TTSAPIConfig:
     """
     enabled: bool = False
     base_url: str = "https://api.mistral.ai"
-    model: str = "voxtral-mini-tts-2603"
+    model: str = "voxtral-mini-tts-3-0"  # Voxtral TTS 3 (dernier, 20/10/2026)
     voice_id: str = "voice_592"  # Marie, FR
     response_format: str = "mp3"
 

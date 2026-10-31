@@ -65,8 +65,18 @@ def main() -> int:
         import jarvis.gtk.widgets as gtk_widgets
         assert hasattr(gtk_widgets.MessageBox, "set_markdown")
         assert hasattr(gtk_widgets.MessageBox, "append_text")
+        # régression : tools_box/meta_label doivent être créés dans __init__
+        # (add_tool_line/set_meta les utilisent à chaque tour)
+        import inspect
+        init_src = inspect.getsource(gtk_widgets.MessageBox.__init__)
+        assert "self.tools_box" in init_src and "self.meta_label" in init_src
+        # et la property text_label ne doit pas contenir de code après son return
+        prop_src = inspect.getsource(gtk_widgets.MessageBox.text_label.fget)
+        body = prop_src.split("return", 1)[1]
+        assert "self.tools_box" not in body and "self.meta_label" not in body
         import jarvis.gtk.markdown as gtk_md
-        assert callable(gtk_md.to_pango) and callable(gtk_md.parse_markdown)
+        assert callable(gtk_md.to_pango) and callable(gtk_md.parse_blocks)
+        assert callable(gtk_md.inline_to_pango) and callable(gtk_md.sanitize_pango)
 
         # main() parse --config sans lancer la boucle GTK
         captured = {}
