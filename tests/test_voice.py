@@ -379,6 +379,42 @@ def test_args_for_device_vulkan_legacy_index(monkeypatch) -> None:
     print("OK  args_for_device vulkan legacy")
 
 
+def test_record_wav_stdout_pcm() -> None:
+    """record_cmd produisant du PCM s16le sur stdout ('-' = sortie, conservé :
+    ffmpeg exige une sortie explicite sinon « At least one output file must
+    be specified ») -> WAV écrit avec un signal non nul."""
+    import jarvis.voice as voice
+    cfg = VoiceConfig(record_cmd=["ffmpeg", "-loglevel", "error", "-f", "lavfi",
+                                  "-i", "sine=frequency=440:duration=30",
+                                  "-ar", "16000", "-ac", "1", "-f", "s16le", "-"])
+    p = _run(voice.record_wav(1.0, cfg))
+    assert p.is_file() and p.stat().st_size > 44 + 1000
+    with wave.open(str(p)) as w:
+        assert w.getframerate() == 16000 and w.getnchannels() == 1
+        frames = w.readframes(w.getnframes())
+    peak = max(abs(int.from_bytes(frames[i:i + 2], "little", signed=True))
+               for i in range(0, min(len(frames), 4000), 2))
+    assert peak > 100, peak
+    print("OK  record_wav stdout pcm")
+
+
+def test_record_wav_strip_riff() -> None:
+    """Si le binaire envoie un WAV (header RIFF) sur stdout, on strippe les
+    44 octets d'en-tête avant d'écrire notre propre header WAV."""
+    import jarvis.voice as voice
+    cfg = VoiceConfig(record_cmd=["ffmpeg", "-loglevel", "error", "-f", "lavfi",
+                                  "-i", "sine=frequency=440:duration=30",
+                                  "-ar", "16000", "-ac", "1", "-f", "wav", "-"])
+    p = _run(voice.record_wav(1.0, cfg))
+    with wave.open(str(p)) as w:  # wave lit NOTRE header -> le RIFF a été strip
+        assert w.getframerate() == 16000
+        frames = w.readframes(4000)
+    peak = max(abs(int.from_bytes(frames[i:i + 2], "little", signed=True))
+               for i in range(0, len(frames), 2))
+    assert peak > 100, peak
+    print("OK  record_wav strip RIFF")
+
+
 def test_detect_gpus_list_devices(monkeypatch) -> None:
     """Source primaire = llama-server --list-devices : les devices proposés
     ont directement le nom ggml utilisable en --device."""

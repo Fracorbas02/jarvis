@@ -129,6 +129,21 @@ class GtkBackend:
         self.sessions = SessionStore(state_dir())
         self.session_id: str | None = None
         self.models_llm = discover_models(use_defaults=True)["llm"]
+        self._apply_persisted_tts_api()
+
+    def _apply_persisted_tts_api(self) -> None:
+        """Réapplique les réglages TTS API persistants (ui.json) sur la config :
+        enabled / model / voice_id survivent à l'arrêt de l'app."""
+        from dataclasses import replace
+        s = load_ui_settings()
+        tts_api = self.cfg.tts_api
+        if "tts_api_enabled" in s:
+            tts_api = replace(tts_api, enabled=bool(s["tts_api_enabled"]))
+        if s.get("tts_api_model"):
+            tts_api = replace(tts_api, model=str(s["tts_api_model"]))
+        if "tts_api_voice" in s:
+            tts_api = replace(tts_api, voice_id=str(s["tts_api_voice"]))
+        self.cfg.tts_api = tts_api
 
     # ---------- cycle de vie ----------
 
@@ -420,18 +435,150 @@ class GtkBackend:
         self._run(self._atts(text))
 
     async def _atts(self, text: str) -> None:
+        """Lit `text` à voix haute.
+
+        Source : API Mistral si [voice.tts_api] enabled ET clé enregistrée,
+        sinon serveur TTS local. Vrai fallback : si l'API est choisie mais
+        échoue (réseau, 401, 403, 404…), on retombe sur le TTS local au lieu
+        de ne rien lire."""
         import tempfile
         from pathlib import Path as _P
-        from ..voice import VoiceError, play_wav, synthesize
+        from ..voice import play_wav
         vcfg = self.cfg.voice
+        tts_api = getattr(self.cfg, "tts_api", None)
+        audio: bytes | None = None
+        ext = "wav"
+        api_error: str | None = None
+        if tts_api is not None and tts_api.enabled:
+            try:
+                audio, ext = await self._atts_api(text)
+            except Exception as exc:  # noqa: BLE001 — MistralTTSError + réseau
+                api_error = str(exc)
+                log.warning("TTS API Mistral en échec, fallback local : %s", exc)
+        if audio is None:
+            # pas d'API choisie, pas de clé, ou API en échec -> TTS local
+            from ..voice import synthesize
+            try:
+                audio = await synthesize(vcfg, text)
+                ext = "wav"
+            except Exception as exc:  # noqa: BLE001 — VoiceError
+                detail = f" (API: {api_error})" if api_error else ""
+                self.events.put({"type": "voice_error",
+                                 "message": f"TTS local en échec aussi : {exc}{detail}"})
+                return
+            if api_error:
+                self.events.put({"type": "tts_fallback",
+                                 "message": f"API Mistral en échec ({api_error}) "
+                                            f"— lu par le TTS local"})
         try:
-            wav = await synthesize(vcfg, text)
-            out = _P(tempfile.gettempdir()) / f"jarvis-tts-{os.getpid()}.wav"
-            out.write_bytes(wav)
+            out = _P(tempfile.gettempdir()) / f"jarvis-tts-{os.getpid()}.{ext}"
+            out.write_bytes(audio)
             self.events.put({"type": "tts_ready", "path": str(out)})
             await play_wav(out, vcfg)
-        except VoiceError as exc:
+        except Exception as exc:  # noqa: BLE001
             self.events.put({"type": "voice_error", "message": str(exc)})
+
+    async def _atts_api(self, text: str) -> tuple[bytes, str]:
+        """TTS via l'API Mistral. Retourne (octets audio, extension)."""
+        from ..mistral_tts import (MistralTTSClient, MistralTTSError,
+                                    load_api_key)
+        tts_api = self.cfg.tts_api
+        key = load_api_key()
+        if not key:
+            raise MistralTTSError(
+                "clé API Mistral absente — Réglages > Voix API Mistral, "
+                "ou export MISTRAL_API_KEY")
+        client = MistralTTSClient(key, base_url=tts_api.base_url,
+                                  model=tts_api.model)
+        try:
+            audio = await client.synthesize(
+                text, voice_id=tts_api.voice_id or None,
+                response_format=tts_api.response_format or "mp3")
+            return audio, (tts_api.response_format or "mp3")
+        finally:
+            await client.aclose()
+
+    # ---------- réglages voix API Mistral ----------
+
+    def set_tts_api(self, enabled: bool | None = None, model: str | None = None,
+                    voice_id: str | None = None) -> None:
+        """Met à jour les réglages TTS API persistants (ui.json) et les applique
+        à la config en mémoire. La clé reste dans mistral.json (séparée)."""
+        from dataclasses import replace
+        patch: dict = {}
+        tts_api = self.cfg.tts_api
+        if enabled is not None:
+            tts_api = replace(tts_api, enabled=enabled)
+            patch["tts_api_enabled"] = enabled
+        if model:
+            tts_api = replace(tts_api, model=model)
+            patch["tts_api_model"] = model
+        if voice_id is not None:
+            tts_api = replace(tts_api, voice_id=voice_id)
+            patch["tts_api_voice"] = voice_id
+        self.cfg.tts_api = tts_api
+        if patch:
+            save_ui_settings(patch)
+
+    def save_mistral_api_key(self, api_key: str) -> bool:
+        """Enregistre la clé API localement (mistral.json, 0600). Vide = supprime."""
+        from ..mistral_tts import delete_api_key, save_api_key
+        key = api_key.strip()
+        if not key:
+            delete_api_key()
+            return False
+        save_api_key(key)
+        return True
+
+    def mistral_api_key_status(self) -> dict:
+        from ..mistral_tts import has_api_key, load_api_key
+        return {"has_key": has_api_key(),
+                "source": "env" if os.environ.get("MISTRAL_API_KEY") else "file",
+                "key_len": len(load_api_key())}
+
+    def list_mistral_voices(self) -> None:
+        """GET /v1/audio/voices -> événement mistral_voices (preset + custom)."""
+        self._run(self._alist_mistral_voices())
+
+    async def _alist_mistral_voices(self) -> None:
+        from ..mistral_tts import (MistralTTSClient, MistralTTSError,
+                                    load_api_key)
+        key = load_api_key()
+        if not key:
+            self.events.put({"type": "mistral_voices", "voices": [],
+                             "error": "clé API absente (Réglages > Voix API)"})
+            return
+        tts_api = self.cfg.tts_api
+        client = MistralTTSClient(key, base_url=tts_api.base_url, model=tts_api.model,
+                                  timeout=20.0)
+        try:
+            voices = await client.list_voices()
+            self.events.put({"type": "mistral_voices",
+                             "voices": [v.__dict__ for v in voices], "error": ""})
+        except MistralTTSError as exc:
+            self.events.put({"type": "mistral_voices", "voices": [],
+                             "error": str(exc)})
+        finally:
+            await client.aclose()
+
+    def test_mistral_tts(self, text: str = "Bonjour, ceci est un test de la voix Mistral.") -> None:
+        """Synthétise un extrait via l'API et le joue (teste clé + voix + réseau)."""
+        self._run(self._atest_mistral_tts(text))
+
+    async def _atest_mistral_tts(self, text: str) -> None:
+        import tempfile
+        from pathlib import Path as _P
+        from ..voice import play_wav
+        try:
+            audio, ext = await self._atts_api(text)
+            out = _P(tempfile.gettempdir()) / f"jarvis-tts-test.{ext}"
+            out.write_bytes(audio)
+            await play_wav(out, self.cfg.voice)
+            self.events.put({"type": "mistral_tts_test", "ok": True,
+                             "message": f"{len(audio) // 1024} Ko ({ext})"})
+        except Exception as exc:  # noqa: BLE001
+            self.events.put({"type": "mistral_tts_test", "ok": False,
+                             "message": str(exc)})
 
     # ---------- réglages ----------
 

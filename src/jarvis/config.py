@@ -64,7 +64,8 @@ class VoiceConfig:
     # binaire d'enregistrement micro (arecord par défaut, fallback ffmpeg) ;
     # "-" en dernier élément = le chemin du WAV temporaire y est concaténé
     record_cmd: list[str] = field(
-        default_factory=lambda: ["arecord", "-q", "-f", "S16_LE", "-r", "16000", "-c", "1", "-"])
+        default_factory=lambda: ["arecord", "-q", "-t", "raw", "-f", "S16_LE",
+                                 "-r", "16000", "-c", "1", "-"])
     # lecteur audio pour les WAV produits (ffplay/aplay/paplay/play)
     play_cmd: list[str] = field(
         default_factory=lambda: ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"])
@@ -82,10 +83,30 @@ class VoiceConfig:
 
 
 @dataclass
+class TTSAPIConfig:
+    """TTS via l'API Mistral (Voxtral) au lieu du serveur local.
+
+    enabled   : si true, les réponses lues à voix haute passent par l'API
+    base_url  : racine de l'API (défaut https://api.mistral.ai)
+    model     : modèle TTS (voxtral-mini-tts-2603 recommandé, voxtral-tts-2603 qualité max)
+    voice_id  : voix (preset "voice_592"/"gb_jane_neutral" ou voix clonée du workspace)
+    response_format : mp3 (défaut) | wav | pcm | flac | opus
+    La clé API n'est PAS ici : elle vit dans ~/.config/jarvis/mistral.json
+    (définie dans Réglages) ou dans l'env MISTRAL_API_KEY.
+    """
+    enabled: bool = False
+    base_url: str = "https://api.mistral.ai"
+    model: str = "voxtral-mini-tts-2603"
+    voice_id: str = "voice_592"  # Marie, FR
+    response_format: str = "mp3"
+
+
+@dataclass
 class Config:
     llm: LLMConfig = field(default_factory=LLMConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
+    tts_api: TTSAPIConfig = field(default_factory=TTSAPIConfig)
     # name -> argv du processus MCP server (stdio)
     mcp_servers: dict[str, list[str]] = field(default_factory=dict)
 
@@ -118,6 +139,11 @@ def load_config(path: str | Path | None = None) -> Config:
     for key in ("record_cmd", "play_cmd"):
         if key in raw_voice:
             setattr(cfg.voice, key, list(raw_voice[key]))
+    raw_tts_api = raw.get("voice", {}).get("tts_api", {})
+    if raw_tts_api:
+        cfg.tts_api = TTSAPIConfig(
+            **{k: v for k, v in raw_tts_api.items()
+               if k in TTSAPIConfig.__dataclass_fields__})
     for name, spec in raw.get("mcp", {}).get("servers", {}).items():
         cmd = spec.get("command", [])
         if isinstance(cmd, str):

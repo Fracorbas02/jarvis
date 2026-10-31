@@ -448,6 +448,78 @@ class JarvisWindow(Adw.ApplicationWindow):
         g_voice.add(row_tts)
         page.add(g_voice)
 
+        # --- Voix API Mistral (Voxtral) ---
+        g_api = Adw.PreferencesGroup(
+            title="Voix API Mistral (Voxtral)",
+            description="TTS cloud, meilleure qualité que le local. La clé est "
+                        "stockée localement (~/.config/jarvis/mistral.json, 0600), "
+                        "jamais dans config.toml. Utilisée quand « Lire les réponses » "
+                        "est actif et que cette option est cochée ; sinon le TTS local "
+                        "sert de secours.")
+        page.add(g_api)
+
+        # clé API (champ masqué + enregistrer)
+        self.api_key_row = Adw.ActionRow(title="Clé API Mistral",
+                                         subtitle=self._api_key_subtitle())
+        self.api_key_entry = Gtk.PasswordEntry(
+            hexpand=True, placeholder_text="Colle ta clé api.mistral.ai…")
+        self.api_key_entry.set_show_peek_icon(True)
+        btn_save_key = Gtk.Button(label="Enregistrer", valign=Gtk.Align.CENTER)
+        btn_save_key.add_css_class("suggested-action")
+        btn_save_key.connect("clicked", self._on_save_api_key)
+        self.api_key_row.add_suffix(self.api_key_entry)
+        self.api_key_row.add_suffix(btn_save_key)
+        g_api.add(self.api_key_row)
+
+        # activer l'API comme source TTS
+        tts_api = self.backend.cfg.tts_api
+        self.api_switch_row = Adw.SwitchRow(
+            title="Utiliser l'API Mistral pour le TTS",
+            subtitle="sinon le serveur TTS local est utilisé",
+            active=tts_api.enabled)
+        self.api_switch_row.connect("notify::active", self._on_tts_api_switch)
+        g_api.add(self.api_switch_row)
+
+        # modèle TTS
+        self.api_model_row = Adw.ComboRow(
+            title="Modèle TTS",
+            subtitle="voxtral-mini-tts-2603 = rapide, voxtral-tts-2603 = qualité max")
+        from ..mistral_tts import TTS_MODELS
+        api_models = TTS_MODELS
+        self.api_model_row.set_model(Gtk.StringList.new(api_models))
+        try:
+            self.api_model_row.set_selected(api_models.index(tts_api.model))
+        except ValueError:
+            self.api_model_row.set_selected(0)
+        self.api_model_row.connect("notify::selected", self._on_tts_api_model)
+        g_api.add(self.api_model_row)
+
+        # voix : presets + voix du workspace (rafraîchie via l'API)
+        self.api_voice_row = Adw.ComboRow(
+            title="Voix",
+            subtitle="presets Mistral + voix clonées du workspace (bouton Rafraîchir)")
+        self._api_voice_ids: list[str] = []
+        from ..mistral_tts import preset_voice_options
+        presets = preset_voice_options()
+        self._fill_api_voices(presets, current=tts_api.voice_id)
+        self.api_voice_row.connect("notify::selected", self._on_tts_api_voice)
+        g_api.add(self.api_voice_row)
+
+        row_refresh = Adw.ActionRow(
+            title="Lister les voix du compte (API)",
+            subtitle="récupère presets + voix clonées via GET /v1/audio/voices")
+        btn_refresh = Gtk.Button(label="Rafraîchir", valign=Gtk.Align.CENTER)
+        btn_refresh.connect("clicked", lambda b: self.backend.list_mistral_voices())
+        row_refresh.add_suffix(btn_refresh)
+        g_api.add(row_refresh)
+
+        row_test_api = Adw.ActionRow(title="Tester la voix",
+                                     subtitle="synthétise un extrait via l'API et le joue")
+        btn_test_api = Gtk.Button(label="Tester", valign=Gtk.Align.CENTER)
+        btn_test_api.connect("clicked", lambda b: self.backend.test_mistral_tts())
+        row_test_api.add_suffix(btn_test_api)
+        g_api.add(row_test_api)
+
         # --- Autorisations système ---
         g_perm = Adw.PreferencesGroup(title="Autorisations système",
                                       description="GNOME contrôle l'accès au micro "
@@ -616,6 +688,58 @@ class JarvisWindow(Adw.ApplicationWindow):
             # d'autorisation système et vérifier que ça marche
             self._toast("Test du micro…")
             self.backend.test_mic(getattr(self, "mic_device", "default"))
+    # ---------- voix API Mistral ----------
+
+    def _api_key_subtitle(self) -> str:
+        st = self.backend.mistral_api_key_status()
+        if not st["has_key"]:
+            return "aucune clé enregistrée (env MISTRAL_API_KEY non définie non plus)"
+        src = "MISTRAL_API_KEY (env)" if st["source"] == "env" else "mistral.json local"
+        return f"clé définie ({src}, {st['key_len']} car.) — colle une nouvelle pour changer"
+
+    def _on_save_api_key(self, _btn) -> None:
+        key = self.api_key_entry.get_text().strip()
+        saved = self.backend.save_mistral_api_key(key)
+        self.api_key_entry.set_text("")
+        self.api_key_row.set_subtitle(self._api_key_subtitle())
+        self._toast("Clé API enregistrée localement (mistral.json, 0600)"
+                    if saved else "Clé API supprimée")
+        # après une nouvelle clé, on peut lister les voix du compte
+        if saved:
+            self.backend.list_mistral_voices()
+
+    def _on_tts_api_switch(self, row, _pspec) -> None:
+        self.backend.set_tts_api(enabled=row.get_active())
+        self._toast("TTS API Mistral " + ("activée" if row.get_active() else "désactivée")
+                    + " (le TTS local reste le secours)")
+
+    def _on_tts_api_model(self, row, _pspec) -> None:
+        from ..mistral_tts import TTS_MODELS
+        idx = row.get_selected()
+        if 0 <= idx < len(TTS_MODELS):
+            self.backend.set_tts_api(model=TTS_MODELS[idx])
+
+    def _fill_api_voices(self, voices: list[tuple[str, str]], current: str = "") -> None:
+        """Remplit le ComboRow des voix. voices = [(label, voice_id)]."""
+        model = Gtk.StringList()
+        self._api_voice_ids = []
+        for label, vid in voices:
+            model.append(f"{label}  [{vid}]")
+            self._api_voice_ids.append(vid)
+        self.api_voice_row.set_model(model)
+        sel = 0
+        if current:
+            for i, vid in enumerate(self._api_voice_ids):
+                if vid == current:
+                    sel = i
+                    break
+        if self._api_voice_ids:
+            self.api_voice_row.set_selected(sel)
+
+    def _on_tts_api_voice(self, row, _pspec) -> None:
+        idx = row.get_selected()
+        if 0 <= idx < len(self._api_voice_ids):
+            self.backend.set_tts_api(voice_id=self._api_voice_ids[idx])
 
     # ---------- page d'accueil ----------
 
@@ -825,6 +949,22 @@ class JarvisWindow(Adw.ApplicationWindow):
                 self._toast(f"Micro indisponible : {event.get('message', '')}")
         elif t == "mic_permission":
             self._on_mic_permission(event.get("state", "unknown"))
+        elif t == "mistral_voices":
+            voices = [(f"{v.get('name', v['id'])} ({v.get('language', '')}{', ' + v['gender'] if v.get('gender') else ''})"
+                       + (" [custom]" if v.get("kind") == "custom" else ""),
+                       v["id"]) for v in event.get("voices") or []]
+            if voices:
+                current = self.backend.cfg.tts_api.voice_id
+                self._fill_api_voices(voices, current=current)
+                self._toast(f"{len(voices)} voix récupérées depuis l'API")
+            elif event.get("error"):
+                self._toast(f"Voix API : {event['error']}")
+        elif t == "tts_fallback":
+            self._toast(f"TTS local utilis\u00e9 en secours : {event.get('message', '')}")
+        elif t == "mistral_tts_test":
+            self._toast(("TTS API OK — " + event.get("message", ""))
+                        if event.get("ok")
+                        else f"TTS API en erreur : {event.get('message', '')}")
         elif t == "session_new":
             self.messages.clear()
             self._assistant_box = None
