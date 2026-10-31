@@ -497,7 +497,10 @@ class RealtimeSTTClient:
                 log.debug("ws /v1/realtime event: %s %s", etype, str(ev)[:200])
                 if etype in ("conversation.item.input_audio_transcription.completed",
                              "transcription.completed"):
-                    tr = ev.get("transcription")
+                    # champ réel du protocole : "transcript" au niveau de l'événement
+                    tr = ev.get("transcript")
+                    if tr is None:
+                        tr = ev.get("transcription")
                     if tr is None:
                         item = ev.get("item") or {}
                         content = item.get("content")
@@ -512,8 +515,9 @@ class RealtimeSTTClient:
                         tr = tr.get("text", "")
                     texts.append(str(tr or ""))
                 elif etype in ("transcript.text.delta", "transcription.text.delta",
-                               "response.audio_transcript.delta"):
-                    texts.append(str(ev.get("delta", "")))
+                               "response.audio_transcript.delta",
+                               "conversation.item.input_audio_transcription.delta"):
+                    texts.append(str(ev.get("delta") or ev.get("text") or ""))
                 elif etype == "error":
                     err = ev.get("error") or {}
                     raise VoiceError(f"/v1/realtime erreur : {err.get('message', ev)}")

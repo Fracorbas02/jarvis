@@ -121,9 +121,9 @@ def start_ws_realtime(text: str = "bonjour jarvis"):
                         await send_text(writer, {"type": "input_audio_buffer.committed"})
                         await send_text(writer, {
                             "type": "conversation.item.input_audio_transcription.completed",
-                            "item": {"type": "message", "role": "assistant",
-                                     "content": [{"type": "input_audio",
-                                                  "transcription": text}]}})
+                            "item_id": "item_mock",
+                            "content_index": 0,
+                            "transcript": text})
                         await send_text(writer, {"type": "response.done",
                                                  "response": {"status": "completed"}})
                         return
