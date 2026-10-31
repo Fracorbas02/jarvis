@@ -1,0 +1,10 @@
+# Config pour le test de chat GUI : LLM mocké (tests/mock_llm.py) + MCP echo.
+[llm]
+base_url = "http://127.0.0.1:18082/v1"
+model = "mock"
+
+[agent]
+system_prompt = "Tu es Jarvis de test."
+
+[mcp.servers.echo]
+command = ["uv", "run", "python", "mcp_servers/echo.py"]

@@ -13,6 +13,7 @@ import logging
 from nicegui import app, ui
 
 from .backend import GuiBackend
+from .chat_view import ChatView
 from .models import MODES, discover_models
 from .sidebar import build_sidebar
 from .state import GuiState
@@ -57,14 +58,22 @@ def build_page(state: GuiState) -> None:
                 main_box = ui.column().classes("w-full h-full")
                 state.main_box = main_box  # type: ignore[attr-defined]
 
-    def paint_main(mode: str) -> None:
-        main_box.clear()
-        with main_box:
+    # Panneaux de chaque mode, construits une fois puis shown/hidden.
+    panels: dict[str, ui.element] = {}
+    with main_box:
+        panels["llm"] = ChatView(state).root
+        for mode in ("tts", "stt"):
             meta = MODES[mode]
-            with ui.column().classes("w-full h-full items-center justify-center gap-3"):
+            with ui.column().classes(
+                    "w-full h-full items-center justify-center gap-3") as placeholder:
                 ui.icon(meta["icon"], size="64px").classes("text-[#4cc2ff] opacity-80")
                 ui.label(meta["label"]).classes("text-2xl font-bold")
                 ui.label(meta["description"]).classes("text-gray-400")
+            panels[mode] = placeholder
+
+    def paint_main(mode: str) -> None:
+        for m, panel in panels.items():
+            panel.visible = (m == mode)
 
     paint_main(state.mode)
 
