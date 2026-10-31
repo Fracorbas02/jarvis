@@ -72,26 +72,79 @@ def _monitors_xml_scale(path=None) -> float:
     return max(scales) if scales else 0.0
 
 
+def _env_scale(var: str) -> float:
+    """Valeur d'une variable d'env d'échelle (JARVIS_SCALE, GDK_SCALE,
+    QT_SCREEN_SCALE_FACTORS) : premier segment avant ',' ou ';'. 0 si absente."""
+    raw = os.environ.get(var, "")
+    if not raw:
+        return 0.0
+    try:
+        return float(raw.split(",")[0].split(";")[0])
+    except ValueError:
+        return 0.0
+
+
+def _hypr_scale() -> float:
+    """Scale Hyprland : lignes `monitor = <nom>,<res>,<pos>,<scale>` de
+    $XDG_CONFIG_HOME/hypr/hyprland.conf. Best-effort : 0 si absent."""
+    cfg = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
+        os.path.expanduser("~"), ".config")
+    path = os.path.join(cfg, "hypr", "hyprland.conf")
+    best = 0.0
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                line = line.split("#", 1)[0].strip()
+                if not line.startswith("monitor"):
+                    continue
+                parts = [p.strip() for p in line.split("=", 1)[1].split(",")]
+                if len(parts) >= 4:
+                    try:
+                        best = max(best, float(parts[3]))
+                    except ValueError:
+                        pass
+    except OSError:
+        return 0.0
+    return best
+
+
+def _sway_scale() -> float:
+    """Scale Sway/wlroots via `swaymsg -t get_outputs -r` (champ `scale`).
+    Best-effort : 0 si indisponible."""
+    import json
+    import subprocess
+    try:
+        out = subprocess.run(["swaymsg", "-t", "get_outputs", "-r"],
+                             capture_output=True, text=True, timeout=2).stdout
+        data = json.loads(out)
+        scales = [float(o["scale"]) for o in data
+                  if isinstance(o, dict) and o.get("scale")]
+        return max(scales) if scales else 0.0
+    except Exception:  # noqa: BLE001 — best-effort
+        return 0.0
+
+
 def detect_scale(root: _Root, override: float | None = None) -> float:
-    """Facteur d'échelle de l'OS : override > max(env GDK_SCALE/QT, gsettings
-    GNOME, monitors.xml GNOME>=46, DPI X11). Le max des indices couvre X11
-    (Xft.dpi) et Wayland (monitors.xml) où un seul des deux est renseigné."""
+    """Facteur d'échelle de l'OS : override > max(env JARVIS_SCALE/GDK_SCALE/QT,
+    gsettings GNOME, monitors.xml GNOME>=46, Hyprland, Sway, DPI X11).
+    JARVIS_DEBUG_SCALE=1 affiche les hints détectés sur stderr."""
     if override is not None:
         return _clamp(override)
-    hints = [1.0]
-    for var in ("GDK_SCALE", "QT_SCREEN_SCALE_FACTORS"):
-        raw = os.environ.get(var, "")
-        if raw:
-            try:
-                hints.append(float(raw.split(",")[0].split(";")[0]))
-            except ValueError:
-                pass
-    hints.append(_gsettings_scale())
-    hints.append(_monitors_xml_scale())
+    env_hints = [_env_scale(v) for v in
+                 ("JARVIS_SCALE", "GDK_SCALE", "QT_SCREEN_SCALE_FACTORS")]
+    gs, mx, hy, sw = (_gsettings_scale(), _monitors_xml_scale(),
+                      _hypr_scale(), _sway_scale())
     dpi = root.winfo_fpixels("1i")
+    hints = [1.0, *env_hints, gs, mx, hy, sw]
     if dpi > 0:
         hints.append(dpi / BASE_DPI)
-    return _clamp(max(hints))
+    scale = _clamp(max(hints))
+    if os.environ.get("JARVIS_DEBUG_SCALE"):
+        import sys
+        print(f"[jarvis] scale: env={env_hints} gsettings={gs} monitors.xml={mx} "
+              f"hypr={hy} sway={sw} dpi={dpi:.1f} -> scale={scale}",
+              file=sys.stderr)
+    return scale
 
 
 def adaptive_geometry(root: _Root, width_ratio: float = 0.62,
