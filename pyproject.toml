@@ -15,7 +15,13 @@ jarvis = "jarvis.cli:main"
 jarvis-gui = "jarvis.gui.app:main"
 
 [dependency-groups]
-dev = []
+dev = [
+    "pytest>=9.2.0",
+]
+
+[tool.pytest.ini_options]
+addopts = "-p no:cacheprovider -p nicegui.testing.general_fixtures -p nicegui.testing.user_plugin"
+main_file = "tests/gui_main.py"
 
 [build-system]
 requires = ["hatchling"]

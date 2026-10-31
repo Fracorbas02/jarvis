@@ -50,7 +50,13 @@ class GuiBackend:
         log.info("backend démarré, %d outils MCP", len(self.tools.names()))
 
     async def stop(self) -> None:
-        await self.tools.stop()
+        # La fermeture des transports stdio MCP (anyio) échoue si elle n'a pas
+        # lieu dans la même tâche que l'ouverture (harnais de test) : on ne
+        # laisse pas ça faire échouer l'arrêt de la GUI.
+        try:
+            await self.tools.stop()
+        except RuntimeError as exc:
+            log.debug("fermeture MCP dégradée: %s", exc)
         await self.llm.aclose()
         self.started = False
 

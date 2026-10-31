@@ -1,0 +1,11 @@
+# Config allégée pour les tests GUI : un seul MCP server (echo), LLM pointé
+# vers le serveur de dev (le test de statut ne fait que lire /v1/models).
+[llm]
+base_url = "http://127.0.0.1:9931/v1"
+model = "test"
+
+[agent]
+system_prompt = "Tu es Jarvis de test."
+
+[mcp.servers.echo]
+command = ["uv", "run", "python", "mcp_servers/echo.py"]
