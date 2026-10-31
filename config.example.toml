@@ -9,10 +9,9 @@ api_key = "local"          # llama-server accepte n'importe quoi en mode local
 temperature = 0.3
 max_tokens = 4096
 timeout = 300.0             # premier chargement + prompt processing peuvent être longs
-# Modèles thinking (Qwen3.6) : couper le raisonnement pour la réactivité
-# interactive (~76 s -> quelques secondes sur une réponse longue).
-# Supprimer/commenter pour réactiver le thinking (tâches complexes).
-chat_template_kwargs = { enable_thinking = false }
+# Le thinking est gardé : le CLI streame le raisonnement en direct (grisé)
+# pendant la génération. Pour le couper au profit de la latence pure :
+# chat_template_kwargs = { enable_thinking = false }
 
 [agent]
 system_prompt = """Tu es Jarvis, l'assistant local de Bastien, ingénieur réseau et infrastructure.

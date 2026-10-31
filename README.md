@@ -65,24 +65,26 @@ uv run python bench/bench_llm.py --max-tokens 2048 -n 3
 ```
 Mesure TTFT et tokens/s en streaming sur le serveur réel. Le bench distingue
 le raisonnement du contenu (modèles thinking type Qwen3.6) : pour la boucle
-vocale, le TTFT qui compte est celui du premier token de contenu — prévoir un
-budget max-tokens suffisant pour couvrir la phase de raisonnement.
+vocale, le TTFT qui compte est celui du premier token de contenu.
 
-## Latence et modèles thinking
+## Latence, thinking et streaming
 
 Qwen3.6 réfléchit avant de répondre : à ~24 tok/s, une réponse longue avec
 raisonnement peut prendre plus d'une minute (mesuré : ~76 s pour un résumé
-CVE détaillé). Pour l'usage interactif, le thinking se coupe par requête dans
-la config — sans redémarrer llama-server :
+CVE détaillé). Le choix assumé est de garder le thinking et de le rendre
+visible : le CLI streame `delta.reasoning_content` en grisé pendant que le
+modèle réfléchit, puis la réponse, puis le statut des outils — l'équivalent du
+« je réfléchis… » de Le Chat, sauf que c'est la vraie pensée, en direct.
 
+Pour couper le thinking au profit de la latence pure (au cas par cas) :
 ```toml
 [llm]
 chat_template_kwargs = { enable_thinking = false }
 ```
 
-llama-server transmet ces kwargs au chat template du modèle. À retirer au cas
-par cas pour les tâches complexes ; en boucle vocale, le thinking sera à couper
-systématiquement.
+En boucle vocale, le raisonnement ne sera jamais parlé : il servira à décider
+si la réponse vaut l'attente, et à annoncer des étapes (« je consulte NVD… »)
+pendant que le TTS attend le premier token de contenu.
 
 ## Tests (sans LLM réel)
 
@@ -96,10 +98,10 @@ Boucle agent end-to-end contre un mock OpenAI-compatible + un MCP server d'echo.
 ```
 src/jarvis/
   config.py   # chargement TOML
-  llm.py      # client OpenAI-compatible (llama-server)
+  llm.py      # client OpenAI-compatible (llama-server), streaming SSE + tools
   mcp.py      # agrégation d'MCP servers stdio -> schémas outils
-  agent.py    # boucle tool-calling
-  cli.py      # REPL
+  agent.py    # boucle tool-calling (streaming activable)
+  cli.py      # REPL avec affichage streaming du raisonnement
 mcp_servers/  # nettools (ping/dig/traceroute), cve (NVD 2.0 : détail CVE,
               #  recherche par mots-clés + fenêtre de jours, veille), echo (test)
 bench/       # mesure tok/s / TTFT

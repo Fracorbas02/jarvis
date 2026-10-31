@@ -22,18 +22,23 @@ class TurnTrace:
 
 class Agent:
     def __init__(self, llm: LLMClient, tools: McpToolProvider,
-                 system_prompt: str, max_iterations: int = 8):
+                 system_prompt: str, max_iterations: int = 8,
+                 stream: bool = True):
         self.llm = llm
         self.tools = tools
         self.system_prompt = system_prompt
         self.max_iterations = max_iterations
+        # streaming par défaut : le raisonnement s'affiche en direct
+        self.stream = stream
 
     async def turn(self, history: list[dict], user_text: str,
-                   on_tool_call=None) -> tuple[str, list[dict], TurnTrace]:
+                   on_tool_call=None, on_reasoning=None, on_content=None
+                   ) -> tuple[str, list[dict], TurnTrace]:
         """Exécute un tour complet. Retourne (réponse_texte, historique_maj, trace).
 
         L'historique géré par l'appelant inclut ce tour ; il suffit de le passer
-        au tour suivant tel quel.
+        au tour suivant tel quel. En streaming, on_reasoning/on_content sont
+        appelés fragment par fragment pendant la génération.
         """
         if not any(m.get("role") == "system" for m in history):
             history = [{"role": "system", "content": self.system_prompt}, *history]
@@ -44,10 +49,11 @@ class Agent:
 
         for iteration in range(self.max_iterations):
             trace.iterations = iteration + 1
-            msg = await self.llm.chat(history, tools=tools)
+            msg = await self.llm.chat(history, tools=tools, stream=self.stream,
+                                      on_reasoning=on_reasoning,
+                                      on_content=on_content)
 
             if not msg.get("tool_calls"):
-                history.append(msg)
                 return msg.get("content") or "", history, trace
 
             history.append(msg)
