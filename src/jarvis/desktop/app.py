@@ -153,7 +153,8 @@ def main() -> None:
         import customtkinter as _ctk
         lbl = _ctk.CTkLabel(app.main, text="x", font=_ctk.CTkFont(size=13))
         root.update_idletasks()
-        print(f"[jarvis] debug: widget_scaling={_ctk.get_widget_scaling()} "
+        print("[jarvis] debug: "
+              f"widget_scaling={_ctk.get_widget_scaling()} "
               f"window_scaling={_ctk.get_window_scaling()} "
               f"screen={root.winfo_screenwidth()}x{root.winfo_screenheight()} "
               f"dpi={root.winfo_fpixels('1i'):.1f} "
