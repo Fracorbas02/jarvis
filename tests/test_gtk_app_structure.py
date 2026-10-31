@@ -76,6 +76,10 @@ def main() -> int:
         import inspect
         init_src = inspect.getsource(gtk_widgets.MessageBox.__init__)
         assert "self.tools_box" in init_src and "self.meta_label" in init_src
+        # webview assistant : cachée à la création (sinon bulle fantôme), affichée au rendu
+        assert "self.webview.set_visible(False)" in init_src
+        render_src = inspect.getsource(gtk_widgets.MessageBox._render_md)
+        assert "self.webview.set_visible(True)" in render_src
         # et la property text_label ne doit pas contenir de code après son return
         prop_src = inspect.getsource(gtk_widgets.MessageBox.text_label.fget)
         body = prop_src.split("return", 1)[1]
