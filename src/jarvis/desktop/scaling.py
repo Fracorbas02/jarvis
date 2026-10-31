@@ -222,7 +222,10 @@ def _monitors_xml_layout(path=None):
         path = os.path.join(cfg, "monitors.xml")
     try:
         root = ET.parse(path).getroot()
-    except Exception:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
+        if os.environ.get("JARVIS_DEBUG_SCALE"):
+            import sys
+            print(f"[jarvis] debug: monitors.xml {path} illisible: {e}", file=sys.stderr)
         return []
     out = []
     for lm in root.iter("logicalmonitor"):
@@ -248,6 +251,9 @@ def _pointer_monitor(root, scale: float) -> tuple[int, int, int, int] | None:
     except Exception:  # noqa: BLE001
         return None
     mons = _monitors_xml_layout()
+    if os.environ.get("JARVIS_DEBUG_SCALE"):
+        import sys
+        print(f"[jarvis] debug: _monitors_xml_layout -> {mons}", file=sys.stderr)
     if mons:
         for (x, y, w, h, s) in mons:
             if x * s <= px < (x + w) * s and y * s <= py < (y + h) * s:
