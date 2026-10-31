@@ -60,7 +60,8 @@ class VoiceConfig:
     # binaire d'enregistrement micro (arecord par défaut, fallback ffmpeg) ;
     # "-" en dernier élément = le chemin du WAV temporaire y est concaténé
     record_cmd: list[str] = field(
-        default_factory=lambda: ["arecord", "-q", "-f", "S16_LE", "-r", "16000", "-c", "1", "-"])
+        default_factory=lambda: ["arecord", "-q", "-t", "raw", "-f", "S16_LE",
+                                 "-r", "16000", "-c", "1", "-"])
     # lecteur audio pour les WAV produits (ffplay/aplay/paplay/play)
     play_cmd: list[str] = field(
         default_factory=lambda: ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"])

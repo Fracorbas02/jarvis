@@ -59,9 +59,17 @@ model = "~/models/tts/voxtral-4b-tts-q4_k.gguf"
 # response_format = "mp3"         # mp3 | wav | pcm | flac | opus
 
 # Enregistrement micro (CLI) et lecture des WAV produits.
-# "-" en dernier élément de record_cmd = chemin du WAV temporaire concaténé.
+# "-" en dernier élément de record_cmd = le binaire écrit sur stdout (PCM s16le
+# pour ffmpeg, WAV pour arecord sans -t raw) ; sinon c'est le chemin du WAV.
+# arecord absent -> fallback automatique sur ffmpeg (-f alsa -i default).
+# Pour forcer une source micro précise (PipeWire), ex. :
+#   pactl list short sources | grep alsa_input | grep -v monitor
+#   pactl set-default-source <source>   (sinon « default » est suivi)
+# record_cmd = ["ffmpeg", "-loglevel", "error", "-f", "pulse", "-i",
+#               "alsa_input.pci-0000_d4_00.6.HiFi__Mic1__source",
+#               "-ar", "16000", "-ac", "1", "-f", "s16le", "-"]
 # [voice]
-# record_cmd = ["arecord", "-q", "-f", "S16_LE", "-r", "16000", "-c", "1", "-"]
+# record_cmd = ["arecord", "-q", "-t", "raw", "-f", "S16_LE", "-r", "16000", "-c", "1", "-"]
 # play_cmd   = ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"]
 
 # MCP servers stdio : name = commande (list). Préfixe des outils : "<name>__<tool>".

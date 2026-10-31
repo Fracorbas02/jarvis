@@ -451,8 +451,9 @@ async def record_wav(seconds: float, voice_cfg: VoiceConfig,
         return await proc.communicate()
 
     if not stdout_to_file:
-        # "-" en dernier élément : le binaire produit du PCM s16le sur stdout
-        argv = argv[:-1]
+        # "-" en dernier élément = sortie stdout du binaire (arecord/ffmpeg) :
+        # on le GARDE (ffmpeg exige une sortie explicite, "At least one output
+        # file must be specified" sinon).
         proc = await asyncio.create_subprocess_exec(
             *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         pcm, err = await _stop_after(proc, seconds)
@@ -460,6 +461,9 @@ async def record_wav(seconds: float, voice_cfg: VoiceConfig,
         # pas une erreur tant qu'on a du PCM exploitable.
         if not pcm:
             raise VoiceError(f"{cmd[0]} a échoué : {err.decode(errors='replace')[:300]}")
+        if pcm[:4] == b"RIFF":
+            # arecord sans "-t raw" envoie un header WAV de 44 octets sur stdout
+            pcm = pcm[44:]
         write_wav(out_path, pcm)
     else:
         argv.append(str(out_path))
