@@ -259,10 +259,10 @@ class JarvisWindow(Adw.ApplicationWindow):
 
         # durée d'enregistrement
         g_test = Adw.PreferencesGroup(title="Test de transcription")
-        row_dur = Adw.SpinRow(title="Durée d'enregistrement (s)",
+        row_dur = Adw.SpinRow(title="Dur\u00e9e d'enregistrement (s, 0 = auto jusqu'\u00e0 la fin de parole)",
                               adjustment=Gtk.Adjustment(
-                                  value=float(self.settings.get("stt_test_seconds", 6)),
-                                  lower=2, upper=60, step_increment=1,
+                                  value=float(self.settings.get("stt_test_seconds", 0)),
+                                  lower=0, upper=60, step_increment=1,
                                   page_increment=5))
         row_dur.connect("notify::value", self._on_stt_test_seconds_changed)
         g_test.add(row_dur)
@@ -328,9 +328,9 @@ class JarvisWindow(Adw.ApplicationWindow):
 
     def _on_stt_test_mic(self, _btn) -> None:
         self.stt_test_mic.set_sensitive(False)
-        secs = float(self.settings.get("stt_test_seconds", 6))
+        secs = float(self.settings.get("stt_test_seconds", 0))
         self.stt_result_label.set_text("")
-        self.stt_result_meta.set_text(f"Enregistrement… {secs:.0f}s")
+        self.stt_result_meta.set_text("Parle… (auto, fin de parole détectée)" if secs <= 0 else f"Enregistrement… {secs:.0f}s")
         self.backend.stt_test_transcribe(secs,
                                          device=getattr(self, "mic_device", "default"))
 
@@ -814,8 +814,8 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.chat_mic.set_sensitive(False)
         self.mic_button.set_sensitive(False)
         self.chat_entry.set_sensitive(False)
-        self._set_chat_hint("Enregistrement…")
-        self.backend.stt_record_and_transcribe(6.0, device=getattr(self, "mic_device", "default"))
+        self._set_chat_hint("Parle… (fin de parole détectée automatiquement)")
+        self.backend.stt_record_and_transcribe(0.0, device=getattr(self, "mic_device", "default"))
 
     def _on_entry_activate(self, _widget) -> None:
         text = self.chat_entry.get_text().strip()
@@ -941,7 +941,7 @@ class JarvisWindow(Adw.ApplicationWindow):
             self._busy = False
             self._set_busy_ui(False)
         elif t == "stt_recording":
-            self._set_chat_hint(f"Enregistrement… {event['seconds']:.0f}s")
+            self._set_chat_hint("Parle…" if not event.get("seconds") else f"Enregistrement… {event['seconds']:.0f}s")
         elif t == "stt_done":
             self._set_chat_hint("")
             self._set_busy_ui(False)
