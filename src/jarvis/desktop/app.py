@@ -211,7 +211,6 @@ def _debug_scale(root, scale: float, app=None) -> None:
                         f"[jarvis] debug: label JARVIS winfo_h={c.winfo_height()} "
                         f"reqh={c.winfo_reqheight()} spec={spec} "
                         f"font_actual={f.actual()} measure={f.measure('JARVIS')}px")
-                    f.destroy()
                     break
         except Exception:
             lines.append("[jarvis] debug: ERREUR scan widgets:")
