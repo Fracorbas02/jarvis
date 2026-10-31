@@ -79,7 +79,7 @@ def main() -> int:
         # hexpand sur la MessageBox : sinon halign START/END (bulles user/assistant) n'a
         # aucun effet et toutes les bulles s'étalent pleine largeur
         assert "self.set_hexpand(True)" in init_src
-        # la bulle interne suit le halign de la MessageBox (pas de FILL forcée)
+        # la bulle interne suit le halign de la MessageBox (hexpand True, pas de FILL forcée)
         assert "bubble.set_hexpand(True)" in init_src
         assert "Align.FILL" not in init_src
         # blocs de code : jamais de wrap (sinon les sauts de ligne disparaissent)
