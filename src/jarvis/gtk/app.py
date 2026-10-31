@@ -981,6 +981,8 @@ class JarvisWindow(Adw.ApplicationWindow):
     def _toast(self, text: str) -> None:
         """Notification : empilée dans la cloche (badge + popover), jamais en bas."""
         self._notifs.append(text)
+        if len(self._notifs) > 100:  # borne mémoire (affichage tronqué à 30 de toute façon)
+            del self._notifs[:-100]
         self._refresh_notif_ui()
 
     def do_close_request(self) -> bool:
