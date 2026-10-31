@@ -25,15 +25,21 @@ search_cve au lieu de chercher sans fenêtre de date."""
 # (modèle en chemin relatif à ~/models ou absolu).
 
 [voice.stt]
+# protocol "whisper" (défaut) : whisper-server + ggml whisper, POST /inference.
+# protocol "voxtral"          : llama-server + modèle audio llama.cpp (Voxtral
+#                               Mini 4B Realtime) -> DANS CE CAS binary ET model
+#                               changent aussi (voir le bloc commenté ci-dessous).
 binary = "whisper-server"                      # binaire whisper.cpp (examples/server)
 base_url = "http://127.0.0.1:8178"
 model = "~/models/stt/Q4_K_M.gguf"              # ggml whisper (ex. ggml-large-v3)
 # protocol = "whisper"                          # défaut : whisper-server, POST /inference
-# protocol = "voxtral"                          # llama-server + modèle audio llama.cpp
-#                                               # (ex. Voxtral Mini 4B Realtime), sert
-#                                               # POST /v1/audio/transcriptions ; dans ce cas
-#                                               # binary = "llama-server" et model = le GGUF
-#                                               # texte (mistral3). Voxtral Realtime a aussi
+# --- décommenter pour Voxtral Mini 4B Realtime (llama-server + mmproj) ---
+# [voice.stt]
+# binary = "llama-server"
+# base_url = "http://127.0.0.1:8178"
+# model = "~/models/stt/Voxtral-Mini-4B-Realtime-2602-Q4_K_M.gguf"
+# protocol = "voxtral"
+# Voxtral Realtime a aussi
 #                                               # besoin de son mmproj (encodeur audio) :
 #                                               # s'il est dans le même dossier que le modèle
 #                                               # (mmproj*.gguf), il est ajouté automatiquement

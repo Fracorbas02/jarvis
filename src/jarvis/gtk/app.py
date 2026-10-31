@@ -358,7 +358,15 @@ class JarvisWindow(Adw.ApplicationWindow):
         if event.get("mmproj"):
             cfg_txt += f" · mmproj {event['mmproj']}"
         elif (event.get("protocol") or "") == "voxtral":
-            cfg_txt += " · mmproj NON détecté (même dossier que le modèle ou extra_args)"
+            cfg_txt += " \u00b7 mmproj NON d\u00e9tect\u00e9 (m\u00eame dossier que le mod\u00e8le ou extra_args)"
+        proto = (event.get("protocol") or "whisper")
+        binary = (event.get("binary") or "")
+        if proto == "voxtral" and "llama" not in binary:
+            cfg_txt += (" \u2014 incoh\u00e9rent : protocol=voxtral n\u00e9cessite "
+                        'binary = "llama-server" dans [voice.stt]')
+        elif proto == "whisper" and "whisper" not in binary:
+            cfg_txt += (" \u2014 incoh\u00e9rent : protocol=whisper n\u00e9cessite "
+                        'binary = "whisper-server" dans [voice.stt]')
         self.stt_cfg_row.set_subtitle(cfg_txt)
         if self._stt_state == "managed":
             self.stt_start_btn.set_label("Arrêter le serveur STT")
