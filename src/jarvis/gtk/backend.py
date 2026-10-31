@@ -169,6 +169,8 @@ class GtkBackend:
                     self.session_id = None
             self.events.put({"type": "backend_ready",
                              "tools": self.tools.names(),
+                             "tools_by_server": self.tools.by_server(),
+                             "tool_descriptions": self.tools.descriptions(),
                              "session_id": self.session_id,
                              "history_len": len(self.history)})
         except Exception as exc:  # noqa: BLE001 — remonter à l'UI

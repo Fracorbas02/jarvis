@@ -57,7 +57,7 @@ def main() -> int:
                         "_fill_mic_devices", "_on_mic_permission",
                         "_ask_mic_permission_first_run", "_on_mic_perm_response",
                         "_dispatch", "_on_server_status", "_on_turn_done",
-                        "_replay_history"):
+                        "_replay_history", "_fill_tools_group"):
             assert hasattr(gtk_app.JarvisWindow, handler), handler
 
         # rendu Markdown des réponses : MessageBox.set_markdown / append_text
