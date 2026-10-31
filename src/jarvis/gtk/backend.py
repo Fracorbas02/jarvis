@@ -336,7 +336,9 @@ class GtkBackend:
                 # modèle servi actuellement (pour redémarrer dessus)
                 st = await server_mod.get_status(self.cfg.llm.base_url)
                 await server_mod.stop_server(self.cfg.llm.base_url)
-                mp = model_path or (str(self.models_llm[0].path) if self.models_llm else None)
+                # même GGUF que celui actuellement servi par le serveur géré
+                mp = (model_path or server_mod.last_managed_model()
+                      or (str(self.models_llm[0].path) if self.models_llm else None))
                 if not mp:
                     self.events.put({"type": "context_reset", "which": which,
                                      "ok": False, "detail": "aucun GGUF local trouvé"})
