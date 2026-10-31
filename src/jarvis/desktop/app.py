@@ -160,6 +160,20 @@ def _debug_scale(root, scale: float, app=None) -> None:
             lines.append(
                 f"[jarvis] debug: chat default font={tb.cget('font')} "
                 f"tag reasoning font={tb.tag_cget('reasoning', 'font')}")
+            lines.append(
+                f"[jarvis] debug: root winfo={root.winfo_width()}x{root.winfo_height()} "
+                f"req={root.winfo_reqwidth()}x{root.winfo_reqheight()} "
+                f"screen={root.winfo_screenwidth()}x{root.winfo_screenheight()} "
+                f"screenmm={root.winfo_screenmmwidth()}x{root.winfo_screenmmheight()}mm "
+                f"pw={app.pw.winfo_width()}x{app.pw.winfo_height()} "
+                f"sidebar_w={app.sidebar.winfo_width()} chat_w={app.chat.winfo_width()}")
+            # hauteur réelle d'un label JARVIS (titre sidebar)
+            for c in app.sidebar.winfo_children():
+                if isinstance(c, _ctk.CTkLabel) and c.cget("text") == "JARVIS":
+                    lines.append(
+                        f"[jarvis] debug: label JARVIS winfo_h={c.winfo_height()} "
+                        f"reqh={c.winfo_reqheight()} font={c._label.cget('font')}")
+                    break
         except Exception:
             lines.append("[jarvis] debug: ERREUR scan widgets:")
             lines.extend(traceback.format_exc().splitlines())
