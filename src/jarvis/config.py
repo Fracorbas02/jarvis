@@ -83,7 +83,7 @@ class TTSAPIConfig:
 
     enabled   : si true, les réponses lues à voix haute passent par l'API
     base_url  : racine de l'API (défaut https://api.mistral.ai)
-    model     : modèle TTS (voxtral-mini-tts-2603 recommandé, voxtral-tts-2603 qualité max)
+    model     : modèle TTS (défaut voxtral-mini-tts-3-0 = Voxtral TTS 3, dernier ; ou 2603/latest)
     voice_id  : voix (preset "voice_592"/"gb_jane_neutral" ou voix clonée du workspace)
     response_format : mp3 (défaut) | wav | pcm | flac | opus
     La clé API n'est PAS ici : elle vit dans ~/.config/jarvis/mistral.json
@@ -91,7 +91,7 @@ class TTSAPIConfig:
     """
     enabled: bool = False
     base_url: str = "https://api.mistral.ai"
-    model: str = "voxtral-mini-tts-2603"
+    model: str = "voxtral-mini-tts-3-0"  # Voxtral TTS 3 (dernier, 20/10/2026)
     voice_id: str = "voice_592"  # Marie, FR
     response_format: str = "mp3"
 

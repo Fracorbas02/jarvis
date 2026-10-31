@@ -70,6 +70,15 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get("Authorization") != "Bearer test-key-123":
             self._json({"message": "invalid api key"}, code=401)
             return
+        if self.path.startswith("/v1/models"):
+            self._json({"object": "list", "data": [
+                {"id": "mistral-large-latest", "object": "model"},
+                {"id": "voxtral-mini-tts-3-0", "object": "model"},
+                {"id": "voxtral-mini-tts-2603", "object": "model"},
+                {"id": "voxtral-tts-2603", "object": "model"},
+                {"id": "voxtral-mini-transcribe-3-0", "object": "model"},
+            ]})
+            return
         if self.path.startswith("/v1/audio/voices"):
             self._json({"result": {"data": [
                 {"id": "voice_592", "name": "Marie", "slug": "voice_592",
@@ -265,6 +274,62 @@ def test_list_voices_http_error_raises():
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+def test_tts_models_contient_la_v3():
+    """Le fallback statique inclut le dernier modele (Voxtral TTS 3, 20/10/2026)."""
+    from jarvis.mistral_tts import TTS_MODELS
+    assert "voxtral-mini-tts-3-0" in TTS_MODELS
+    assert TTS_MODELS[0] == "voxtral-mini-tts-3-0"
+
+
+def test_list_tts_models_filtre_dynamiquement():
+    """GET /v1/models -> seuls les modeles contenant 'tts' sont gardes,
+    y compris le nouveau voxtral-mini-tts-3-0."""
+    srv, t = _start_mock()
+    port = srv.server_address[1]
+    try:
+        async def go():
+            c = MistralTTSClient("test-key-123", base_url=f"http://127.0.0.1:{port}")
+            try:
+                return await c.list_tts_models()
+            finally:
+                await c.aclose()
+        models = asyncio.run(go())
+        assert "voxtral-mini-tts-3-0" in models
+        assert "voxtral-mini-tts-2603" in models
+        assert "voxtral-tts-2603" in models
+        # les modeles non-TTS sont exclus
+        assert "mistral-large-latest" not in models
+        assert "voxtral-mini-transcribe-3-0" not in models
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_list_tts_models_401_raises():
+    srv, t = _start_mock()
+    port = srv.server_address[1]
+    try:
+        async def go():
+            c = MistralTTSClient("mauvaise", base_url=f"http://127.0.0.1:{port}")
+            try:
+                await c.list_tts_models()
+                return None
+            except MistralTTSError as e:
+                return str(e)
+            finally:
+                await c.aclose()
+        msg = asyncio.run(go())
+        assert msg and "401" in msg
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_default_model_est_la_v3():
+    from jarvis.mistral_tts import DEFAULT_MODEL
+    assert DEFAULT_MODEL == "voxtral-mini-tts-3-0"
 
 
 def test_config_tts_api_toml(tmp_path):

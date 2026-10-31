@@ -60,14 +60,19 @@ HELP = """\
                    (le modèle peut aussi appeler l'outil jarvis__compact seul)
   /reset           efface l'historique de conversation
   /verbose         bascule les logs console en DEBUG (fichier: ~/.cache/jarvis/jarvis.log)
-  /tts <texte>     synthétise le texte en WAV (serveur TTS local, démarré si besoin)
+  /tts <texte>     synthétise le texte (API Mistral si [voice.tts_api] enabled, sinon local)
   /stt [fichier]   transcrit un WAV ; sans argument, enregistre 5 s de micro d'abord
   /voice           statut des serveurs voix (STT whisper-server, TTS llama-server)
+  /ttsapi <texte>  TEST : synthétise via l'API Mistral (clé mistral.json / MISTRAL_API_KEY)
+                   avec le modèle+voix configurés, joue le résultat
+  /apimodels       TEST : liste les modèles TTS du compte Mistral (GET /v1/models, filtre tts)
+  /apivoices       TEST : liste les voix du compte Mistral (GET /v1/audio/voices)
   /quit            quitte (ou Ctrl+D)"""
 
 COMMANDS = ["/help", "/tools", "/thinking", "/tool", "/history", "/undo",
             "/copy", "/save", "/sessions", "/load", "/new", "/compact",
-            "/reset", "/verbose", "/tts", "/stt", "/voice", "/quit"]
+            "/reset", "/verbose", "/tts", "/stt", "/voice", "/ttsapi",
+            "/apimodels", "/apivoices", "/quit"]
 
 
 def _state_dir() -> Path:
@@ -420,6 +425,104 @@ async def _cmd_stt(cfg, console, args: str) -> None:
     console.print(f"[bold cyan]transcription[/] : {text or '(vide)'}")
 
 
+async def _cmd_ttsapi(cfg, console, args: str) -> None:
+    """/ttsapi <texte> : TEST de l'API Mistral TTS (clé mistral.json ou env),
+    avec le modèle/voix de [voice.tts_api]. Ne touche pas au réglage enabled."""
+    from .mistral_tts import (MistralTTSClient, MistralTTSError, has_api_key,
+                              load_api_key)
+    text = args.strip() or "Bonjour, ceci est un test de la voix API Mistral."
+    tts_api = getattr(cfg, "tts_api", None)
+    if tts_api is None:
+        console.print("[bold red]erreur:[/] pas de section [voice.tts_api] dans la config")
+        return
+    if not has_api_key():
+        console.print("[bold red]erreur:[/] aucune clé API Mistral "
+                      "(~/.config/jarvis/mistral.json ou export MISTRAL_API_KEY) — "
+                      "définis-la dans l'app (Réglages > Voix API Mistral) ou en env")
+        return
+    console.print(f"[dim]API {tts_api.base_url} · modèle {tts_api.model} · "
+                  f"voix {tts_api.voice_id} · format {tts_api.response_format} · "
+                  f"clé: {'env' if __import__('os').environ.get('MISTRAL_API_KEY') else 'mistral.json'} ({len(load_api_key())} car.)[/]")
+    try:
+        t0 = time.monotonic()
+        client = MistralTTSClient(load_api_key(), base_url=tts_api.base_url,
+                                  model=tts_api.model)
+        try:
+            audio = await client.synthesize(
+                text, voice_id=tts_api.voice_id or None,
+                response_format=tts_api.response_format or "mp3")
+        finally:
+            await client.aclose()
+        ext = tts_api.response_format or "mp3"
+        out = _state_dir() / f"ttsapi-{datetime.now():%H%M%S}.{ext}"
+        out.write_bytes(audio)
+        console.print(f"[green]OK[/] {len(audio) / 1024:.0f} Ko en "
+                      f"{time.monotonic() - t0:.1f}s -> {out}")
+        try:
+            player = await play_wav(out, cfg.voice)
+            console.print(f"[dim]lecture via {player}[/]")
+        except VoiceError as exc:
+            console.print(f"[yellow]lecture impossible:[/] {exc}")
+    except MistralTTSError as exc:
+        console.print(f"[bold red]erreur API:[/] {exc}")
+
+
+async def _cmd_apimodels(cfg, console) -> None:
+    """/apimodels : TEST GET /v1/models (filtre tts) sur le compte Mistral."""
+    from .mistral_tts import (MistralTTSClient, MistralTTSError, TTS_MODELS,
+                              has_api_key, load_api_key)
+    if not has_api_key():
+        console.print("[bold red]erreur:[/] aucune clé API Mistral — "
+                      "liste statique de secours :")
+        for m in TTS_MODELS:
+            console.print(f"  {m}")
+        return
+    tts_api = cfg.tts_api
+    client = MistralTTSClient(load_api_key(), base_url=tts_api.base_url,
+                              model=tts_api.model, timeout=20.0)
+    try:
+        models = await client.list_tts_models()
+    except MistralTTSError as exc:
+        console.print(f"[bold red]erreur API:[/] {exc}")
+        console.print("[dim]liste statique de secours :[/]")
+        for m in TTS_MODELS:
+            console.print(f"  {m}")
+        return
+    finally:
+        await client.aclose()
+    console.print(f"[green]{len(models)} modèle(s) TTS[/] sur {tts_api.base_url} "
+                  f"(modèle courant: {tts_api.model}) :")
+    for m in models:
+        mark = " [dim]<-- courant[/]" if m == tts_api.model else ""
+        console.print(f"  {m}{mark}")
+
+
+async def _cmd_apivoices(cfg, console) -> None:
+    """/apivoices : TEST GET /v1/audio/voices sur le compte Mistral."""
+    from .mistral_tts import (MistralTTSClient, MistralTTSError, has_api_key,
+                              load_api_key)
+    if not has_api_key():
+        console.print("[bold red]erreur:[/] aucune clé API Mistral")
+        return
+    tts_api = cfg.tts_api
+    client = MistralTTSClient(load_api_key(), base_url=tts_api.base_url,
+                              model=tts_api.model, timeout=20.0)
+    try:
+        voices = await client.list_voices()
+    except MistralTTSError as exc:
+        console.print(f"[bold red]erreur API:[/] {exc}")
+        return
+    finally:
+        await client.aclose()
+    console.print(f"[green]{len(voices)} voix[/] (voix courante: {tts_api.voice_id}) :")
+    for v in voices:
+        mark = " [dim]<-- courante[/]" if v.id == tts_api.voice_id else ""
+        kind = "custom" if v.kind == "custom" else "preset"
+        lang = f" {v.language}" if v.language else ""
+        gender = f", {v.gender}" if v.gender else ""
+        console.print(f"  {v.id}  {v.name} [{kind}{lang}{gender}]{mark}")
+
+
 async def amain() -> int:
     _setup_logging()
     try:
@@ -623,8 +726,17 @@ async def amain() -> int:
                     console.print(f"[dim]usage: /tool N "
                                   f"(1..{max(len(display.last_tool_results), 1)})[/]")
                 continue
+            if user.startswith("/ttsapi"):
+                await _cmd_ttsapi(cfg, console, user[len("/ttsapi"):])
+                continue
             if user.startswith("/tts"):
                 await _cmd_tts(cfg, console, user[len("/tts"):])
+                continue
+            if user == "/apimodels":
+                await _cmd_apimodels(cfg, console)
+                continue
+            if user == "/apivoices":
+                await _cmd_apivoices(cfg, console)
                 continue
             if user.startswith("/stt"):
                 await _cmd_stt(cfg, console, user[len("/stt"):])

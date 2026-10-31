@@ -16,8 +16,28 @@ from __future__ import annotations
 import argparse
 import logging
 import queue
+import sys
 
-import gi
+try:
+    import gi
+except ModuleNotFoundError:
+    # PyGObject est un binding SYSTEME : jamais installe par uv/pip.
+    # Installe-le via ton gestionnaire de paquets (voir README, section GTK4).
+    sys.stderr.write(
+        "erreur: module 'gi' (PyGObject) introuvable.\n"
+        "  gi est un paquet SYSTEME (jamais installe par uv/pip) ET le venv uv\n"
+        "  utilise son propre Python isole : il ne voit pas les site-packages\n"
+        "  systeme. Deux etapes :\n"
+        "    1) paquet systeme (une fois) :\n"
+        "         Arch/Manjaro :  sudo pacman -S python-gobject gtk4 libadwaita\n"
+        "         Debian/Ubuntu:  sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1\n"
+        "         Fedora:         sudo dnf install python3-gobject gtk4 libadwaita\n"
+        "    2) recreer le venv sur le Python systeme AVEC les site-packages systeme :\n"
+        "         rm -rf .venv\n"
+        "         uv venv --system-site-packages --python /usr/bin/python3\n"
+        "         uv sync --frozen\n"
+        "  puis relance: uv run jarvis-app\n")
+    raise SystemExit(2) from None
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
@@ -317,19 +337,29 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.api_switch_row.connect("notify::active", self._on_tts_api_switch)
         g_api.add(self.api_switch_row)
 
-        # modèle TTS
+        # modèle TTS : rempli d'abord avec la liste statique, puis dynamiquement
+        # via GET /v1/models (bouton Rafraîchir + auto après'enregistrement de la clé)
         self.api_model_row = Adw.ComboRow(
             title="Modèle TTS",
-            subtitle="voxtral-mini-tts-2603 = rapide, voxtral-tts-2603 = qualité max")
+            subtitle="liste rafraîchie via l'API (GET /v1/models) ; voxtral-mini-tts-3-0 = dernier (Voxtral TTS 3)")
         from ..mistral_tts import TTS_MODELS
-        api_models = TTS_MODELS
-        self.api_model_row.set_model(Gtk.StringList.new(api_models))
+        self._api_model_ids = list(TTS_MODELS)
+        self.api_model_row.set_model(Gtk.StringList.new(self._api_model_ids))
         try:
-            self.api_model_row.set_selected(api_models.index(tts_api.model))
+            self.api_model_row.set_selected(self._api_model_ids.index(tts_api.model))
         except ValueError:
             self.api_model_row.set_selected(0)
         self.api_model_row.connect("notify::selected", self._on_tts_api_model)
         g_api.add(self.api_model_row)
+
+        row_refresh_models = Adw.ActionRow(
+            title="Lister les modèles TTS du compte (API)",
+            subtitle="GET /v1/models, filtre 'tts' — pour voir les nouveaux modèles (ex. voxtral-mini-tts-3-0)")
+        btn_refresh_models = Gtk.Button(label="Rafraîchir", valign=Gtk.Align.CENTER)
+        btn_refresh_models.connect("clicked",
+                                   lambda b: self.backend.list_mistral_tts_models())
+        row_refresh_models.add_suffix(btn_refresh_models)
+        g_api.add(row_refresh_models)
 
         # voix : presets + voix du workspace (rafraîchie via l'API)
         self.api_voice_row = Adw.ComboRow(
@@ -541,9 +571,10 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.api_key_row.set_subtitle(self._api_key_subtitle())
         self._toast("Clé API enregistrée localement (mistral.json, 0600)"
                     if saved else "Clé API supprimée")
-        # après une nouvelle clé, on peut lister les voix du compte
+        # après une nouvelle clé, on peut lister voix ET modèles du compte
         if saved:
             self.backend.list_mistral_voices()
+            self.backend.list_mistral_tts_models()
 
     def _on_tts_api_switch(self, row, _pspec) -> None:
         self.backend.set_tts_api(enabled=row.get_active())
@@ -551,10 +582,21 @@ class JarvisWindow(Adw.ApplicationWindow):
                     + " (le TTS local reste le secours)")
 
     def _on_tts_api_model(self, row, _pspec) -> None:
-        from ..mistral_tts import TTS_MODELS
         idx = row.get_selected()
-        if 0 <= idx < len(TTS_MODELS):
-            self.backend.set_tts_api(model=TTS_MODELS[idx])
+        models = getattr(self, "_api_model_ids", [])
+        if 0 <= idx < len(models):
+            self.backend.set_tts_api(model=models[idx])
+
+    def _fill_api_models(self, models: list[str], current: str = "") -> None:
+        """Remplit le ComboRow des modèles TTS (liste dynamique API)."""
+        if not models:
+            return
+        self._api_model_ids = list(models)
+        self.api_model_row.set_model(Gtk.StringList.new(self._api_model_ids))
+        sel = 0
+        if current in self._api_model_ids:
+            sel = self._api_model_ids.index(current)
+        self.api_model_row.set_selected(sel)
 
     def _fill_api_voices(self, voices: list[tuple[str, str]], current: str = "") -> None:
         """Remplit le ComboRow des voix. voices = [(label, voice_id)]."""
@@ -774,6 +816,14 @@ class JarvisWindow(Adw.ApplicationWindow):
                 self._toast(f"Micro indisponible : {event.get('message', '')}")
         elif t == "mic_permission":
             self._on_mic_permission(event.get("state", "unknown"))
+        elif t == "mistral_tts_models":
+            models = event.get("models") or []
+            if models:
+                current = self.backend.cfg.tts_api.model
+                self._fill_api_models(models, current=current)
+                self._toast(f"{len(models)} modèles TTS récupérés depuis l'API")
+            if event.get("error"):
+                self._toast(f"Modèles API : {event['error']}")
         elif t == "mistral_voices":
             voices = [(f"{v.get('name', v['id'])} ({v.get('language', '')}{', ' + v['gender'] if v.get('gender') else ''})"
                        + (" [custom]" if v.get("kind") == "custom" else ""),
