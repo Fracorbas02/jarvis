@@ -1000,9 +1000,12 @@ class JarvisWindow(Adw.ApplicationWindow):
     def _fill_tools_group(self, by_server: dict, descriptions: dict) -> None:
         """Remplit le groupe 'Outils MCP' : une ligne résumé + un ExpanderRow
         par serveur contenant ses outils (nom + description en sous-titre)."""
-        # vide l'ancien contenu
-        while (child := self.tools_group.get_first_child()) is not None:
-            self.tools_group.remove(child)
+        # vide l'ancien contenu : AdwPreferencesGroup.add() place les lignes dans
+        # une GtkBox interne, remove() sur le groupe plante (non-child). On vide
+        # la box interne à la place.
+        box = self.tools_group.get_first_child()
+        while box is not None and (child := box.get_first_child()) is not None:
+            box.remove(child)
         total = sum(len(v) for v in by_server.values())
         if not total:
             row = Adw.ActionRow(title="Aucun outil",
