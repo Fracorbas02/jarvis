@@ -1,10 +1,19 @@
 """Couche d'affichage terminal (rich) du REPL Jarvis.
 
-- Raisonnement du modèle : panneau grisé en direct (Live) pendant le thinking,
-  puis replié à la fin du stream en une ligne résumé (durée, tokens) ; le texte
-  complet reste consultable via /thinking (Display.last_reasoning).
-- Réponse : rendue en Markdown dans un panneau, en streaming (throttle ~15 Hz
-  pour ne pas reparser à chaque token).
+- Raisonnement du modèle : panneau grisé réimprimé en direct pendant le
+  thinking, puis effacé à la fin du stream et remplacé par une ligne résumé
+  (durée, tokens) ; le texte complet reste consultable via /thinking.
+- Réponse : rendue en Markdown dans un panneau, réimprimé en direct
+  (throttle ~15 Hz pour ne pas reparser à chaque token) ; la version finale
+  reste affichée.
+- Outils : ligne d'appel pendant l'exécution, puis statut ✓/✗ + durée et
+  aperçu du résultat ; résultat complet consultable via /tool N.
+
+Le "live" est un repaint manuel (_LiveRegion) : on remonte le curseur et on
+efface la zone avant de réimprimer. C'est déterministe, sans thread, et sans
+les surprises de Live.stop() (qui réimprime le renderable selon le timing des
+refresh). En non-terminal (pipe), on n'efface pas : chaque étape reste dans
+la sortie, pratique pour les logs.
 """
 
 from __future__ import annotations
@@ -15,15 +24,13 @@ from dataclasses import dataclass
 
 from rich import box
 from rich.console import Console
-from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.spinner import Spinner
 from rich.text import Text
 
 JARVIS_STYLE = "green"
 DIM = "grey50"
-RENDER_THROTTLE = 0.07  # secondes entre deux re-rendus du live
+RENDER_THROTTLE = 0.07  # secondes entre deux re-rendus
 MAX_LINE = 110  # troncature des lignes d'appel d'outils à l'affichage
 
 
@@ -43,38 +50,71 @@ class ToolResult:
     result: str
 
 
+class _LiveRegion:
+    """Zone du terminal réimprimée en place (curseur remonté + effacement)."""
+
+    def __init__(self, console: Console):
+        self.console = console
+        self.height = 0
+
+    def _erase(self) -> None:
+        if self.height and self.console.is_terminal:
+            self.console.file.write(f"\x1b[{self.height}A\x1b[0J")
+            self.console.file.flush()
+
+    def repaint(self, renderable) -> None:
+        """Efface la zone puis réimprime le renderable (live)."""
+        self._erase()
+        text = "".join(seg.text for seg in
+                       self.console.render(renderable, self.console.options))
+        if not text.endswith("\n"):
+            text += "\n"
+        self.console.file.write(text)
+        self.console.file.flush()
+        # chaque "\n" consomme une ligne : le curseur est height lignes plus bas
+        self.height = text.count("\n")
+
+    def keep(self, renderable) -> None:
+        """Rendu final : efface la zone live et laisse le renderable affiché."""
+        self.repaint(renderable)
+        self.height = 0
+
+    def clear(self) -> None:
+        """Efface la zone sans rien réimprimer (fin d'un rendu transitoire)."""
+        self._erase()
+        self.height = 0
+
+
 class Display:
     """Affiche le flux d'un tour : raisonnement (repliable) puis réponse (Markdown)."""
 
     def __init__(self, console: Console | None = None):
         self.console = console or Console()
+        self._reasoning = _LiveRegion(self.console)
+        self._content = _LiveRegion(self.console)
+        self._tool = _LiveRegion(self.console)
         self._reasoning_parts: list[str] = []
-        self._reasoning_live: Live | None = None
+        self._reasoning_active = False
         self._reasoning_start = 0.0
         self._reasoning_last_render = 0.0
         self._content_parts: list[str] = []
-        self._content_live: Live | None = None
         self._content_last_render = 0.0
         self.content_started = False
         # persistants entre les tours (consultables via /thinking, /tool N)
         self.last_reasoning: Reasoning | None = None
         self.tool_results: list[ToolResult] = []
         self.last_tool_results: list[ToolResult] = []
-        self._tool_live: Live | None = None
         self._tool_line = ""
 
     # -- raisonnement -------------------------------------------------------
     def reasoning(self, chunk: str) -> None:
+        if not self._reasoning_active:
+            self._reasoning_active = True
+            self._reasoning_start = time.monotonic()
         self._reasoning_parts.append(chunk)
         now = time.monotonic()
-        if self._reasoning_live is None:
-            self._reasoning_start = now
-            self._reasoning_live = Live(self._render_reasoning(), console=self.console,
-                                         transient=True, refresh_per_second=15)
-            self._reasoning_live.start()
-            self._reasoning_last_render = now
-        elif now - self._reasoning_last_render > RENDER_THROTTLE:
-            self._reasoning_live.update(self._render_reasoning())
+        if self._reasoning.height == 0 or now - self._reasoning_last_render > RENDER_THROTTLE:
+            self._reasoning.repaint(self._render_reasoning())
             self._reasoning_last_render = now
 
     def _render_reasoning(self) -> Panel:
@@ -84,13 +124,13 @@ class Display:
 
     def _close_reasoning(self) -> None:
         """Replie le panneau de raisonnement en une ligne résumé."""
-        if self._reasoning_live is None:
+        if not self._reasoning_active:
             return
+        self._reasoning_active = False
         text = "".join(self._reasoning_parts)
         duration = time.monotonic() - self._reasoning_start
         tokens = len(text.split())
-        self._reasoning_live.stop()  # transient=True : le panneau est effacé
-        self._reasoning_live = None
+        self._reasoning.clear()  # efface le panneau live
         self._reasoning_parts = []
         self.last_reasoning = Reasoning(text=text, duration=duration, tokens=tokens)
         self.console.print(
@@ -100,19 +140,17 @@ class Display:
 
     # -- réponse -------------------------------------------------------------
     def content(self, chunk: str) -> None:
-        if self._reasoning_live is not None:
+        if self._reasoning_active:
             self._close_reasoning()
         self.content_started = True
         self._content_parts.append(chunk)
         now = time.monotonic()
-        if self._content_live is None:
+        if self._content.height == 0:
             self.console.print()  # aère avant le panneau
-            self._content_live = Live(self._render_content(), console=self.console,
-                                      transient=False, refresh_per_second=15)
-            self._content_live.start()
+            self._content.repaint(self._render_content())
             self._content_last_render = now
         elif now - self._content_last_render > RENDER_THROTTLE:
-            self._content_live.update(self._render_content())
+            self._content.repaint(self._render_content())
             self._content_last_render = now
 
     def print_content(self, text: str) -> None:
@@ -129,20 +167,15 @@ class Display:
 
     # -- outils ----------------------------------------------------------------
     def tool_call(self, name: str, args: dict) -> None:
-        """Début d'exécution d'un outil : spinner sur la ligne d'appel."""
+        """Début d'exécution d'un outil : affiche la ligne d'appel."""
         raw = f"→ {name} {json.dumps(args, ensure_ascii=False)}"
         self._tool_line = raw if len(raw) <= MAX_LINE else raw[: MAX_LINE - 1] + "…"
-        self._tool_live = Live(Spinner("dots", text=Text(self._tool_line, style=DIM)),
-                               console=self.console, transient=True,
-                               refresh_per_second=15)
-        self._tool_live.start()
+        self._tool.repaint(Text(f"{self._tool_line} …", style=DIM))
 
     def tool_result(self, name: str, args: dict, ok: bool,
                     duration: float, result: str) -> None:
         """Fin d'exécution : statut ✓/✗ + durée, aperçu du résultat, stockage."""
-        if self._tool_live is not None:
-            self._tool_live.stop()
-            self._tool_live = None
+        self._tool.clear()  # efface la ligne d'appel
         mark = "[green]✓[/]" if ok else "[red]✗[/]"
         raw_args = json.dumps(args, ensure_ascii=False)
         shown = raw_args if len(raw_args) <= 60 else raw_args[:57] + "…"
@@ -182,15 +215,13 @@ class Display:
     def end_llm_stream(self) -> None:
         """Appelé à chaque fin de réponse LLM (stream terminé)."""
         self._close_reasoning()
-        if self._content_live is not None:
-            self._content_live.update(self._render_content())
-            self._content_live.stop()  # transient=False : le rendu reste affiché
-            self._content_live = None
+        if self._content_parts:
+            self._content.keep(self._render_content())  # version finale, laissée affichée
+            self._content_parts = []
 
     def end_turn(self) -> None:
-        """Fige le rendu final et archive les résultats d'outils du tour."""
+        """Archive les résultats d'outils du tour et remet à zéro le streaming."""
         self.end_llm_stream()
-        self._content_parts = []
         self.content_started = False
         self.last_tool_results = self.tool_results
         self.tool_results = []

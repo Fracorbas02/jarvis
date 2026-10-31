@@ -151,9 +151,9 @@ async def amain() -> int:
                     on_content=display.content,
                     on_llm_end=display.end_llm_stream,
                 )
-                display.end_turn()
                 if reply and not display.content_started:
                     display.print_content(reply)
+                display.end_turn()
             except Exception as exc:  # noqa: BLE001 — le REPL ne doit pas mourir
                 display.end_turn()
                 console.print(f"[bold red]erreur:[/] {exc}")
