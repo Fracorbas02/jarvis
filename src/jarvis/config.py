@@ -124,7 +124,12 @@ def load_config(path: str | Path | None = None) -> Config:
             "Copie config.example.toml en config.toml."
         )
 
-    raw = tomllib.loads(cfg_path.read_text(encoding="utf-8"))
+    try:
+        raw = tomllib.loads(cfg_path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as exc:
+        raise tomllib.TOMLDecodeError(
+            f"{cfg_path}: {exc}. Clé dupliquée ? (souvent un bloc copié de "
+            f"config.example.toml laissé sous le tien)") from exc
     cfg = Config()
     cfg.llm = LLMConfig(**{k: v for k, v in raw.get("llm", {}).items()
                            if k in LLMConfig.__dataclass_fields__})
