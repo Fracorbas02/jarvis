@@ -352,6 +352,37 @@ def test_realtime_ws_transcribe():
         stop()
 
 
+def test_record_wav_ffmpeg_t_avant_sortie() -> None:
+    """record_wav place -t <seconds> AVANT la sortie '-' de ffmpeg (sinon -t
+    en fin d'argv est un param de sortie ignoré -> process tué -> WAV 0 s)."""
+    import jarvis.voice as voice
+    captured = {}
+    class FakeProc:
+        returncode = 0
+        async def communicate(self):
+            return b"\x00\x00" * 100, b""
+    async def fake_exec(*a, **k):
+        captured["argv"] = list(a)
+        return FakeProc()
+    import shutil as _shutil, tempfile
+    orig_exec, orig_which = voice.asyncio.create_subprocess_exec, voice.shutil.which
+    voice.asyncio.create_subprocess_exec = fake_exec
+    voice.shutil.which = lambda c: "/usr/bin/" + c
+    try:
+        cfg = VoiceConfig(record_cmd=["ffmpeg", "-loglevel", "error", "-f", "pulse",
+                                      "-i", "default", "-ar", "16000", "-ac", "1",
+                                      "-f", "s16le", "-"])
+        out = Path(tempfile.mkdtemp()) / "o.wav"
+        _run(voice.record_wav(6.0, cfg, out_path=out))
+        argv = captured["argv"]
+        assert argv[-1] == "-", argv
+        i_out = argv.index("-")
+        assert argv[i_out - 2:i_out] == ["-t", "6.0"], argv
+    finally:
+        voice.asyncio.create_subprocess_exec = orig_exec
+        voice.shutil.which = orig_which
+
+
 def test_voice_config_defaults():
     cfg = VoiceConfig()
     assert cfg.stt.binary == "whisper-server"

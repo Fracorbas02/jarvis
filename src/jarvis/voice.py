@@ -889,9 +889,13 @@ async def record_wav(seconds: float, voice_cfg: VoiceConfig,
         # (sinon on le tue au bout de `seconds` et on perd le buffer interne :
         # c'est ce qui produisait des WAV de 0,05 s)
         if cmd[0] == "ffmpeg" or binary == "ffmpeg":
-            argv = [a for a in argv]
+            argv = list(argv)
             if "-t" not in argv:
-                argv += ["-t", str(seconds)]
+                # -t AVANT la sortie ("-") : avec une sortie stdout, -t en fin
+                # d'arguments est pris pour un paramètre de sortie et ignoré
+                # -> ffmpeg ne s'arrête jamais -> on le tue -> buffer perdu
+                out_idx = argv.index("-")
+                argv = argv[:out_idx] + ["-t", str(seconds)] + argv[out_idx:]
         proc = await asyncio.create_subprocess_exec(
             *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         pcm, err = await _stop_after(proc, seconds + 10.0)  # marge : laisse ffmpeg finir seul
