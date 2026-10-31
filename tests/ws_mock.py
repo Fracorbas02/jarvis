@@ -119,6 +119,13 @@ def start_ws_realtime(text: str = "bonjour jarvis"):
                                                  "session": {"id": "sess-mock"}})
                     elif etype == "input_audio_buffer.commit":
                         await send_text(writer, {"type": "input_audio_buffer.committed"})
+                        # comme le vrai serveur Voxtral Realtime : deltas au fur et
+                        # à mesure, puis completed FINAL avec tout le texte
+                        for i, part in enumerate(text.split()):
+                            await send_text(writer, {
+                                "type": "conversation.item.input_audio_transcription.delta",
+                                "item_id": "item_mock", "content_index": 0,
+                                "delta": (" " if i else "") + part})
                         await send_text(writer, {
                             "type": "conversation.item.input_audio_transcription.completed",
                             "item_id": "item_mock",

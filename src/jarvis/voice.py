@@ -526,9 +526,12 @@ class RealtimeSTTClient:
                                "input_audio_buffer.speech_stopped"):
                     if etype == "response.done" and texts:
                         break
-                # le completed peut arriver avant response.done : on sort dès qu’on a
-                # un texte non vide (certains builds ne renvoient pas response.done)
-                if any(t.strip() for t in texts):
+                # Voxtral Realtime envoie des deltas au fur et à mesure, puis un
+                # completed FINAL qui contient TOUT le texte. Si on sort dès le
+                # 1er delta non vide, on ne garde que le 1er mot. On attend donc
+                # le completed (ou response.done / fermeture / timeout).
+                if etype in ("conversation.item.input_audio_transcription.completed",
+                             "transcription.completed") and any(t.strip() for t in texts):
                     break
             return " ".join(t for t in texts if t).strip()
         finally:
