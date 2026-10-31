@@ -319,8 +319,12 @@ class JarvisWindow(Adw.ApplicationWindow):
         g_model.add(info)
         page.add(g_model)
 
-        # --- Outils MCP (peuplé quand backend_ready arrive) ---
-        self.tools_group = Adw.PreferencesGroup(title="Outils MCP disponibles")
+        # --- Outils MCP : résumé compact (compteur + serveurs repliables),
+        #     peuplé quand backend_ready arrive ---
+        self.tools_group = Adw.PreferencesGroup(
+            title="Outils MCP",
+            description="Regroupés par serveur MCP. Déplie un serveur pour voir "
+                        "ses outils (avec leur description).")
         page.add(self.tools_group)
 
         # --- Voix : micro + TTS ---
@@ -838,13 +842,37 @@ class JarvisWindow(Adw.ApplicationWindow):
             pass
         return GLib.SOURCE_CONTINUE
 
+    def _fill_tools_group(self, by_server: dict, descriptions: dict) -> None:
+        """Remplit le groupe 'Outils MCP' : une ligne résumé + un ExpanderRow
+        par serveur contenant ses outils (nom + description en sous-titre)."""
+        # vide l'ancien contenu
+        while (child := self.tools_group.get_first_child()) is not None:
+            self.tools_group.remove(child)
+        total = sum(len(v) for v in by_server.values())
+        if not total:
+            row = Adw.ActionRow(title="Aucun outil",
+                                subtitle="vérifie [mcp.servers] dans config.toml")
+            self.tools_group.add(row)
+            return
+        for server in sorted(by_server):
+            names = by_server[server]
+            exp = Adw.ExpanderRow(
+                title=f"{server}  ({len(names)})",
+                subtitle=", ".join(n.split("__", 1)[1] for n in names[:6])
+                          + ("…" if len(names) > 6 else ""))
+            for full in names:
+                desc = (descriptions.get(full) or "").strip().split("\n")[0]
+                row = Adw.ActionRow(title=full.split("__", 1)[1], subtitle=desc[:140])
+                exp.add_row(row)
+            self.tools_group.add(exp)
+
     def _dispatch(self, event: dict) -> bool:
         t = event["type"]
         if t == "backend_ready":
             tools = event.get("tools") or []
             self._toast(f"Prêt — {len(tools)} outils MCP")
-            for name in tools:
-                self.tools_group.add(Adw.ActionRow(title=name))
+            self._fill_tools_group(event.get("tools_by_server") or {},
+                                   event.get("tool_descriptions") or {})
             if event.get("session_id"):
                 self._replay_history()
         elif t == "backend_error":
