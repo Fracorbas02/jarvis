@@ -22,7 +22,8 @@ Inline supporté :
   <https://...> et URLs nues https://... ;
 - ![alt](url "titre") -> bloc image ;
 - [^id] -> appel de footnote (exposant) ;
-- échappements \\* \\_ \\` \\\\ etc.
+- échappements \\* \\_ \\` \\\\ etc. ;
+- maths $...$ / $$...$$ (rendu PNG via matplotlib.mathtext, voir render_math_png).
 
 Le parseur est tolérant au streaming : un fence/bloc non fermé reste ouvert
 jusqu'au fragment suivant (re-rendu complet à chaque fragment).
@@ -72,7 +73,7 @@ def _safe_href(url: str) -> str | None:
 
 @dataclass
 class Block:
-    kind: str  # heading|paragraph|code|list|quote|table|hr|image|footnote_def|task
+    kind: str  # heading|paragraph|code|math|list|quote|table|hr|image|footnote_def|task
     level: int = 0
     lang: str = ""
     text: str = ""            # code brut, texte du paragraphe, alt de l'image...
@@ -131,6 +132,8 @@ def _parse_table_aligns(sep_line: str) -> list:
 
 def _is_block_start(line: str, next_line: str | None) -> bool:
     s = line.strip()
+    if s.startswith("$$"):
+        return True
     return bool(
         _HEADING_RE.match(line) or _FENCE_RE.match(s) or _HR_RE.match(line)
         or _ULIST_RE.match(line) or _OLIST_RE.match(line) or _QUOTE_RE.match(line)
@@ -324,6 +327,20 @@ def parse_blocks(text: str) -> list[Block]:
             i += 1
             continue
 
+        # bloc math $$...$$ sur plusieurs lignes
+        if stripped.startswith("$$"):
+            i += 1
+            math_lines = [stripped[2:]]
+            while i < n and not lines[i].strip().endswith("$$"):
+                math_lines.append(lines[i])
+                i += 1
+            if i < n:
+                last = lines[i].strip()
+                math_lines.append(last[:-2] if last.endswith("$$") else last)
+                i += 1
+            blocks.append(Block(kind="math", text="\n".join(math_lines).strip()))
+            continue
+
         # paragraphe : jusqu'à ligne vide ou prochain bloc
         para: list[str] = []
         while i < n:
@@ -346,25 +363,35 @@ def parse_blocks(text: str) -> list[Block]:
 # [txt][id], ref courte [txt], autolink <...>, url nue, ***...***, **...**,
 # *...*, ~~...~~
 _INLINE_RE = re.compile(
-    r"|<((?:https?://|mailto:)[^>\s]+)>"                           # 1: <url> autolink
-    r"|(\\[\\`*_{}\[\]()#+\-.!>~|])"                              # 2: échappement
-    r"|(`+)([^`\n]*?)\3"                                           # 3-4: `code`
-    r"|!\[([^\]]*)\]\(([^\s\"\')]+)(?:\s+\"([^\"]*)\")?\)"            # 5-7: ![alt](url "t")
-    r"|\[\^([^\]]+)\]"                                             # 8: [^id] footnote
-    r"|\[([^\]]+)\]\(([^\s\"\')]+)(?:\s+\"([^\"]*)\")?\)"             # 9-11: [txt](url "t")
-    r"|\[([^\]]+)\]\[([^\]]*)\]"                                   # 12-13: [txt][id]
-    r"|\[([^\]]+)\]"                                               # 14: [txt] ref courte
-    r"|(?<![\w<])((?:https?://|www\.)[^\s<>()]+[^\s<>().,;:!?\'\"\]<])"  # 15: url nue
-    r"|(\*\*\*|___)(.+?)\16"                                       # 16-17: ***...***
-    r"|(\*\*|__)(.+?)\18"                                          # 18-19: **...**
-    r"|(\*|_)([^*_\n]+)\20"                                        # 20-21: *...* / _..._
-    r"|(~~)(.+?)\22"                                               # 22-23: ~~...~~
+    r"|<((?:https?://|mailto:)[^>\s]+)>"                            # 1: <url> autolink
+    r"|(\\[\\`*_{}\[\]()#+\-.!>~|$])"                              # 2: échappement (incl. \$)
+    r"|\$\$([^$]+)\$\$"                                            # 3: $$...$$ bloc maths
+    r"|\$([^$\n]+)\$"                                               # 4: $...$ inline maths
+    r"|(`+)([^`\n]*?)\5"                                            # 5-6: `code`
+    r"|!\[([^\]]*)\]\(([^\s\"\')]+)(?:\s+\"([^\"]*)\")?\)"            # 7-9: ![alt](url "t")
+    r"|\[\^([^\]]+)\]"                                              # 10: [^id] footnote
+    r"|\[([^\]]+)\]\(([^\s\"\')]+)(?:\s+\"([^\"]*)\")?\)"             # 11-13: [txt](url "t")
+    r"|\[([^\]]+)\]\[([^\]]*)\]"                                    # 14-15: [txt][id]
+    r"|\[([^\]]+)\]"                                                # 16: [txt] ref courte
+    r"|(?<![\w<])((?:https?://|www\.)[^\s<>()]+[^\s<>().,;:!?\'\"\]<])"   # 17: url nue
+    r"|(\*\*\*|___)(.+?)\18"                                        # 18-19: ***...***
+    r"|(\*\*|__)(.+?)\20"                                           # 20-21: **...**
+    r"|(\*|_)([^*_\n]+)\22"                                         # 22-23: *...* / _..._
+    r"|(~~)(.+?)\24"                                                # 24-25: ~~...~~
 )
+
+
+def _link_markup(href: str, title: str, inner: str) -> str:
+    """Balise <a> stylée : couleur accent + souligné (apparence lien moderne)."""
+    t = f' title="{_esc_attr(title)}"' if title else ""
+    return (f'<a href="{_esc_attr(href)}"{t}>'
+            f'<span foreground="#4cc2ff" underline="single">{inner}</span></a>')
 
 
 def inline_to_pango(text: str, link_defs: dict | None = None,
                     footnotes: dict | None = None) -> str:
-    """Texte inline markdown -> markup Pango (texte échappé, liens <a>)."""
+    """Texte inline markdown -> markup Pango (texte échappé, liens <a> stylisés,
+    maths $...$ en italique accent)."""
     link_defs = link_defs or {}
     footnotes = footnotes or {}
     out: list[str] = []
@@ -372,81 +399,264 @@ def inline_to_pango(text: str, link_defs: dict | None = None,
     for m in _INLINE_RE.finditer(text):
         if m.start() > pos:
             out.append(escape(text[pos:m.start()]))
-        if m.group(1):                       # <url> autolink (regex: http/https/mailto)
+        if m.group(1):                       # <url> autolink
             url = m.group(1)
-            out.append(f'<a href="{_esc_attr(url)}">{escape(url)}</a>')
+            out.append(_link_markup(url, "", escape(url)))
         elif m.group(2):                     # échappement \x -> x
             out.append(escape(m.group(2)[1:]))
-        elif m.group(3):                     # `code`
+        elif m.group(3) is not None:         # $$...$$ bloc maths -> centré, italique
+            tex = escape(m.group(3).strip())
+            out.append(f'<span style="italic" foreground="#ffb454" size="large">'
+                       f"{tex}</span>")
+        elif m.group(4) is not None:         # $...$ inline maths -> italique accent
+            tex = escape(m.group(4).strip())
+            out.append(f'<span style="italic" foreground="#ffb454">{tex}</span>')
+        elif m.group(5):                     # `code`
             out.append('<span font-family="monospace" foreground="#d2a8ff">'
-                       f"{escape(m.group(4))}</span>")
-        elif m.group(5) is not None:         # image inline -> alt cliquable
-            alt, url, title = m.group(5), m.group(6), m.group(7) or ""
+                       f"{escape(m.group(6))}</span>")
+        elif m.group(7) is not None:         # image inline -> alt cliquable
+            alt, url, title = m.group(7), m.group(8), m.group(9) or ""
             safe = _safe_href(url)
             if safe is None:
                 out.append(escape(m.group(0)))
             else:
-                t = f' title="{_esc_attr(title)}"' if title else ""
-                out.append(f'<a href="{_esc_attr(safe)}"{t}>{escape(alt or safe)}</a>')
-        elif m.group(8):                     # footnote [^id] -> exposant
-            fid = m.group(8)
+                out.append(_link_markup(safe, title, escape(alt or safe)))
+        elif m.group(10):                    # footnote [^id] -> exposant cliquable
+            fid = m.group(10)
             num = list(footnotes).index(fid) + 1 if fid in footnotes else fid
             out.append(f'<a href="#fn-{_esc_attr(fid)}">'
-                       f'<span size="x-small" rise="6000">[{escape(str(num))}]</span></a>')
-        elif m.group(9):                     # [txt](url "titre")
-            txt, url, title = m.group(9), m.group(10), m.group(11) or ""
+                       f'<span size="x-small" rise="6000" foreground="#4cc2ff">'
+                       f"[{escape(str(num))}]</span></a>")
+        elif m.group(11):                    # [txt](url "titre")
+            txt, url, title = m.group(11), m.group(12), m.group(13) or ""
             safe = _safe_href(url)
             if safe is None:
                 out.append(escape(m.group(0)))
             else:
-                t = f' title="{_esc_attr(title)}"' if title else ""
                 inner = inline_to_pango(txt, link_defs, footnotes)
-                out.append(f'<a href="{_esc_attr(safe)}"{t}>{inner}</a>')
-        elif m.group(12):                    # [txt][id] / [txt][]
-            txt, ref = m.group(12), (m.group(13) or m.group(12)).lower()
+                out.append(_link_markup(safe, title, inner))
+        elif m.group(14):                    # [txt][id] / [txt][]
+            txt, ref = m.group(14), (m.group(15) or m.group(14)).lower()
             if ref in link_defs:
                 url, title = link_defs[ref]
                 safe = _safe_href(url)
                 if safe is None:
                     out.append(escape(m.group(0)))
                 else:
-                    t = f' title="{_esc_attr(title)}"' if title else ""
                     inner = inline_to_pango(txt, link_defs, footnotes)
-                    out.append(f'<a href="{_esc_attr(safe)}"{t}>{inner}</a>')
+                    out.append(_link_markup(safe, title, inner))
             else:
                 out.append(escape(m.group(0)))
-        elif m.group(14):                    # [txt] référence courte
-            ref = m.group(14).lower()
+        elif m.group(16):                    # [txt] référence courte
+            ref = m.group(16).lower()
             if ref in link_defs:
                 url, title = link_defs[ref]
                 safe = _safe_href(url)
                 if safe is None:
                     out.append(escape(m.group(0)))
                 else:
-                    t = f' title="{_esc_attr(title)}"' if title else ""
-                    out.append(f'<a href="{_esc_attr(safe)}"{t}>{escape(m.group(14))}</a>')
+                    out.append(_link_markup(safe, title, escape(m.group(16))))
             else:
                 out.append(escape(m.group(0)))
-        elif m.group(15):                    # url nue
-            url = m.group(15)
+        elif m.group(17):                    # url nue
+            url = m.group(17)
             href = url if url.lower().startswith(("http://", "https://")) else f"http://{url}"
-            out.append(f'<a href="{_esc_attr(href)}">{escape(url)}</a>')
-        elif m.group(16):                    # ***...***
-            inner = inline_to_pango(m.group(17), link_defs, footnotes)
-            out.append(f"<b><i>{inner}</i></b>")
-        elif m.group(18):                    # **...**
+            out.append(_link_markup(href, "", escape(url)))
+        elif m.group(18):                    # ***...***
             inner = inline_to_pango(m.group(19), link_defs, footnotes)
-            out.append(f"<b>{inner}</b>")
-        elif m.group(20):                    # *...* / _..._
+            out.append(f"<b><i>{inner}</i></b>")
+        elif m.group(20):                    # **...**
             inner = inline_to_pango(m.group(21), link_defs, footnotes)
-            out.append(f"<i>{inner}</i>")
-        elif m.group(22):                    # ~~...~~
+            out.append(f"<b>{inner}</b>")
+        elif m.group(22):                    # *...* / _..._
             inner = inline_to_pango(m.group(23), link_defs, footnotes)
+            out.append(f"<i>{inner}</i>")
+        elif m.group(24):                    # ~~...~~
+            inner = inline_to_pango(m.group(25), link_defs, footnotes)
             out.append(f"<s>{inner}</s>")
         pos = m.end()
     if pos < len(text):
         out.append(escape(text[pos:]))
     return "".join(out)
+
+
+# ---------- coloration syntaxique des blocs de code ----------
+
+# palette (thème sombre type GitHub dark / One Dark)
+_HL = {
+    "keyword": "#ff7b72",
+    "string": "#a5d6ff",
+    "number": "#79c0ff",
+    "comment": "#8b949e",
+    "func": "#d2a8ff",
+    "type": "#ffa657",
+    "op": "#ff7b72",
+    "prop": "#79c0ff",
+}
+
+# langages -> famille de règles (python-like par défaut)
+_LANG_RULES = {
+    "python": "python", "py": "python", "python3": "python",
+    "bash": "shell", "sh": "shell", "zsh": "shell", "shell": "shell",
+    "json": "json", "yaml": "yaml", "yml": "yaml", "toml": "ini",
+    "ini": "ini", "cfg": "ini",
+    "js": "js", "javascript": "js", "ts": "js", "typescript": "js",
+    "c": "c", "h": "c", "cpp": "c", "hpp": "c", "c++": "c",
+    "rust": "rust", "rs": "rust", "go": "c", "java": "c",
+    "html": "markup", "xml": "markup", "svg": "markup",
+    "css": "css", "scss": "css",
+    "sql": "sql",
+}
+
+_PY_KEYWORDS = {
+    "def", "class", "return", "if", "elif", "else", "for", "while", "in",
+    "import", "from", "as", "with", "try", "except", "finally", "raise",
+    "lambda", "yield", "await", "async", "pass", "break", "continue",
+    "and", "or", "not", "is", "None", "True", "False", "global", "nonlocal",
+    "del", "assert", "match", "case",
+}
+_SHELL_KEYWORDS = {"if", "then", "else", "elif", "fi", "for", "while", "do",
+                   "done", "case", "esac", "in", "function", "return", "export",
+                   "local", "echo", "cd", "ls", "cat", "grep", "sed", "awk"}
+
+
+def _hl_tokens(line: str, family: str) -> list[tuple[str, str]]:
+    """Découpe une ligne en (kind, texte) pour la coloration. kinds: keyword,
+    string, number, comment, func, type, op, prop, plain."""
+    toks: list[tuple[str, str]] = []
+    i, n = 0, len(line)
+    while i < n:
+        c = line[i]
+        # commentaire
+        if family in ("python", "js", "c", "rust", "sql") and line.startswith("#", i):
+            toks.append(("comment", line[i:])); break
+        if family == "shell" and c == "#":
+            toks.append(("comment", line[i:])); break
+        if family == "sql" and line.startswith("--", i):
+            toks.append(("comment", line[i:])); break
+        if family in ("markup",) and line.startswith("<!--", i):
+            toks.append(("comment", line[i:])); break
+        if family in ("css", "ini", "yaml") and c in "#;":
+            toks.append(("comment", line[i:])); break
+        # chaîne
+        if c in "\"'":
+            q = c
+            j = i + 1
+            while j < n and line[j] != q:
+                j += 2 if line[j] == "\\" else 1
+            j = min(j + 1, n)
+            toks.append(("string", line[i:j])); i = j; continue
+        # nombre
+        if c.isdigit() or (c == "-" and i + 1 < n and line[i + 1].isdigit()):
+            j = i + (1 if c == "-" else 0)
+            while j < n and (line[j].isdigit() or line[j] in "._xXoObBabcdefABCDEF"):
+                j += 1
+            toks.append(("number", line[i:j])); i = j; continue
+        # mot
+        if c.isalpha() or c == "_":
+            j = i
+            while j < n and (line[j].isalnum() or line[j] == "_"):
+                j += 1
+            word = line[i:j]
+            lw = word.lower()
+            if family == "python" and word in _PY_KEYWORDS:
+                toks.append(("keyword", word))
+            elif family == "shell" and lw in _SHELL_KEYWORDS:
+                toks.append(("keyword", word))
+            elif family == "sql" and word.upper() in {
+                    "SELECT", "FROM", "WHERE", "INSERT", "UPDATE", "DELETE",
+                    "CREATE", "TABLE", "JOIN", "ON", "GROUP", "BY", "ORDER",
+                    "LIMIT", "VALUES", "SET", "AND", "OR", "NOT", "NULL"}:
+                toks.append(("keyword", word))
+            elif family == "json" and lw in ("true", "false", "null"):
+                toks.append(("keyword", word))
+            elif family in ("markup", "css") and c == "<":
+                pass  # géré ci-dessous
+            elif j < n and line[j] == "(":
+                toks.append(("func", word))
+            elif word[:1].isupper() and family in ("python", "js", "c", "rust"):
+                toks.append(("type", word))
+            else:
+                toks.append(("plain", word))
+            i = j; continue
+        # balise markup
+        if family == "markup" and c == "<":
+            j = line.find(">", i)
+            j = n if j < 0 else j + 1
+            toks.append(("keyword", line[i:j])); i = j; continue
+        # prop json/yaml: "clef":
+        if family in ("json", "yaml", "ini") and c == "\"":
+            pass  # déjà géré comme string
+        # opérateur / ponctuation
+        if c in "+-*/%=<>!&|^~?:.,;()[]{}":
+            toks.append(("op" if c in "+-*/%=<>!&|^~" else "plain", c)); i += 1; continue
+        toks.append(("plain", c)); i += 1
+    return toks
+
+
+def highlight_code(code: str, lang: str) -> str:
+    """Code brut + langue -> markup Pango coloré (texte échappé, spans whitelistés).
+    Langue inconnue -> mono simple sans couleur."""
+    family = _LANG_RULES.get((lang or "").lower().strip(), "")
+    out: list[str] = []
+    for line in code.split("\n"):
+        if not family:
+            out.append(escape(line))
+            continue
+        parts: list[str] = []
+        for kind, txt in _hl_tokens(line, family):
+            esc = escape(txt)
+            color = _HL.get(kind)
+            if kind == "plain" or color is None:
+                parts.append(esc)
+            else:
+                parts.append(f'<span foreground="{color}">{esc}</span>')
+        out.append("".join(parts))
+    return "\n".join(out)
+
+
+# ---------- rendu des équations (matplotlib.mathtext -> PNG) ----------
+
+_MATH_CACHE: dict[str, bytes] = {}
+
+
+def render_math_png(tex: str, fontsize: float = 15.0, color: str = "#e6edf3") -> bytes | None:
+    """Rend une formule LaTeX en PNG (matplotlib.mathtext, moteur interne :
+    pas besoin de LaTeX installé). Retourne les bytes PNG, ou None si échec.
+    Mis en cache (la formule ne change pas entre deux re-rendus de streaming)."""
+    key = f"{tex}|{fontsize}|{color}"
+    if key in _MATH_CACHE:
+        return _MATH_CACHE[key]
+    try:
+        import io
+        import matplotlib
+        matplotlib.use("Agg")
+        from matplotlib.figure import Figure
+        # taille au plus juste : parse renvoie un RasterParse (w, h, depth, glyphs, rects)
+        from matplotlib import mathtext
+        parser = mathtext.MathTextParser("agg")
+        dpi = 150
+        res = parser.parse(f"${tex}$", dpi=dpi)
+        width, height, depth = float(res[0]), float(res[1]), float(res[2])
+        if width <= 0 or height <= 0:
+            # repli : taille fixe raisonnable
+            width, height, depth = 300.0, 40.0, 10.0
+        w_in = width / dpi + 0.15
+        h_in = (height + depth) / dpi + 0.15
+        fig = Figure(figsize=(w_in, h_in), dpi=dpi)
+        fig.patch.set_alpha(0.0)
+        y = depth / (height + depth) if (height + depth) > 0 else 0.5
+        fig.text(0.03, max(0.05, min(y, 0.95)), f"${tex}$",
+                 fontsize=fontsize, color=color)
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", transparent=True)
+        data = buf.getvalue()
+        if data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 100:
+            _MATH_CACHE[key] = data
+            return data
+    except Exception:  # noqa: BLE001 — formule invalide, matplotlib absent...
+        return None
+    return None
 
 
 def collect_defs(text: str) -> tuple[dict, dict]:
@@ -527,7 +737,7 @@ _ALLOWED_TAGS = {
     "s": set(),
     "u": set(),
     "span": {"size", "weight", "style", "foreground", "background",
-             "font-family", "rise"},
+             "font-family", "rise", "underline"},
     "a": {"href", "title"},
     "sub": set(),
     "sup": set(),
