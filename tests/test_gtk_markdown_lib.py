@@ -110,3 +110,20 @@ def test_repli_texte_si_matplotlib_absent() -> None:
     # une formule invalide ne doit pas faire planter le rendu
     h = markdown_to_html("$$\\invalidzzz{$$")
     assert "<!DOCTYPE html>" in h  # document produit quoi qu'il arrive
+
+
+
+def test_math_block_visible_as_img() -> None:
+    # régression revue PR #27 : le placeholder math ne doit PAS rester échappé
+    h = markdown_to_html("texte\n\n$$\n\\int_0^1 x^2 dx\n$$\n\naprès\n")
+    b = body(h)
+    assert '<img class="math-block" src="data:image/png;base64,' in b, b[:200]
+    assert "JARVISMATH" not in b and "&lt;img" not in b
+    # le texte autour est rendu normalement
+    assert "<p>texte</p>" in b and "<p>après</p>" in b
+
+
+def test_math_inline_block_renders_img() -> None:
+    h = markdown_to_html("voici $$x^2$$ inline")
+    b = body(h)
+    assert 'data:image/png;base64,' in b

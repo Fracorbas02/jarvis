@@ -163,80 +163,74 @@ document.addEventListener('DOMContentLoaded', function() {
 """
 
 
-def _highlight_fence_tokens(text: str) -> str:
-    """Rendu markdown-it avec coloration des fences : on remplace le rendu
-    par défaut des blocs <pre><code class=language-X> par notre highlight."""
-    tokens = _md.parse(text)
-    out: list[str] = []
-    i = 0
-    while i < len(tokens):
-        t = tokens[i]
-        if t.type == "fence" and t.info:
-            lang = t.info.strip().split()[0] if t.info.strip() else ""
-            code = t.content
-            hl = highlight_code(code.rstrip("\n"), lang)
-            out.append(f'<pre><code class="language-{_html.escape(lang)}">{hl}</code></pre>')
-            i += 1
-            continue
-        out.append(_md.renderer.render([t], _md.options, {}))
-        i += 1
-    # rendu standard pour tout le reste (plus simple et sûr) : on re-rend
-    # en entier puis on substitue les fences — approche hybride ci-dessous.
-    return "".join(out)
-
-
-def _render_math_images(html: str) -> str:
-    """Remplace les blocs math $$...$$ déjà rendus en <p>$$...$$</p> par des
-    <img> data: PNG. On reparse le texte source plutôt que le HTML pour
-    éviter d触iner les balises."""
-    return html
-
-
 def markdown_to_html(text: str) -> str:
-    """Markdown brut -> document HTML complet (str) pour WebKit.WebView."""
-    # 1) équations bloc $$...$$ -> placeholder <img> avant le parse (elles
-    #    contiennent des caractères qui casseraient le markdown)
+    """Markdown brut -> document HTML complet (str) pour WebKit.WebView.
+
+    Pipeline : placeholders neutres pour les équations $$...$$ (non échappés
+    par markdown-it car html=False) -> _md.render -> substitution des
+    placeholders par des <img data:image/png> -> highlight des fences ->
+    protection des data:image/png -> bleach -> restauration -> document final.
+    """
     import re
-    math_blocks: list[str] = []
+    math_htmls: list[str] = []
 
     def _stash(m: re.Match) -> str:
         tex = m.group(1).strip()
         png = render_math_png(tex, fontsize=16.0)
         if png is None:
-            # fallback texte italique
-            return f'<p class="math-fallback"><em>{_html.escape(tex)}</em></p>'
-        b64 = base64.b64encode(png).decode()
-        math_blocks.append(tex)
-        return (f'<span class="math-block">'
-                f'<img src="data:image/png;base64,{b64}" alt="{_html.escape(tex)}">'
-                f'</span>')
+            html_img = f'<p class="math-fallback"><em>{_html.escape(tex)}</em></p>'
+        else:
+            b64 = base64.b64encode(png).decode()
+            html_img = (f'<img class="math-block" src="data:image/png;base64,{b64}" '
+                        f'alt="{_html.escape(tex)}">')
+        math_htmls.append(html_img)
+        return f"JARVISMATH{len(math_htmls) - 1}"
 
-    # on neutralise html brut (html=False déjà) ; les $$ sont dans le texte
+    # 1) stash équations bloc (placeholder neutre, markdown-it ne l'échappe pas)
     protected = re.sub(r"\$\$([^$]+)\$\$", _stash, text, flags=re.S)
 
     # 2) rendu markdown-it complet
     body = _md.render(protected)
 
-    # 3) coloration des fences de code (post-traitement HTML sûr : on
-    #    reparse les <pre><code class="language-X"> et on remplace le
-    #    contenu échappé par notre highlight)
+    # 3) substitution des placeholders par les <img> math (le placeholder peut
+    #    être dans un <p>...</p> : on le remplace, et on retire le <p> autour si
+    #    le placeholder est seul dans son paragraphe)
+    def _unstash(m: re.Match) -> str:
+        return math_htmls[int(m.group(1))]
+
+    body = re.sub(r"<p>JARVISMATH(\d+)</p>", lambda m: math_htmls[int(m.group(1))], body)
+    body = re.sub(r"JARVISMATH(\d+)", _unstash, body)
+
+    # 4) coloration des fences de code (post-traitement sur le HTML rendu)
     def _hl_pre(m: re.Match) -> str:
         lang = _html.unescape(m.group(1))
         code = _html.unescape(m.group(2))
         code = code[:-1] if code.endswith("\n") else code
         hl = highlight_code(code, lang)
-        # highlight_code produit du markup Pango (foreground="...") -> on le
-        # convertit en style="color:..." pour du HTML
-        hl = re.sub(r'<span foreground="([^"]+)">', lambda mm: '<span style="color:' + mm.group(1) + '">', hl)
+        # markup Pango (foreground="...") -> style="color:..." pour le HTML
+        hl = re.sub(r'<span foreground="([^"]+)">',
+                    lambda mm: '<span style="color:' + mm.group(1) + '">', hl)
         return f'<pre><code class="language-{_html.escape(lang)}">{hl}</code></pre>'
 
     body = re.sub(r'<pre><code class="language-([^"]*)">(.*?)</code></pre>',
                   _hl_pre, body, flags=re.S)
 
-    # 4) assainissement (double filet)
+    # 5) protéger les data:image/png (nos équations) avant bleach, restaurer après
+    data_protected: list[str] = []
+
+    def _prot(m: re.Match) -> str:
+        data_protected.append(m.group(0))
+        return f"JARVISDATAIMG{len(data_protected) - 1}"
+
+    body = re.sub(r'<img class="math-block" src="data:image/png;base64,[A-Za-z0-9+/=]+"[^>]*>',
+                  _prot, body)
+
+    # 6) assainissement (double filet bleach)
     body = _CLEANER.clean(body)
-    # bleach ajoute un ';' final aux déclarations CSS : on le retire pour
-    # garder un HTML compact (cosmétique)
+
+    # 7) restauration des images data: + nettoyage cosmétique du ';'
+    body = re.sub(r"JARVISDATAIMG(\d+)",
+                  lambda m: data_protected[int(m.group(1))], body)
     body = re.sub(r'style="([^"]*?);"', r'style="\1"', body)
 
     return (
