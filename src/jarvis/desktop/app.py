@@ -17,6 +17,7 @@ from pathlib import Path
 import customtkinter as ctk
 
 from ..gui.models import MODES
+from .chat_panel import ChatPanel
 from .controller import DesktopController, default_repo_root
 from .sidebar import Sidebar
 from .theme import ACCENT, BG, PANEL_2, TEXT_DIM
@@ -41,16 +42,19 @@ class DesktopApp:
         self.main.grid_rowconfigure(0, weight=1)
         self.main.grid_columnconfigure(0, weight=1)
 
-        # panneaux par mode (placeholders tant que chaque vue n'est pas branchée)
+        # panneaux par mode : chat LLM branché, TTS/STT en placeholder
         self.panels: dict[str, ctk.CTkFrame] = {}
-        for mode in ("llm", "tts", "stt"):
+        self.chat = ChatPanel(self.main, self.ctrl)
+        self.panels["llm"] = self.chat
+        for mode in ("tts", "stt"):
             meta = MODES[mode]
             f = ctk.CTkFrame(self.main, fg_color=BG, corner_radius=0)
-            f.grid(row=0, column=0, sticky="nsew")
             ctk.CTkLabel(f, text=f"{meta['label']} — {meta['description']}",
                          font=ctk.CTkFont(size=16), text_color=TEXT_DIM).place(
                 relx=0.5, rely=0.5, anchor="center")
             self.panels[mode] = f
+        for f in self.panels.values():
+            f.grid(row=0, column=0, sticky="nsew")
         self.show_mode(self.ctrl.mode)
 
         self.ctrl.start()
@@ -79,6 +83,8 @@ class DesktopApp:
         elif kind in ("server_status", "server_started", "server_stopped"):
             self.sidebar.set_server_status(ev["state"], ev["host"], ev["port"],
                                            ev["models"])
+        elif kind in ("reasoning", "content", "tool_call", "done", "error"):
+            self.chat.handle_event(ev)
 
     def show_error(self, message: str) -> None:
         ctk.CTkLabel(self.main, text=f"Erreur de configuration : {message}",
@@ -103,7 +109,7 @@ class DesktopApp:
                 panel.grid(row=0, column=0, sticky="nsew")
 
     def on_reset(self) -> None:
-        pass  # sera branché sur le panneau chat
+        self.chat.clear()
 
     def on_quit(self) -> None:
         self.ctrl.stop()
