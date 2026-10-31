@@ -125,6 +125,33 @@ def tls_info(host: str, port: int = 443) -> str:
 
 
 @mcp.tool()
+def bandwidth_test(server: str = "", duration: int = 10) -> str:
+    """Test de débit via iperf3 (client TCP, upload+download). server: hôte
+    iperf3 -s (vide = tente les serveurs publics listés par iperf3, sinon
+    ERREUR). duration: secondes par sens (max 30)."""
+    if shutil.which("iperf3") is None:
+        return "ERREUR: 'iperf3' introuvable dans PATH"
+    duration = max(1, min(duration, 30))
+    cmd = ["iperf3", "-c", server, "-t", str(duration), "-J"] if server \
+        else ["iperf3", "-c", "iperf3.par2.as49434.net", "-t", str(duration), "-J"]
+    out = _run(cmd, timeout=float(duration * 2 + 30))
+    # sortie JSON : on extrait les débits lisibles
+    try:
+        import json as _json
+        data = _json.loads(out)
+        end = data.get("end", {})
+        sum_sent = end.get("sum_sent", {})
+        sum_recv = end.get("sum_received", {})
+        def mbps(bps):
+            return f"{bps / 1e6:.1f} Mb/s" if bps else "?"
+        return (f"iperf3 vers {server or 'iperf3.par2.as49434.net'} ({duration}s):\n"
+                f"  Upload:   {mbps(sum_sent.get('bits_per_second', 0))}\n"
+                f"  Download: {mbps(sum_recv.get('bits_per_second', 0))}")
+    except Exception:
+        return out  # sortie brute si le JSON n'est pas parsable
+
+
+@mcp.tool()
 def http_get(url: str, timeout: float = 15.0) -> str:
     """Requête HTTP(S) GET : statut, headers de réponse et début du corps
     (tronqué). url doit commencer par http:// ou https://."""

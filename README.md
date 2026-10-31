@@ -195,24 +195,44 @@ python3 tests/test_gtk_app_structure.py    # structure de la fenêtre (stub gi)
 
 | Server   | Outils | Source |
 |----------|--------|--------|
-| nettools | ping, dig, traceroute, whois, listening_ports, connections, ip_addr, tls_info, http_get | local (binaires système) / urllib |
-| sysinfo  | disk_usage, memory, load, gpu_status, temperatures, processes, logs (journalctl), ports_listening, network_interfaces | local (/proc, binaires système) |
+| nettools | ping, dig, traceroute, whois, listening_ports, connections, ip_addr, tls_info, http_get (garde SSRF), bandwidth_test (iperf3, `server` obligatoire — aucun serveur public par défaut) | local (binaires système) / urllib |
+| sysinfo  | disk_usage, memory, load, gpu_status, temperatures, processes, logs (journalctl), ports_listening, network_interfaces, services, service_status, smart_disk, battery | local (/proc, binaires système) |
 | files    | grep_files (ripgrep), read_file (paginé), file_info (empreintes), list_dir | local, lecture confinée à `JARVIS_FILES_ROOTS` (défaut: cwd + `$HOME`) |
 | netutils | ip_calc, ip_convert, encode (b64/hex/url/rot13), hash_text, time_now, time_convert | stdlib uniquement, aucun appel externe |
+| textutils | diff (unifié), json_query (chemin `a.b[0].c`), regex_test (groupes), unit_convert (tailles/débits/durées/températures) | stdlib uniquement |
 | git      | git_status, git_log, git_diff, git_branches, git_remotes, git_show | dépôt courant ou `JARVIS_GIT_REPO`, lecture seule |
 | memory   | remember, recall, forget | `~/.cache/jarvis/memory.md` (ou `JARVIS_MEMORY_FILE`) |
+| notes    | note_add, note_list, note_topics, note_search | `~/.cache/jarvis/notes/<sujet>.md` (ou `JARVIS_NOTES_DIR`) |
 | cve      | cve_info, search_cve (filtre `days` optionnel), latest_cve | API NVD 2.0 |
+| kev      | kev_recent (N jours), kev_search, kev_info | API CISA KEV, sans clé |
+| epss     | epss_score (liste de CVEs), epss_history | API FIRST EPSS, sans clé (`FIRST_API_KEY` optionnel) |
+| ghsa     | ghsa_search, ghsa_for_package, ghsa_info | API GitHub Advisories (`GITHUB_TOKEN` optionnel, 60 req/h sinon) |
+| exploitdb | exploit_search, exploit_info | `searchsploit` local ou API exploit-db.com, lecture seule |
+| scan     | port_scan, service_detect, os_detect | nmap `-sT`, **LAN/localhost uniquement** sauf `allow_public=True`, plage max 4096 ports |
+| snmp     | snmp_get, snmp_walk, snmp_interfaces | net-snmp, GET/WALK uniquement, communauté `JARVIS_SNMP_COMMUNITY` |
+| lan      | arp_table, dhcp_leases (chemin restreint à `/var/lib` + `/etc/dhcp`), lan_hosts (**sous-réseau privé uniquement**) | /proc + arp-scan/nmap/fping |
+| docker   | containers, container_stats, container_logs, images, container_inspect, disk_usage | lecture seule (pas de run/stop/rm/exec) |
+| fetch    | fetch_page (texte lisible), fetch_headers | urllib, http(s) uniquement, **garde SSRF** (loopback/link-local 169.254.169.254 refusés, privé refusé sauf `allow_private=True`) |
+| rss      | rss_latest, rss_check | flux RSS 2.0 + Atom, stdlib, garde SSRF |
 | echo     | ping | test du harnais uniquement |
 
 `cve` : sans clé API NVD, limité à 5 requêtes/30 s (throttle intégré côté
 server). Clé gratuite : https://nvd.nist.gov/developers/request-key puis
 `export NVD_API_KEY=...` (50 req/30 s).
 
-`files` est **lecture seule et confiné** : un chemin hors de `JARVIS_FILES_ROOTS`
-renvoie une erreur. `git` n'expose aucune commande d'écriture (pas de
-commit/add/push). Les serveurs reçoivent l'environnement complet du processus
-jarvis (variables `NVD_API_KEY`, `JARVIS_FILES_ROOTS`, `JARVIS_MEMORY_FILE`,
-`JARVIS_GIT_REPO`...).
+Garde-fous : `files` est **lecture seule et confiné** (chemin hors de
+`JARVIS_FILES_ROOTS` → erreur) ; `git` et `docker` n'exposent **aucune commande
+d'écriture** ; `scan` refuse les cibles publiques sans `allow_public=True` et
+les plages > 4096 ports ; `lan_hosts` refuse les sous-réseaux non privés ;
+`dhcp_leases` n'accepte que `/var/lib` et `/etc/dhcp` ; `snmp` ne fait que
+GET/WALK ; `fetch`/`rss`/`http_get` bloquent loopback, link-local et IP privée
+(SSRF — override de test uniquement via `JARVIS_FETCH_ALLOW_PRIVATE=1`) ;
+`unit_convert` refuse les conversions inter-dimensions (s → go). Les serveurs
+reçoivent l'environnement complet du processus jarvis (variables `NVD_API_KEY`,
+`FIRST_API_KEY`, `GITHUB_TOKEN`, `JARVIS_FILES_ROOTS`, `JARVIS_MEMORY_FILE`,
+`JARVIS_NOTES_DIR`, `JARVIS_GIT_REPO`, `JARVIS_SNMP_COMMUNITY`...). Toutes les
+entrées passées à un sous-processus doivent commencer par un caractère
+alphanumérique (jamais d'option `-x` en première position).
 
 ## Benchmark
 
@@ -274,12 +294,15 @@ src/jarvis/
               #  reasoning repliable, outils), markdown (rendu Markdown -> markup
               #  Pango), backend (boucle asyncio + queue
               #  + sessions + statut serveur) -> `uv run jarvis-app`
-mcp_servers/  # nettools (ping/dig/traceroute/whois/ss/ip/TLS/HTTP),
-              #  sysinfo (disques/mémoire/GPU/processus/journalctl),
+mcp_servers/  # nettools (ping/dig/traceroute/whois/ss/ip/TLS/HTTP/iperf3),
+              #  sysinfo (disques/mémoire/GPU/processus/journalctl/services/SMART/batterie),
               #  files (grep/read/empreintes, lecture confinée),
-              #  netutils (IP/encode/hash/heure, stdlib),
-              #  git (status/log/diff, lecture seule), memory (mémoire persistante),
-              #  cve (NVD 2.0), echo (test)
+              #  netutils + textutils (IP/encode/hash/heure/diff/json/regex/unités, stdlib),
+              #  git (status/log/diff, lecture seule), memory + notes (persistance),
+              #  scan (nmap -sT, LAN uniquement), snmp (GET/WALK), lan (ARP/DHCP),
+              #  docker (lecture seule), fetch + rss (web),
+              #  cve (NVD 2.0), kev (CISA), epss (FIRST), ghsa (GitHub), exploitdb,
+              #  echo (test)
 bench/       # mesure tok/s / TTFT
 tests/       # mock LLM (stream SSE + tool_calls fragmentés), test end-to-end,
               #  test_tui.py : validation visuelle du rendu sans LLM

@@ -238,5 +238,72 @@ def network_interfaces() -> str:
     return _read_proc("/proc/net/dev")
 
 
+@mcp.tool()
+def services(state: str = "failed") -> str:
+    """Unités systemd. state: 'failed' (défaut), 'running' ou 'all'.
+    En 'failed' : liste les services en échec (ce qui demande de l'attention)."""
+    state = state if state in ("failed", "running", "all") else "failed"
+    if state == "failed":
+        return _run(["systemctl", "list-units", "--state=failed", "--no-legend",
+                     "--no-pager"], timeout=30.0)
+    flag = "--all" if state == "all" else "--state=running"
+    return _run(["systemctl", "list-units", flag, "--type=service", "--no-pager",
+                 "--no-legend"], timeout=30.0)
+
+
+@mcp.tool()
+def service_status(name: str) -> str:
+    """État détaillé d'un service systemd (systemctl status) : actif, uptime,
+    mémoire, dernières lignes de log. name: unité (ex: sshd, NetworkManager)."""
+    if not re.fullmatch(r"[A-Za-z0-9@._-]+", name):
+        return "ERREUR: nom d'unité invalide."
+    return _run(["systemctl", "status", name, "--no-pager", "-n", "15", "-l"], timeout=30.0)
+
+
+@mcp.tool()
+def smart_disk(device: str = "/dev/sda") -> str:
+    """Santé SMART d'un disque (smartctl -a) : modèle, série, heure de mise,
+    température, erreurs, secteurs réalloués... device: /dev/sdX ou /dev/nvmeXnY."""
+    if not re.fullmatch(r"/dev/[A-Za-z0-9]+", device):
+        return "ERREUR: device invalide (ex: /dev/sda, /dev/nvme0n1)."
+    return _run(["smartctl", "-a", device], timeout=30.0)
+
+
+@mcp.tool()
+def battery() -> str:
+    """Batterie (/sys/class/power_supply) : capacité %, état (Charging/
+    Discharging/Full), autonomie restante estimée si disponible. Vide sur fixe."""
+    base = "/sys/class/power_supply"
+    if not os.path.isdir(base):
+        return "ERREUR: /sys/class/power_supply introuvable (machine fixe ?)."
+    lines = []
+    for name in sorted(os.listdir(base)):
+        d = os.path.join(base, name)
+        if not os.path.isdir(d):
+            continue
+        fields = {}
+        for f in ("type", "status", "capacity", "energy_now", "energy_full",
+                  "power_now", "charge_now", "charge_full", "voltage_now"):
+            p = os.path.join(d, f)
+            if os.path.isfile(p):
+                fields[f] = _read_proc(p, 64).splitlines()[0]
+        if fields.get("type") != "Battery":
+            continue
+        cap = fields.get("capacity", "?")
+        status = fields.get("status", "?")
+        line = f"{name}: {cap} % | {status}"
+        # autonomie estimée : energy_now / power_now (µWh/µW -> h)
+        try:
+            now = float(fields.get("energy_now") or fields.get("charge_now") or 0)
+            power = float(fields.get("power_now") or 0)
+            if power > 0 and now > 0:
+                hours = abs(now / power)
+                line += f" | autonomie estimée ~{hours:.1f} h"
+        except ValueError:
+            pass
+        lines.append(line)
+    return "\n".join(lines) if lines else "Aucune batterie détectée (poste fixe)."
+
+
 if __name__ == "__main__":
     mcp.run()  # stdio
