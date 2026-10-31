@@ -1,4 +1,4 @@
-"""Application GTK4 / libadwaita de Jarvis (`uv run jarvis-gtk`).
+"""Application GTK4 / libadwaita de Jarvis (`uv run jarvis-app`).
 
 Refonte compl\u00e8te de l'UI, sans toucher au reste du projet :
 - page d'accueil : un seul bouton \u00ab Lancer \u00bb (d\u00e9marre le llama-server si
@@ -447,7 +447,7 @@ class JarvisWindow(Adw.ApplicationWindow):
                 self.backend.start_server(model_path, ctx_size=int(self._ctx))
 
     def _server_managed(self) -> bool:
-        from ..gui import server as server_mod
+        from .. import server as server_mod
         return server_mod.is_managed_running()
 
     # ---------- conversation ----------
@@ -735,7 +735,7 @@ class JarvisApp(Adw.Application):
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="jarvis-gtk",
+    parser = argparse.ArgumentParser(prog="jarvis-app",
                                      description="Interface GTK4 de Jarvis")
     parser.add_argument("--config", default=None,
                         help="chemin vers config.toml (défaut: JARVIS_CONFIG ou ./config.toml)")

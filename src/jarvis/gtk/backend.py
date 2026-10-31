@@ -38,8 +38,8 @@ from ..agent import Agent
 from ..compact import compact_tool
 from ..config import Config, load_config
 from ..gpu import args_for_device, config_dir, env_for_device, load_gpu_choice, save_gpu_choice
-from ..gui import server as server_mod
-from ..gui.models import discover_models
+from ..models import discover_models
+from .. import server as server_mod
 from ..llm import LLMClient
 from ..mcp import McpToolProvider
 from ..sessions import SessionStore
@@ -109,7 +109,7 @@ class GtkBackend:
         self.config_path = config_path
         self.events: queue.Queue = queue.Queue()
         self.loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(target=self._run_loop, name="jarvis-gtk-async",
+        self._thread = threading.Thread(target=self._run_loop, name="jarvis-async",
                                         daemon=True)
         self.cfg: Config = load_config(config_path)
         self.llm = LLMClient(**{k: v for k, v in self.cfg.llm.__dict__.items()
@@ -331,7 +331,7 @@ class GtkBackend:
         vcfg = self.cfg.voice
         try:
             wav = await synthesize(vcfg, text)
-            out = _P(tempfile.gettempdir()) / f"jarvis-gtk-tts-{os.getpid()}.wav"
+            out = _P(tempfile.gettempdir()) / f"jarvis-tts-{os.getpid()}.wav"
             out.write_bytes(wav)
             self.events.put({"type": "tts_ready", "path": str(out)})
             await play_wav(out, vcfg)

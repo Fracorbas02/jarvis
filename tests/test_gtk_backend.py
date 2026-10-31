@@ -50,7 +50,7 @@ def _drain(backend: GtkBackend, timeout: float = 10.0) -> list[dict]:
 
 async def amain() -> int:
     # environnement isolé : XDG_CONFIG_HOME / XDG_CACHE_HOME temporaires
-    tmp = Path(tempfile.mkdtemp(prefix="jarvis-gtk-test-"))
+    tmp = Path(tempfile.mkdtemp(prefix="jarvis-app-test-"))
     os.environ["XDG_CONFIG_HOME"] = str(tmp / "config")
     os.environ["XDG_CACHE_HOME"] = str(tmp / "cache")
 

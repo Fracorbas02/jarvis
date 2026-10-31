@@ -64,11 +64,10 @@ Commandes CLI :
   (arecord, fallback ffmpeg) s'il n'y a pas d'argument ;
 - `/voice` : statut des deux serveurs voix.
 
-Dans la GUI web (`jarvis-gui`) et l'app desktop (`jarvis-app`), les panneaux
-TTS/STT ont leur propre statut + boutons démarrer/arrêter, la synthèse avec
-lecture dans le navigateur (web) / lecture du WAV (desktop), et la
-transcription par upload de fichier ou — web uniquement — enregistrement
-micro via `getUserMedia` (nécessite localhost/HTTPS).
+Dans l'app GTK4 (`jarvis-app`), la conversation se fait au micro (STT :
+enregistrement local puis transcription) et les réponses peuvent être lues
+à voix haute (TTS, switch dans les réglages) ; le micro utilisé est choisi dans
+les réglages.
 
 ## Installation et lancement
 
@@ -102,111 +101,55 @@ est sauvegardée en JSON dans `~/.cache/jarvis/sessions/` après chaque tour ;
 au démarrage la dernière est reprise automatiquement, `/sessions` liste les
 passées, `/load N` en reprend une, `/new` démarre frais.
 
-## Interface graphique
+## Interface graphique (GTK4 / libadwaita)
 
 ```sh
-uv run jarvis-gui            # http://127.0.0.1:8080 (ouvre le navigateur)
-uv run jarvis-gui --port 9000 --no-open-browser
-```
-
-UI web locale (NiceGUI, thème sombre) :
-
-- **Sélecteur de mode** : Chat LLM (boucle agent complète avec outils MCP),
-  TTS, STT — les panneaux voix listent les modèles détectés pour le mode.
-- **Modèles installés** : découverts automatiquement (`~/models`, cache
-  HuggingFace, `$JARVIS_MODEL_DIRS`) et classés par mode (LLM / TTS / STT)
-  par heuristique de nom (`whisper`/`ggml-` → STT, `piper`/`kokoro`/`xtts`… →
-  TTS, sinon LLM).
-- **Serveur LLM** : statut live de llama-server (`GET /v1/models`), modèle
-  servi, et si aucun serveur ne répond : bouton pour en lancer un avec le
-  GGUF sélectionné (`llama-server -m … -ngl 99 --jinja -fa on`).
-- **Chat** : streaming identique au CLI — raisonnement du modèle en direct
-  (expansion grisée), réponse en markdown, appels d'outils en chips.
-
-Tests GUI (sans navigateur, via le plugin pytest de NiceGUI) :
-
-```sh
-uv run pytest tests/ -v
-```
-
-## Application desktop
-
-```sh
-uv run jarvis-app             # fenêtre native customtkinter (dark mode)
+uv run jarvis-app                 # fenêtre native GTK4 (PyGObject + libadwaita)
 uv run jarvis-app --config /chemin/config.toml
-uv run jarvis-app --scale 2   # forcer le facteur d'échelle (défaut: auto)
 ```
 
-La fenêtre est redimensionnable (sash déplaçable entre la sidebar et la zone
-principale) et s'adapte à la résolution de l'écran (62 % x 68 %, centrée).
-Le facteur d'échelle est détecté automatiquement (DPI de l'écran, hints
-`GDK_SCALE`/`QT_SCREEN_SCALE_FACTORS`, gsettings GNOME, `monitors.xml`
-GNOME >= 46, override `--scale`) et appliqué avant
-la création des widgets : dimensions et polices suivent le scaling GNOME
-(200 % → tout est x2).
+UI native GTK4, qui ne touche à rien d'autre que la partie graphique
+(le cœur LLM + MCP + voix + sessions est réutilisé tel quel) :
 
-Même expérience que la GUI web, en application native : sélecteur de mode
-(Chat LLM / TTS / STT), modèles détectés par mode, panneau serveur
-llama-server (statut, start/stop), liste des outils MCP, et chat avec
-streaming (réflexion en grisé italique, outils en violet, réponse en clair).
-La logique async (LLM + MCP) tourne dans une boucle asyncio sur un thread
-dédié, les événements remontent au thread Tk via une queue.
-
-Test de l'app desktop sous Xvfb (mock LLM, fenêtre pilotée) :
-
-```sh
-xvfb-run -a uv run python tests/test_desktop_app.py
-```
-
-## Interface GTK4 / libadwaita (refonte de l'UI)
-
-```sh
-uv run jarvis-gtk                 # fen\u00eatre native GTK4 (PyGObject + libadwaita)
-uv run jarvis-gtk --config /chemin/config.toml
-```
-
-Nouvelle UI native, qui ne touche \u00e0 rien d'autre que la partie graphique
-(le c\u0153ur LLM + MCP + voix + sessions est r\u00e9utilis\u00e9 tel quel) :
-
-- **Accueil** : un seul bouton \u00ab Lancer \u00bb. S'il n'y a pas d\u00e9j\u00e0 de llama-server,
-  il en d\u00e9marre un avec le GGUF choisi (liste des mod\u00e8les d\u00e9couverts, s'il y en a
-  plusieurs) puis ouvre la conversation ; sinon il ouvre directement la
-  conversation. Le prompt texte n'est pas sur l'accueil : il est dans le
+- **Accueil** : un seul gros bouton micro « Parler à Jarvis ». Si aucun
+  llama-server ne répond, il en démarre un avec le GGUF choisi (sélecteur dans
+  le popover statut, `--ctx-size` réglable) puis ouvre la conversation ;
+  sinon il ouvre directement la conversation. Le prompt texte est dans le
   **menu (Ctrl+P)**, avec les conversations (Ctrl+O) et la lecture TTS.
-- **Conversation** : centr\u00e9e sur l'\u00e9change avec le mod\u00e8le \u2014 bouton micro
-  (STT local : enregistre, transcrit, envoie au LLM) ; r\u00e9ponses en streaming
-  avec raisonnement repliable et appels d'outils en lignes \u2713/\u2717 + dur\u00e9e.
-- **R\u00e9glages** (vrai onglet) : th\u00e8me (syst\u00e8me/sombre/clair), GPU utilis\u00e9 par
-  les serveurs locaux (persist\u00e9 dans `~/.config/jarvis/gpu.json`, appliqu\u00e9 au
-  prochain d\u00e9marrage), taille de contexte (`--ctx-size` au lancement du
-  serveur depuis l'accueil), liste des outils MCP, lecture TTS des r\u00e9ponses.
-  Les r\u00e9glages UI sont persist\u00e9s dans `~/.config/jarvis/ui.json`.
-- Le statut du serveur (en ligne / g\u00e9r\u00e9 / hors ligne + mod\u00e8le servi + usage
-  du contexte via GET /slots) est dans le popover de l'ic\u00f4ne r\u00e9seau, qui permet
-  aussi de d\u00e9marrer/arr\u00eater le serveur g\u00e9r\u00e9.
+- **Conversation** : centrée sur l'échange — barre du bas avec micro (STT
+  local : record → transcribe → tour LLM) + champ texte + envoyer ; réponses
+  en streaming avec raisonnement repliable et appels d'outils en lignes
+  ✓/✗ + durée.
+- **Réglages** (vrai onglet) : thème (système/sombre/clair), GPU utilisé par les
+  serveurs locaux (persisté dans `~/.config/jarvis/gpu.json`), taille de
+  contexte (`--ctx-size`), liste des outils MCP, micro utilisé (arecord -L,
+  persisté dans `~/.config/jarvis/ui.json`), TTS, et autorisations système
+  (test du micro + ouverture des réglages Confidentialité GNOME).
+- Popover de statut serveur (icône réseau) : en ligne / géré / hors ligne,
+  modèle servi, usage réel du contexte (GET /slots), start/stop du serveur géré.
 
-D\u00e9pendance syst\u00e8me : `python3-gobject`, `gtk4`, `libadwaita-1`
+Dépendance système : `python3-gobject`, `gtk4`, `libadwaita-1`
 (ex. `sudo pacman -S python-gobject gtk4 libadwaita` sur Arch).
 
-Pi\u00e8ge uv : PyGObject vit dans les site-packages du **python syst\u00e8me**
-(`/usr/lib/python3.13/site-packages`). Le venv d'uv doit donc \u00eatre cr\u00e9\u00e9 sur
-ce python avec `--system-site-packages`, sinon `import gi` \u00e9choue m\u00eame avec
-`python-gobject` install\u00e9 (le Python standalone d'uv ne voit pas `/usr/lib/...`) :
+Piège uv : PyGObject vit dans les site-packages du **python système**
+(`/usr/lib/python3.x/site-packages`). Le venv d'uv doit donc être créé sur
+ce python avec `--system-site-packages`, sinon `import gi` échoue même avec
+`python-gobject` installé (le Python standalone d'uv ne voit pas `/usr/lib/...`) :
 
 ```sh
 rm -rf .venv
 uv venv --python /usr/bin/python3 --system-site-packages .venv
-uv sync --python /usr/bin/python3   # r\u00e9utilise le .venv (system-site-packages conserv\u00e9)
+uv sync --python /usr/bin/python3
 # si uv resette le venv sans le flag : UV_SYSTEM_SITE_PACKAGES=true uv sync --python /usr/bin/python3
-uv run python -c "import gi; gi.require_version('Gtk','4.0'); from gi.repository import Gtk; print('GTK', Gtk.get_major_version(), Gtk.get_minor_version())"
-uv run jarvis-gtk
+uv run python -c "import gi; gi.require_version('Gtk','4.0'); from gi.repository import Gtk; print('GTK', Gtk.get_major_version())"
+uv run jarvis-app
 ```
 
-Tests du pont GTK (sans GTK ni LLM r\u00e9el, mock LLM + MCP echo) :
+Tests du pont GTK (sans GTK ni LLM réel, mock LLM + MCP echo) :
 
 ```sh
-python3 tests/test_gtk_backend.py          # flux d'\u00e9v\u00e9nements, sessions, r\u00e9glages
-python3 tests/test_gtk_app_structure.py    # structure de la fen\u00eatre (stub gi)
+python3 tests/test_gtk_backend.py          # flux d'événements, sessions, réglages
+python3 tests/test_gtk_app_structure.py    # structure de la fenêtre (stub gi)
 ```
 
 ## Outils MCP
@@ -284,17 +227,17 @@ src/jarvis/
   tui.py      # couche d'affichage rich : panneau thinking repliable, réponse
               #  en Markdown (live), statut des outils, /thinking et /tool N
   cli.py      # REPL (bannière, prompt, /help /tools /verbose /tts /stt /voice ...)
-  gui/        # interface web locale (NiceGUI) : app, sidebar, chat_view,
-              #  voice_views (TTS/STT fonctionnels), models (découverte),
-              #  server (statut llama-server),
-              #  backend (pont agent + streaming) -> `uv run jarvis-gui`
-  desktop/    # application desktop (customtkinter) : app, sidebar, chat_panel,
-              #  voice_panel (TTS/STT fonctionnels), controller (boucle asyncio
-              #  + queue vers Tk, appels voix inclus) -> `uv run jarvis-app`
+  server.py   # statut + start/stop du llama-server (GET /v1/models, Popen)
+  models.py   # découverte des GGUF locaux (~/models, cache HF, $JARVIS_MODEL_DIRS),
+              #  classés par mode (LLM/TTS/STT) par heuristique de nom
+  gtk/        # interface GTK4 / libadwaita (seule UI graphique) : app (fenêtre
+              #  Adw : accueil micro, conversation, réglages), widgets (bulles,
+              #  reasoning repliable, outils), backend (boucle asyncio + queue
+              #  + sessions + statut serveur) -> `uv run jarvis-app`
   gtk/        # interface GTK4 / libadwaita (refonte UI) : app (fen\u00eatre Adw :
               #  accueil "Lancer", conversation, r\u00e9glages), widgets (bulles,
               #  reasoning repliable, outils), backend (boucle asyncio + queue
-              #  + sessions + statut serveur) -> `uv run jarvis-gtk`
+              #  + sessions + statut serveur) -> `uv run jarvis-app`
 mcp_servers/  # nettools (ping/dig/traceroute/whois/ss/ip/TLS/HTTP),
               #  sysinfo (disques/mémoire/GPU/processus/journalctl),
               #  files (grep/read/empreintes, lecture confinée),
