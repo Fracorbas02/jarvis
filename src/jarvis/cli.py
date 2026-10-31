@@ -12,7 +12,11 @@ import os
 import sys
 from pathlib import Path
 
+from rich import box
 from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
 
 from .agent import Agent
 from .config import load_config
@@ -20,7 +24,28 @@ from .llm import LLMClient
 from .mcp import McpToolProvider
 from .tui import Display
 
-BANNER = """Jarvis (pilote) — /help pour les commandes"""
+HELP = """\
+[bold]commandes[/]
+  /help        cette aide
+  /tools       liste les outils MCP avec leur description
+  /thinking    réaffiche le raisonnement du dernier tour
+  /tool N      résultat complet du N-ième outil du dernier tour
+  /reset       efface l'historique de conversation
+  /verbose     bascule les logs console en DEBUG (fichier: ~/.cache/jarvis/jarvis.log)
+  /quit        quitte"""
+
+
+def _banner(console: Console, cfg, tools: McpToolProvider) -> None:
+    n = len(tools.names())
+    servers = ", ".join(sorted(cfg.mcp_servers)) or "aucun"
+    body = Text.from_markup(
+        f"[bold]assistant local[/]\n"
+        f"[dim]modèle[/]  {cfg.llm.model} @ {cfg.llm.base_url}\n"
+        f"[dim]outils[/]  {n} chargés ({servers})\n"
+        f"[dim]/help[/] pour les commandes"
+    )
+    console.print(Panel(body, title="[bold cyan]JARVIS[/]", border_style="cyan",
+                        box=box.ROUNDED, padding=(0, 1)))
 
 
 def _setup_logging(verbose: bool = False) -> None:
@@ -66,33 +91,44 @@ async def amain() -> int:
                   stream=True)
 
     console = Console()
-    console.print(BANNER)
+    _banner(console, cfg, tools)
     display = Display(console)
     history: list[dict] = []
     verbose = False
     try:
         while True:
             try:
-                user = input("\n[toi] > ").strip()
+                user = console.input("\n[bold cyan][toi] › [/]").strip()
             except (EOFError, KeyboardInterrupt):
                 break
             if not user:
                 continue
             if user == "/quit":
                 break
+            if user == "/help":
+                console.print(HELP)
+                continue
             if user == "/reset":
                 history.clear()
-                print("historique réinitialisé")
+                console.print("[dim]historique réinitialisé[/]")
                 continue
             if user == "/tools":
-                for name in tools.names():
-                    print(f"  {name}")
+                table = Table(box=box.SIMPLE_HEAD, title="Outils MCP",
+                              title_style="bold", header_style="bold")
+                table.add_column("Outil")
+                table.add_column("Description")
+                for s in tools.schemas():
+                    fn = s["function"]
+                    desc = (fn.get("description") or "").strip().splitlines()
+                    table.add_row(fn["name"], desc[0] if desc else "")
+                console.print(table)
                 continue
             if user == "/verbose":
                 verbose = not verbose
                 _set_console_log_level(logging.DEBUG if verbose else logging.WARNING)
-                print(f"niveau de log console: {'DEBUG' if verbose else 'WARNING'} "
-                      f"(log complet: ~/.cache/jarvis/jarvis.log)")
+                console.print(f"[dim]niveau de log console: "
+                              f"{'DEBUG' if verbose else 'WARNING'} "
+                              f"(log complet: ~/.cache/jarvis/jarvis.log)[/]")
                 continue
             if user == "/thinking":
                 display.show_reasoning()
@@ -123,7 +159,7 @@ async def amain() -> int:
                 console.print(f"[bold red]erreur:[/] {exc}")
                 continue
             if trace.error:
-                print(f"warn: {trace.error}", file=sys.stderr)
+                console.print(f"[bold yellow]warn:[/] {trace.error}")
     finally:
         await tools.stop()
         await llm.aclose()
