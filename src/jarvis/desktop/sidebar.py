@@ -22,13 +22,13 @@ class Sidebar(ctk.CTkFrame):
     def __init__(self, master, ctrl: DesktopController,
                  on_mode_change: Callable[[str], None],
                  on_reset: Callable[[], None]):
-        super().__init__(master, width=270, fg_color=PANEL, corner_radius=0)
+        super().__init__(master, fg_color=PANEL, corner_radius=0)
         self.ctrl = ctrl
         self.on_mode_change = on_mode_change
         self.on_reset = on_reset
         self._model_paths: dict[str, str] = {}  # label combo -> chemin
 
-        self.grid_propagate(False)
+        # largeur contrôlée par le volet (PanedWindow) parent
         self.grid_columnconfigure(0, weight=1)
 
         r = 0

@@ -12,33 +12,44 @@ import argparse
 import os
 import queue
 import sys
-from pathlib import Path
+import tkinter as tk
 
 import customtkinter as ctk
 
 from .chat_panel import ChatPanel
 from .controller import DesktopController, default_repo_root
+from .scaling import detect_scale, setup_window
 from .sidebar import Sidebar
-from .theme import BG
+from .theme import BG, PANEL
 from .voice_panel import VoicePanel
+
+SIDEBAR_W = 280
+SIDEBAR_MIN = 230
+MAIN_MIN = 520
 
 
 class DesktopApp:
-    def __init__(self, root: ctk.CTk, config_path: str | None):
+    def __init__(self, root: ctk.CTk, config_path: str | None,
+                 scale: float = 1.0):
         self.root = root
+        self.scale = scale
         self.ctrl = DesktopController(config_path)
 
-        root.grid_columnconfigure(0, weight=0)
-        root.grid_columnconfigure(1, weight=1)
-        root.grid_rowconfigure(0, weight=1)
+        # Fenêtre redimensionnable ; la sidebar est sur un sash déplaçable.
+        root.resizable(True, True)
+        self.pw = tk.PanedWindow(root, orient="horizontal", bg=BG, bd=0,
+                                 sashwidth=6, sashpad=0, opaqueresize=True,
+                                 handlepad=0)
+        self.pw.pack(fill="both", expand=True)
 
-        self.sidebar = Sidebar(root, self.ctrl,
+        self.sidebar = Sidebar(self.pw, self.ctrl,
                                on_mode_change=self.show_mode,
                                on_reset=self.on_reset)
-        self.sidebar.grid(row=0, column=0, sticky="ns")
+        self.pw.add(self.sidebar, width=int(SIDEBAR_W * scale),
+                    minsize=int(SIDEBAR_MIN * scale))
 
-        self.main = ctk.CTkFrame(root, fg_color=BG, corner_radius=0)
-        self.main.grid(row=0, column=1, sticky="nsew")
+        self.main = ctk.CTkFrame(self.pw, fg_color=BG, corner_radius=0)
+        self.pw.add(self.main, minsize=int(MAIN_MIN * scale))
         self.main.grid_rowconfigure(0, weight=1)
         self.main.grid_columnconfigure(0, weight=1)
 
@@ -111,6 +122,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="jarvis-app",
                                      description="Application desktop de Jarvis")
     parser.add_argument("--config", default=None, help="chemin vers config.toml")
+    parser.add_argument("--scale", type=float, default=None,
+                        help="facteur d'échelle UI (défaut: auto, détecté depuis "
+                             "l'écran — utile avec le scaling GNOME)")
     args = parser.parse_args()
 
     # Les commandes MCP de la config sont relatives à la racine du dépôt :
@@ -124,11 +138,15 @@ def main() -> None:
 
     root = ctk.CTk()
     root.title("Jarvis")
-    root.geometry("1100x700")
-    root.minsize(860, 560)
+
+    # Scaling HiDPI (GNOME) + fenêtre adaptative et redimensionnable.
+    # setup_window applique set_*_scaling AVANT la création des widgets
+    # (scale dimensions + polices) et déverrouille maxsize (CTk le bloque).
+    scale = detect_scale(root, args.scale)
+    setup_window(root, scale)
     root.configure(fg_color=BG)
 
-    app = DesktopApp(root, args.config)
+    app = DesktopApp(root, args.config, scale=scale)
     try:
         root.mainloop()
     except KeyboardInterrupt:
