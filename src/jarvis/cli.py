@@ -7,7 +7,6 @@ rendue en Markdown dans un panneau (tui.Display).
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import sys
@@ -19,13 +18,9 @@ from .agent import Agent
 from .config import load_config
 from .llm import LLMClient
 from .mcp import McpToolProvider
-from .tui import Display, DIM
+from .tui import Display
 
-BANNER = """Jarvis (pilote) — /tools /reset /quit"""
-
-
-def _tool_status(name: str, args: dict) -> None:
-    print(f"\n{DIM}→ {name} {json.dumps(args, ensure_ascii=False)}", flush=True)
+BANNER = """Jarvis (pilote) — /help pour les commandes"""
 
 
 def _setup_logging(verbose: bool = False) -> None:
@@ -102,11 +97,20 @@ async def amain() -> int:
             if user == "/thinking":
                 display.show_reasoning()
                 continue
+            if user.startswith("/tool"):
+                parts = user.split()
+                if len(parts) == 2 and parts[1].isdigit():
+                    display.show_tool(int(parts[1]))
+                else:
+                    console.print(f"[dim]usage: /tool N "
+                                  f"(1..{max(len(display.last_tool_results), 1)})[/]")
+                continue
 
             try:
                 reply, history, trace = await agent.turn(
                     history, user,
-                    on_tool_call=_tool_status,
+                    on_tool_call=display.tool_call,
+                    on_tool_result=display.tool_result,
                     on_reasoning=display.reasoning,
                     on_content=display.content,
                     on_llm_end=display.end_llm_stream,

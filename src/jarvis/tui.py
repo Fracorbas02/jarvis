@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 
@@ -17,11 +18,13 @@ from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.spinner import Spinner
 from rich.text import Text
 
 JARVIS_STYLE = "green"
 DIM = "grey50"
 RENDER_THROTTLE = 0.07  # secondes entre deux re-rendus du live
+MAX_LINE = 110  # troncature des lignes d'appel d'outils à l'affichage
 
 
 @dataclass
@@ -29,6 +32,15 @@ class Reasoning:
     text: str
     duration: float
     tokens: int
+
+
+@dataclass
+class ToolResult:
+    name: str
+    args: dict
+    ok: bool
+    duration: float
+    result: str
 
 
 class Display:
@@ -44,8 +56,12 @@ class Display:
         self._content_live: Live | None = None
         self._content_last_render = 0.0
         self.content_started = False
-        # persistants entre les tours (consultables via /thinking)
+        # persistants entre les tours (consultables via /thinking, /tool N)
         self.last_reasoning: Reasoning | None = None
+        self.tool_results: list[ToolResult] = []
+        self.last_tool_results: list[ToolResult] = []
+        self._tool_live: Live | None = None
+        self._tool_line = ""
 
     # -- raisonnement -------------------------------------------------------
     def reasoning(self, chunk: str) -> None:
@@ -90,6 +106,7 @@ class Display:
         self._content_parts.append(chunk)
         now = time.monotonic()
         if self._content_live is None:
+            self.console.print()  # aère avant le panneau
             self._content_live = Live(self._render_content(), console=self.console,
                                       transient=False, refresh_per_second=15)
             self._content_live.start()
@@ -110,6 +127,57 @@ class Display:
         return Panel(Markdown(text), title=f"[bold {JARVIS_STYLE}]jarvis[/]",
                      border_style=JARVIS_STYLE, box=box.ROUNDED, padding=(0, 1))
 
+    # -- outils ----------------------------------------------------------------
+    def tool_call(self, name: str, args: dict) -> None:
+        """Début d'exécution d'un outil : spinner sur la ligne d'appel."""
+        raw = f"→ {name} {json.dumps(args, ensure_ascii=False)}"
+        self._tool_line = raw if len(raw) <= MAX_LINE else raw[: MAX_LINE - 1] + "…"
+        self._tool_live = Live(Spinner("dots", text=Text(self._tool_line, style=DIM)),
+                               console=self.console, transient=True,
+                               refresh_per_second=15)
+        self._tool_live.start()
+
+    def tool_result(self, name: str, args: dict, ok: bool,
+                    duration: float, result: str) -> None:
+        """Fin d'exécution : statut ✓/✗ + durée, aperçu du résultat, stockage."""
+        if self._tool_live is not None:
+            self._tool_live.stop()
+            self._tool_live = None
+        mark = "[green]✓[/]" if ok else "[red]✗[/]"
+        raw_args = json.dumps(args, ensure_ascii=False)
+        shown = raw_args if len(raw_args) <= 60 else raw_args[:57] + "…"
+        self.console.print(f"{mark} {name}({shown})  [{DIM}]{duration:.2f}s[/]")
+        n = len(self.tool_results) + 1
+        self.tool_results.append(ToolResult(name, args, ok, duration, result))
+        if result:
+            lines = result.splitlines()
+            preview = "\n".join(lines[:3])
+            if len(lines) > 3 or len(result) > 200:
+                preview += f"\n… ({len(result)} car. au total — /tool {n})"
+            self.console.print(Text("  └─ " + preview.replace("\n", "\n  "), style=DIM))
+
+    def show_tool(self, n: int) -> None:
+        """Réaffiche le résultat complet du n-ième outil du dernier tour."""
+        if not 1 <= n <= len(self.last_tool_results):
+            self.console.print(
+                f"[{DIM}]pas d'outil n°{n} sur le dernier tour "
+                f"({len(self.last_tool_results)} appel(s))[/]"
+            )
+            return
+        t = self.last_tool_results[n - 1]
+        mark = "✓" if t.ok else "✗"
+        style = DIM if t.ok else "red"
+        panel = Panel(
+            Text(t.result),
+            title=f"[{style}]{mark} {t.name} · {t.duration:.2f}s[/]",
+            border_style=style, box=box.ROUNDED, padding=(0, 1),
+        )
+        if len(t.result.splitlines()) > 30:
+            with self.console.pager(styles=True):
+                self.console.print(panel)
+        else:
+            self.console.print(panel)
+
     # -- frontières de stream / tour ------------------------------------------
     def end_llm_stream(self) -> None:
         """Appelé à chaque fin de réponse LLM (stream terminé)."""
@@ -120,10 +188,12 @@ class Display:
             self._content_live = None
 
     def end_turn(self) -> None:
-        """Fige le rendu final et remet à zéro l'état de streaming du tour."""
+        """Fige le rendu final et archive les résultats d'outils du tour."""
         self.end_llm_stream()
         self._content_parts = []
         self.content_started = False
+        self.last_tool_results = self.tool_results
+        self.tool_results = []
 
     # -- consultation ----------------------------------------------------------
     def show_reasoning(self) -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 
 from .llm import LLMClient
@@ -42,6 +43,8 @@ class Agent:
         appelés fragment par fragment pendant la génération, et on_llm_end une
         fois par réponse LLM terminée (utile pour replier l'affichage du
         raisonnement même quand la réponse ne contient que des tool_calls).
+        on_tool_call(name, args) précède l'exécution de l'outil ;
+        on_tool_result(name, args, ok, duration_s, result) la suit.
         """
         if not any(m.get("role") == "system" for m in history):
             history = [{"role": "system", "content": self.system_prompt}, *history]
@@ -73,7 +76,12 @@ class Agent:
                     log.info("outil %s args=%s", name, args)
                     if on_tool_call:
                         on_tool_call(name, args)
+                    start = time.perf_counter()
                     result = await self.tools.call(name, args)
+                    duration = time.perf_counter() - start
+                    if on_tool_result:
+                        on_tool_result(name, args,
+                                       not result.startswith("ERREUR"), duration, result)
                 trace.tool_calls.append((name, json.dumps(args, ensure_ascii=False)))
                 history.append({
                     "role": "tool",

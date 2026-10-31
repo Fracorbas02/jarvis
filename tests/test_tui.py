@@ -45,10 +45,18 @@ def main() -> None:
         d.reasoning(chunk)
         time.sleep(0.05)
     d.end_llm_stream()  # fin du stream LLM (panneau replié en ligne résumé)
+    d.tool_call("cve__search_cve", {"keywords": "Arista", "days": 30, "limit": 10})
+    time.sleep(0.1)
+    d.tool_result("cve__search_cve", {"keywords": "Arista", "days": 30, "limit": 10},
+                  True, 1.23,
+                  "CVE-2026-102163 | 8.8 | HIGH\nCVE-2026-102162 | 8.8 | HIGH\n"
+                  "CVE-2026-102167 | 7.5 | HIGH\n... 7 lignes au total")
     for chunk in ["Voici le résultat :\n\n", MD[: len(MD) // 2], MD[len(MD) // 2 :]]:
         d.content(chunk)
         time.sleep(0.05)
     d.end_turn()
+    print("\n--- /tool 1 ---")
+    d.show_tool(1)
     print("\n--- /thinking ---")
     d.show_reasoning()
 
