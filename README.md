@@ -124,7 +124,12 @@ UI native GTK4, qui ne touche à rien d'autre que la partie graphique
   serveurs locaux (persisté dans `~/.config/jarvis/gpu.json`), taille de
   contexte (`--ctx-size`), liste des outils MCP, micro utilisé (arecord -L,
   persisté dans `~/.config/jarvis/ui.json`), TTS, et autorisations système
-  (test du micro + ouverture des réglages Confidentialité GNOME).
+  (statut de l'autorisation via le portail XDG, test du micro + ouverture
+  des réglages Confidentialité GNOME). Au **premier lancement**, une boîte
+  de dialogue demande l'autorisation micro (bouton Autoriser = test
+  d'enregistrement réel de 0,5 s qui déclenche la demande système GNOME ;
+  le dialogue ne se remontre plus ensuite, flag `mic_permission_asked`
+  dans `ui.json`).
 - Popover de statut serveur (icône réseau) : en ligne / géré / hors ligne,
   modèle servi, usage réel du contexte (GET /slots), start/stop du serveur géré.
 

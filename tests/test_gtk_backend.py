@@ -131,6 +131,19 @@ async def amain() -> int:
         assert gpu_json["device"] == "cpu", gpu_json
         assert gtk_backend.load_ui_settings()["gpu"] == "cpu"
 
+        # parsing de la réponse du portail PermissionStore.Lookup
+        import re
+        def parse_lookup(out: str) -> str:
+            m = re.search(r"'(yes|no)'", out)
+            return m.group(1) if m else "unknown"
+        assert parse_lookup("(<{'io.github.Fracorbas02.Jarvis': <['yes']>},)") == "yes"
+        assert parse_lookup("(<{'io.github.Fracorbas02.Jarvis': <['no']>},)") == "no"
+        assert parse_lookup("(<{},>)") == "unknown"
+
+        # flag de 1er lancement : le dialogue d'autorisation ne se montre qu'une fois
+        gtk_backend.save_ui_settings({"mic_permission_asked": True})
+        assert gtk_backend.load_ui_settings()["mic_permission_asked"] is True
+
         # server_ctx_usage ne lève jamais, même serveur absent
         usage = await server_ctx_usage("http://127.0.0.1:1/v1")
         assert usage["n_ctx"] is None and usage["used"] == 0, usage
