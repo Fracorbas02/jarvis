@@ -500,6 +500,7 @@ class MessageBox(Gtk.Box):
         self.webview = None
         if role == "assistant" and WEBKIT_AVAILABLE:
             self.webview = self._make_webview()
+            self.webview.set_visible(False)  # affiché au 1er rendu markdown
             bubble.append(self.webview)
 
         self.tools_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
@@ -530,6 +531,8 @@ class MessageBox(Gtk.Box):
         self._clear_content()
         if text:
             self.content_box.append(_label(escape(text), text))
+        # un texte vide ne doit pas laisser la bulle "fantôme"
+        self.content_box.set_visible(bool(text))
 
     def set_markdown(self, text: str) -> None:
         """Texte markdown (réponse assistant) rendu en widgets GTK natifs."""
@@ -547,9 +550,12 @@ class MessageBox(Gtk.Box):
         if self.webview is not None:
             # rendu HTML complet via markdown-it-py + WebKit
             self.content_box.set_visible(False)
-            if self.webview.get_parent() is None:
-                pass  # déjà dans la bulle
             self.webview.set_visible(True)
+            self.webview.set_vexpand(True)
+            if not text.strip():
+                # rien à afficher : garde la webview cachée pour ne pas occuper de place
+                self.webview.set_visible(False)
+                return
             self.webview.load_html(markdown_to_html(text), "about:blank")
             return
         self._clear_content()
@@ -568,6 +574,8 @@ class MessageBox(Gtk.Box):
         liens externes (script-message -> xdg-open)."""
         wv = WebKit.WebView()
         wv.set_vexpand(True)
+        wv.set_hexpand(True)
+        wv.set_size_request(-1, 40)  # hauteur mini : la webview n'occupe jamais 0px
         settings = wv.get_settings()
         try:
             settings.set_enable_javascript(True)
