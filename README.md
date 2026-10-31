@@ -53,7 +53,10 @@ presse-papier), `/save [fichier]` (exporter la conversation en Markdown),
 l'historique via le LLM pour libérer du contexte — le modèle peut aussi
 appeler seul l'outil interne `jarvis__compact`), `/reset`, `/verbose`,
 `/quit`. Tab complète les commandes `/` ; l'historique des saisies persiste
-dans `~/.cache/jarvis/history`. Ctrl+C annule la saisie, double Ctrl+C quitte.
+dans `~/.cache/jarvis/history`. **Multiligne** : Maj+Entrée insère un saut de
+ligne (protocole clavier kitty, sur kitty/wezterm/ghostty/foot), Entrée envoie ;
+fallback universel : `\` en fin de ligne puis Entrée. Ctrl+C annule la saisie,
+double Ctrl+C quitte.
 Une ligne de métriques (tok, tok/s, durée) suit chaque réponse streamée ; la
 bannière affiche le statut du serveur (GET /v1/models) et la taille du
 contexte max (GET /slots, dynamique — 32k si relancé avec `--ctx-size 32768`),

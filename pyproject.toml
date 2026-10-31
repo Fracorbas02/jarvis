@@ -8,6 +8,7 @@ dependencies = [
     "httpx>=0.27",
     "mcp>=2.3,<3",
     "nicegui>=3.18.0",
+    "prompt-toolkit>=3.0.53",
     "rich>=15.0.0",
 ]
 

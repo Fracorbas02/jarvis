@@ -9,17 +9,24 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import readline
 import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 import tomllib
 from datetime import datetime
 from pathlib import Path
 
 import httpx
+from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.formatted_text import ANSI
+from prompt_toolkit.history import FileHistory
+from prompt_toolkit.input.ansi_escape_sequences import ANSI_SEQUENCES
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.keys import Keys
 from rich import box
 from rich.console import Console
 from rich.panel import Panel
@@ -62,26 +69,84 @@ def _state_dir() -> Path:
     return Path(os.environ.get("JARVIS_LOG_DIR", Path.home() / ".cache" / "jarvis"))
 
 
-def _setup_readline() -> Path | None:
-    """Historique persistant des saisies + complétion Tab des commandes /."""
-    hist = _state_dir() / "history"
+class _SlashCompleter(Completer):
+    """Complétion Tab des commandes / uniquement en début de saisie."""
+
+    def get_completions(self, document, complete_event):
+        text = document.text_before_cursor
+        if text.startswith("/"):
+            for cmd in COMMANDS:
+                if cmd.startswith(text):
+                    yield Completion(cmd, start_position=-len(text))
+
+
+def _make_session(hist_file: Path | None) -> PromptSession:
+    """Session de prompt : historique persistant, complétion /, multiligne.
+
+    - Maj+Entrée (Shift+Enter) insère un saut de ligne : le terminal l'envoie
+      en CSI u (\x1b[13;2u) quand le mode clavier kitty est actif (kitty,
+      wezterm, ghostty, foot...) ; on enregistre la séquence dans le parser
+      de prompt_toolkit pour la capter même sans négociation.
+    - Entrée soumet — sauf si la ligne finit par "\\" : continuation
+      (fonctionne sur tous les terminaux, fallback universel).
+    """
+    # Maj+Entrée en CSI u (protocole clavier kitty) -> on la mappe sur F24,
+    # touche fonction inutilisée, que l'on binde à l'insertion d'un saut de ligne
+    ANSI_SEQUENCES["\x1b[13;2u"] = Keys.F24
+    kb = KeyBindings()
+
+    @kb.add(Keys.F24)
+    def _newline(event):
+        event.current_buffer.insert_text("\n")
+
+    @kb.add("enter")
+    def _enter(event):
+        buf = event.current_buffer
+        if buf.text.rstrip().endswith("\\"):
+            buf.text = buf.text.rstrip()[:-1] + "\n"  # continuation
+        else:
+            buf.submit()
+
+    return PromptSession(
+        history=FileHistory(str(hist_file)) if hist_file is not None else None,
+        completer=_SlashCompleter(),
+        key_bindings=kb,
+        enable_history_search=True,
+        complete_while_typing=False,
+    )
+
+
+def _hist_file() -> Path | None:
     try:
         _state_dir().mkdir(parents=True, exist_ok=True)
-        readline.read_history_file(hist)
-    except (FileNotFoundError, OSError):
-        pass
-    readline.set_history_length(1000)
+        return _state_dir() / "history"
+    except OSError:
+        return None
 
-    def completer(text: str, state: int):
-        matches = [c for c in COMMANDS if c.startswith(text)]
-        return matches[state] if state < len(matches) else None
 
-    readline.set_completer(completer)
-    try:
-        readline.parse_and_bind("tab: complete")          # GNU readline
-    except Exception:                                     # libedit (macOS)
-        readline.parse_and_bind("bind ^I rl_complete")
-    return hist
+async def _prompt(session: PromptSession, prompt_text) -> str:
+    """session.prompt() dans un thread daemon.
+
+    Appelé directement dans la coroutine, prompt_toolkit détecterait la running
+    event loop et lirait stdin par petits chunks (mode asyncio), ce qui
+    découpe les séquences clavier CSI u (Maj+Entrée) avant le parser. Dans un
+    thread sans loop, il retombe en lecture synchrone et le parsing marche.
+    """
+    box: dict = {}
+
+    def run():
+        try:
+            box["text"] = session.prompt(prompt_text)
+        except BaseException as exc:  # noqa: BLE001 — propagé au main
+            box["exc"] = exc
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    while t.is_alive():
+        await asyncio.sleep(0.05)
+    if "exc" in box:
+        raise box["exc"]
+    return box.get("text", "")
 
 
 def _make_console() -> Console:
@@ -286,7 +351,11 @@ async def amain() -> int:
     server = await _server_info(cfg.llm.base_url, cfg.llm.ctx_size)
     ctx_max = server[2]
     display.set_header(_banner(cfg, tools, (server[0], server[1]), ctx_max))
-    hist_file = _setup_readline()
+    hist_file = _hist_file()
+    # prompt_toolkit négocie lui-même le protocole clavier kitty (CSI u) avec
+    # le terminal : c'est ce qui rend Maj+Entrée distinguishable d'Entrée sur
+    # kitty/wezterm/ghostty/foot. Ailleurs, fallback = "\\" en fin de ligne.
+    session = _make_session(hist_file)
     store = SessionStore(_state_dir())
     # reprend la dernière conversation, comme un contexte qui reste
     sid = store.latest_id()
@@ -308,17 +377,30 @@ async def amain() -> int:
     last_interrupt = 0.0
     try:
         while True:
-            prompt = "\n[bold cyan][toi] › [/]"
+            prompt = "\n\x1b[1;36m[toi] ›\x1b[0m"
+            prompt_plain = "\n[toi] › "
             if ctx_max:
                 usage = await _ctx_usage(cfg.llm.base_url)
                 est = usage if usage is not None else _est_tokens(history)
-                prompt += f"[dim](ctx ~{est}/{ctx_max})[/] "
+                prompt += f" \x1b[2m(ctx ~{est}/{ctx_max})\x1b[0m"
+                prompt_plain += f" (ctx ~{est}/{ctx_max})"
+            prompt += " "
+            prompt_plain += " "
             try:
-                user = console.input(prompt).strip()
+                if sys.stdin.isatty():
+                    user = (await _prompt(session, ANSI(prompt))).strip()
+                else:
+                    # pas de tty (pipe/test) : input() simple, prompt_toolkit y plante
+                    user = input(prompt_plain).strip()
             except EOFError:
                 break
             except KeyboardInterrupt:
-                # Ctrl+C : annule la saisie en cours ; deux Ctrl+C rapprochés quittent
+                # Ctrl+C : annule la saisie en cours (on sort le prompt du thread) ;
+                # deux Ctrl+C rapprochés quittent
+                try:
+                    session.app.exit(exception=KeyboardInterrupt())
+                except Exception:  # noqa: BLE001
+                    pass
                 now = time.monotonic()
                 if now - last_interrupt < 1.0:
                     break
@@ -480,11 +562,6 @@ async def amain() -> int:
             if trace.error:
                 console.print(f"[bold yellow]warn:[/] {trace.error}")
     finally:
-        if hist_file is not None:
-            try:
-                readline.write_history_file(hist_file)
-            except OSError:
-                pass
         await tools.stop()
         await llm.aclose()
     return 0
