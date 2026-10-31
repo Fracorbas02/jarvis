@@ -90,7 +90,10 @@ async def test_tools_expansion_and_mode_switch(user: User):
     # switch de mode via les boutons segmentés
     user.find(kind=ui.button, content="TTS").click()
     await user.should_see("Synthèse vocale locale")
+    await user.should_see("Modèles détectés (0)")
+    await user.should_see("Aucun modèle TTS détecté")
     user.find(kind=ui.button, content="STT").click()
     await user.should_see("Reconnaissance vocale locale")
+    await user.should_see("Aucun modèle STT détecté")
     user.find(kind=ui.button, content="Chat LLM").click()
     await user.should_see("Discute avec Jarvis")
