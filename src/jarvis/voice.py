@@ -624,15 +624,11 @@ class STTClient:
             if resp.status_code == 404:
                 continue  # endpoint absent -> on essaie le suivant
             last_err = f"{endpoint} -> HTTP {resp.status_code}: {resp.text[:300]}"
-            # 501/400 "does not support chat/completions" : la route batch est
-            # inactive mais le mod\u00e8le peut avoir la capacit\u00e9 audio -> chat
+            # 501 "does not support chat/completions" = le chat est INACTIF sur
+            # ce serveur : inutile de tenter le fallback chat multimodal, on
+            # passe directement au websocket /v1/realtime (modèles ASR streaming).
             if resp.status_code in (400, 501) and "chat" in resp.text.lower():
-                chat = await self._post_chat_audio(path, language)
-                if chat.status_code == 200:
-                    text = self._text_from_chat(chat.json())
-                    if text is not None:
-                        return text
-                last_err += f" ; chat multimodal -> HTTP {chat.status_code}"
+                last_err += " (chat inactif sur ce serveur)"
         # Dernier recours (modèles ASR streaming type Voxtral Realtime, sans
         # route batch ni chat multimodal) : websocket /v1/realtime. Toujours
         # tenté en protocole voxtral, même si les endpoints HTTP ont répondu.

@@ -100,10 +100,11 @@ def test_stt_transcribe_voxtral():
         assert "transcription de" in text and "octets audio" in text
 
 
-def test_stt_fallback_501_chat_multimodal():
-    """Serveur voxtral sans route batch (/v1/audio/transcriptions -> 501
-    "does not support chat/completions") : le client retombe sur
-    /v1/chat/completions avec le WAV en base64 (bloc input_audio)."""
+def test_stt_fallback_501_goes_websocket():
+    """Serveur voxtral sans route batch (501 "does not support chat/completions")
+    : le client ne tente PAS le chat multimodal (inactif) et passe au
+    websocket /v1/realtime. Ici le mock HTTP renvoie 404 sur le WS ->
+    l'erreur nomme bien /v1/realtime."""
     with _Mock("voxtral-501") as m:
         async def go():
             client = STTClient(f"http://127.0.0.1:{m.port}", protocol="voxtral")
@@ -113,8 +114,12 @@ def test_stt_fallback_501_chat_multimodal():
             text = await client.transcribe(tmp, language="fr")
             await client.aclose()
             return text
-        text = _run(go())
-        assert text == "transcription chat multimodal", text
+        try:
+            _run(go())
+            raise AssertionError("devait échouer")
+        except Exception as exc:
+            assert "/v1/realtime" in str(exc), exc
+            assert "chat inactif" in str(exc), exc
 
 
 def test_stt_fallback_404_whisper_to_voxtral():
@@ -342,7 +347,7 @@ if __name__ == "__main__":
     test_wav_helpers(Path("/tmp"))
     test_stt_transcribe()
     test_stt_transcribe_voxtral()
-    test_stt_fallback_501_chat_multimodal()
+    test_stt_fallback_501_goes_websocket()
     test_stt_fallback_404_whisper_to_voxtral()
     test_stt_fallback_404_voxtral_to_whisper()
     test_argv_for_stt_voxtral()
