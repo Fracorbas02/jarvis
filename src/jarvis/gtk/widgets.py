@@ -29,6 +29,24 @@ def _css() -> None:
     .jarvis-bubble { border-radius: 14px; }
     .jarvis-meta { font-size: 0.8em; color: alpha(@window_fg_color, 0.45); }
     .jarvis-home-title { font-size: 44px; font-weight: 700; }
+    .jarvis-notif-badge {
+        background-color: @error_color;
+        color: #ffffff;
+        border-radius: 10px;
+        font-size: 0.75em;
+        font-weight: 700;
+        padding: 1px 5px;
+        min-width: 16px;
+    }
+    .jarvis-recording {
+        animation: jarvis-pulse 1.2s ease-in-out infinite;
+        border: 2px solid @accent_bg_color;
+    }
+    @keyframes jarvis-pulse {
+        0%   { box-shadow: 0 0 0 0 alpha(@accent_bg_color, 0.5); }
+        70%  { box-shadow: 0 0 0 14px alpha(@accent_bg_color, 0); }
+        100% { box-shadow: 0 0 0 0 alpha(@accent_bg_color, 0); }
+    }
     """
     )
     display = Gdk.Display.get_default()
