@@ -36,6 +36,37 @@ modèle tient côté GPU.
 Note : depuis llama.cpp v0.7.0 le port par défaut de `llama-server` est 9931,
 et `-fa` requiert une valeur explicite (`on|off|auto`).
 
+## Voix API Mistral (TTS cloud, Voxtral)
+
+Si les modèles TTS locaux ne suffisent pas, Jarvis peut lire les réponses
+via **l'API Mistral** (`POST /v1/audio/speech`, modèles `voxtral-*-tts-2603`).
+
+- **Clé API stockée localement** : dans l'app GTK4, onglet **Réglages > Voix API
+  Mistral**, champ masqué + « Enregistrer ». Elle est écrite dans
+  `~/.config/jarvis/mistral.json` (**chmod 0600**, jamais dans `config.toml`,
+  jamais affichée/écrite en log). `export MISTRAL_API_KEY=...` fonctionne aussi
+  et **prime** sur le fichier. Survit à l'arrêt de l'app.
+- **Lire les réponses à voix haute** : menu de l'app (ou Réglages > Voix). Si
+  « Utiliser l'API Mistral pour le TTS » est coché **et** qu'une clé est
+  enregistrée, chaque réponse de Jarvis est synthétisée par l'API et jouée ;
+  sinon le serveur TTS local sert de secours. Réglable par défaut ou non
+  (persistant dans `~/.config/jarvis/ui.json`, clé `tts`).
+- **Voix** : presets Mistral (FR : Marie `voice_592`, Manon, Lea, Camille ;
+  EN-GB : `gb_jane_neutral` ; EN-US : `en_paul_neutral` ; DE/ES/IT/PT…) +
+  voix clonées de ton workspace, listées via `GET /v1/audio/voices`
+  (bouton « Rafraîchir »). Choix persisté (`ui.json`), aussi réglable dans
+  `config.toml` :
+
+```toml
+[voice.tts_api]
+enabled = true
+model = "voxtral-mini-tts-2603"   # ou voxtral-tts-2603 (qualité max)
+voice_id = "voice_592"            # Marie, FR
+response_format = "mp3"           # mp3 | wav | pcm | flac | opus
+```
+
+Au CLI, `/tts <texte>` utilise l'API si `[voice.tts_api] enabled=true`.
+
 ## Voix locale (STT + TTS)
 
 Deux serveurs indépendants du llama-server principal, configurés dans

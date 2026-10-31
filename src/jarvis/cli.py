@@ -346,21 +346,45 @@ async def _voice_status_lines(cfg) -> list[str]:
 
 
 async def _cmd_tts(cfg, console, args: str) -> None:
-    """/tts <texte> : démarre le serveur TTS si besoin, synthétise, joue le WAV."""
+    """/tts <texte> : synthétise et joue. API Mistral si [voice.tts_api] enabled
+    et clé enregistrée (mistral.json / MISTRAL_API_KEY), sinon serveur TTS local."""
     text = args.strip()
     if not text:
         console.print("[dim]usage: /tts <texte à synthétiser>[/]")
         return
+    tts_api = getattr(cfg, "tts_api", None)
+    audio: bytes
+    ext = "wav"
     try:
         t0 = time.monotonic()
-        wav = await synthesize(cfg.voice, text, auto_start=True)
-    except VoiceError as exc:
+        if tts_api is not None and tts_api.enabled:
+            from .mistral_tts import (MistralTTSClient, MistralTTSError,
+                                      load_api_key)
+            key = load_api_key()
+            if not key:
+                raise MistralTTSError("clé API Mistral absente (mistral.json ou "
+                                      "MISTRAL_API_KEY) — /tts retombe sur le local ? non : "
+                                      "désactive [voice.tts_api] ou définis la clé")
+            client = MistralTTSClient(key, base_url=tts_api.base_url,
+                                      model=tts_api.model)
+            try:
+                audio = await client.synthesize(
+                    text, voice_id=tts_api.voice_id or None,
+                    response_format=tts_api.response_format or "mp3")
+            finally:
+                await client.aclose()
+            ext = tts_api.response_format or "mp3"
+            src = f"API Mistral ({tts_api.model}, {tts_api.voice_id})"
+        else:
+            audio = await synthesize(cfg.voice, text, auto_start=True)
+            src = "serveur TTS local"
+    except Exception as exc:  # noqa: BLE001 — VoiceError + MistralTTSError
         console.print(f"[bold red]erreur TTS:[/] {exc}")
         return
-    out = _state_dir() / f"tts-{datetime.now():%H%M%S}.wav"
-    out.write_bytes(wav)
-    console.print(f"[dim]WAV écrit : {out} ({len(wav) / 1024:.0f} Ko, "
-                  f"{time.monotonic() - t0:.1f}s)[/]")
+    out = _state_dir() / f"tts-{datetime.now():%H%M%S}.{ext}"
+    out.write_bytes(audio)
+    console.print(f"[dim]{ext.upper()} écrit : {out} ({len(audio) / 1024:.0f} Ko, "
+                  f"{time.monotonic() - t0:.1f}s, via {src})[/]")
     try:
         player = await play_wav(out, cfg.voice)
         console.print(f"[dim]lecture via {player}[/]")
