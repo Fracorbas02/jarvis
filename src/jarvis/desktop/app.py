@@ -9,6 +9,7 @@ outils) + zone principale (chat LLM, TTS, STT). Toute la logique async
 from __future__ import annotations
 
 import argparse
+import asyncio
 import os
 import queue
 import sys
@@ -90,6 +91,28 @@ class DesktopApp:
         elif kind in ("server_status", "server_started", "server_stopped"):
             self.sidebar.set_server_status(ev["state"], ev["host"], ev["port"],
                                            ev["models"])
+        elif kind == "voice_status":
+            panel = self.panels.get(ev["mode"])
+            if isinstance(panel, VoicePanel):
+                panel.set_voice_status(ev["state"], ev["host"], ev["port"],
+                                       ev.get("detail", ""))
+        elif kind == "tts_done":
+            panel = self.panels.get("tts")
+            if isinstance(panel, VoicePanel):
+                panel.on_tts_done(ev["path"])
+        elif kind == "tts_error":
+            panel = self.panels.get("tts")
+            if isinstance(panel, VoicePanel):
+                panel.on_tts_error(ev["message"])
+        elif kind in ("stt_done", "stt_recorded"):
+            panel = self.panels.get("stt")
+            if isinstance(panel, VoicePanel) and kind == "stt_done":
+                panel.on_stt_done(ev["text"])
+        elif kind in ("stt_error", "wav_error"):
+            panel = self.panels.get("stt") if kind == "stt_error" else self.panels.get("tts")
+            if isinstance(panel, VoicePanel):
+                panel.on_stt_error(ev["message"]) if kind == "stt_error" else \
+                    panel.on_tts_error(ev["message"])
         elif kind in ("reasoning", "content", "tool_call", "done", "error"):
             self.chat.handle_event(ev)
 
@@ -100,6 +123,9 @@ class DesktopApp:
 
     def _periodic_status(self) -> None:
         self.ctrl.refresh_status()
+        for mode in ("tts", "stt"):
+            if mode == self.ctrl.mode:
+                self.ctrl.refresh_voice_status(mode)
         self.root.after(5000, self._periodic_status)
 
     # ---------- modes ----------
@@ -110,11 +136,23 @@ class DesktopApp:
                 panel.grid(row=0, column=0, sticky="nsew")
             else:
                 panel.grid_remove()
+        if mode in ("tts", "stt"):
+            panel = self.panels[mode]
+            if isinstance(panel, VoicePanel):
+                panel.refresh_status()
 
     def on_reset(self) -> None:
         self.chat.clear()
 
     def on_quit(self) -> None:
+        from ..voice import stop_all_voice_servers
+        if self.ctrl.backend is not None:
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    stop_all_voice_servers(self.ctrl.backend.cfg.voice),
+                    self.ctrl.loop).result(timeout=10)
+            except Exception:  # noqa: BLE001 — arrêt best-effort
+                pass
         self.ctrl.stop()
         self.root.destroy()
 

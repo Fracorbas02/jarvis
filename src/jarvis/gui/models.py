@@ -2,10 +2,12 @@
 
 La GUI ne connaît pas les modèles à l'avance : elle scanne les répertoires
 connus (~/models, cache HuggingFace, plus $JARVIS_MODEL_DIRS) et classe chaque
-fichier GGUF par heuristique de nom :
-- STT : whisper (faster-whisper, whisper.cpp...)
-- TTS : piper, kokoro, xtts, coqui, vits, melo, tts générique
-- LLM : tout le reste
+fichier GGUF par heuristique :
+- répertoire parent nommé stt/ ou tts/ (ex. ~/models/stt/, ~/models/tts/)
+  -> mode forcé, même si le nom du fichier est opaque (Q4_K_M.gguf) ;
+- sinon heuristique de nom : STT = whisper / ggml- (convention whisper.cpp),
+  TTS = piper, kokoro, xtts, coqui, vits, melo, voxtral, tts générique ;
+- LLM : tout le reste.
 
 Les modes correspondent aux grandes familles de la GUI : chat LLM, synthèse
 vocale (TTS), reconnaissance vocale (STT).
@@ -42,8 +44,10 @@ MODE_ORDER = ["llm", "tts", "stt"]
 # whisper.cpp nomme ses modèles ggml-<taille>[.<lang>].bin(.gguf) : préfixe ggml- = STT
 _STT_RE = re.compile(r"whisper|^ggml-", re.IGNORECASE)
 _TTS_RE = re.compile(
-    r"piper|kokoro|xtts|coqui|\bvits\b|melo|\btts\b|style-?tts|your-?tts", re.IGNORECASE
+    r"piper|kokoro|xtts|coqui|\bvits\b|melo|\btts\b|style-?tts|your-?tts|voxtral", re.IGNORECASE
 )
+# répertoire parent dédié à un mode voix (~/models/stt/, ~/models/tts/)
+_DIR_MODE = {"stt": "stt", "tts": "tts"}
 
 
 @dataclass
@@ -67,13 +71,26 @@ def format_size(nbytes: int) -> str:
     return f"{size:.1f} To"
 
 
-def classify_mode(filename: str) -> str:
-    """Classe un fichier modèle dans un mode par heuristique sur son nom."""
+def classify_mode(filename: str, parent_dir: str | None = None) -> str:
+    """Classe un fichier modèle dans un mode.
+
+    Le nom du répertoire parent (ex. ~/models/stt) prime sur le nom du
+    fichier : un ~/models/stt/Q4_K_M.gguf est un STT même sans indice dans
+    son nom. Sinon heuristique sur le nom du fichier.
+    """
+    if parent_dir and parent_dir.lower() in _DIR_MODE:
+        return _DIR_MODE[parent_dir.lower()]
     if _STT_RE.search(filename):
         return "stt"
     if _TTS_RE.search(filename):
         return "tts"
     return "llm"
+
+
+def classify_path(path: Path) -> str:
+    """Mode d'un fichier depuis son chemin complet (répertoire parent + nom)."""
+    parent = None if str(path.parent) == str(path.anchor) else path.parent.name
+    return classify_mode(path.name, parent)
 
 
 def default_model_dirs() -> list[Path]:
@@ -124,9 +141,9 @@ def discover_models(extra_dirs: list[Path] | None = None,
                 size = rp.stat().st_size
             except OSError:
                 size = 0
-            found[classify_mode(rp.name)].append(
-                ModelInfo(name=rp.name, path=rp, size_bytes=size,
-                          mode=classify_mode(rp.name))
+            mode = classify_path(rp)
+            found[mode].append(
+                ModelInfo(name=rp.name, path=rp, size_bytes=size, mode=mode)
             )
     for mode in found:
         found[mode].sort(key=lambda m: m.name.lower())

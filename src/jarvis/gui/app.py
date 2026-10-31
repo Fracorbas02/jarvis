@@ -17,7 +17,7 @@ from .chat_view import ChatView
 from .models import MODES, discover_models
 from .sidebar import build_sidebar
 from .state import GuiState
-from .voice_views import build_voice_panel
+from .voice_views import build_voice_panel, register_voice_api
 
 log = logging.getLogger("jarvis.gui")
 
@@ -107,8 +107,10 @@ async def _startup(state: GuiState) -> None:
 
 
 async def _shutdown(state: GuiState) -> None:
+    from ..voice import stop_all_voice_servers
     if state.backend is not None:
         await state.backend.stop()
+        await stop_all_voice_servers(state.backend.cfg.voice)
 
 
 def main() -> None:
@@ -125,6 +127,8 @@ def main() -> None:
 
     app.on_startup(lambda: _startup(state))
     app.on_shutdown(lambda: _shutdown(state))
+
+    register_voice_api(state)
 
     @ui.page("/")
     def index() -> None:
