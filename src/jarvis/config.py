@@ -48,8 +48,6 @@ class VoiceServerConfig:
     model: str = ""
     extra_args: list[str] = field(default_factory=list)
     ready_timeout: float = 180.0
-    device: str = ""        # ex. "cuda:1", "hip:0", "vulkan:1", "cpu" -> passé en --device
-    env: dict[str, str] = field(default_factory=dict)  # ex. {"CUDA_VISIBLE_DEVICES": "1"}
 
 
 @dataclass

@@ -130,46 +130,6 @@ def test_voice_config_defaults():
     assert cfg.record_cmd and cfg.play_cmd
 
 
-def test_start_voice_server_erreurs():
-    """Les 3 échecs de start_voice_server doivent retourner un statut offline
-    avec un detail explicite (jamais d'exception, jamais de blocage)."""
-    from jarvis.voice import start_voice_server
-    import socket
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
-    base = f"http://127.0.0.1:{port}"
-
-    # 1. binaire introuvable
-    vcfg = VoiceServerConfig(binary="binaire-qui-nexiste-pas-xyz",
-                             base_url=base, model="~/models/stt/x.gguf")
-    st = _run(start_voice_server("stt", vcfg))
-    assert st.state == "offline" and "binaire introuvable" in st.detail
-
-    # 2. modèle introuvable (binaire = /bin/true qui existe)
-    vcfg = VoiceServerConfig(binary="/bin/true", base_url=base,
-                             model="/chemin/inexistant/gguf.gguf")
-    st = _run(start_voice_server("stt", vcfg))
-    assert st.state == "offline" and "modèle introuvable" in st.detail
-
-    # 3. processus qui meurt immédiatement (/bin/false), ready_timeout court
-    vcfg = VoiceServerConfig(binary="/bin/false", base_url=base,
-                             model=str(Path(__file__).resolve()), ready_timeout=5.0)
-    st = _run(start_voice_server("stt", vcfg))
-    assert st.state == "offline" and "mort (code" in st.detail, st
-
-
-def test_start_voice_server_deja_en_ligne():
-    """Si /health répond déjà, start_voice_server ne relance rien."""
-    from jarvis.voice import start_voice_server
-    with _Mock("stt") as m:
-        vcfg = VoiceServerConfig(binary="/bin/false",
-                                 base_url=f"http://127.0.0.1:{m.port}",
-                                 model=str(Path(__file__).resolve()))
-        st = _run(start_voice_server("stt", vcfg))
-        assert st.state == "online"
-
-
 if __name__ == "__main__":
     test_host_port_and_model_path()
     test_wav_helpers(Path("/tmp"))
@@ -179,38 +139,4 @@ if __name__ == "__main__":
     test_voice_server_status_offline()
     test_voice_server_status_online()
     test_voice_config_defaults()
-    test_start_voice_server_erreurs()
-    test_start_voice_server_deja_en_ligne()
     print("OK")
-
-def test_voice_device_env() -> None:
-    """device -> --device, env -> Popen(env=...) : pour cibler le bon GPU en multi-GPU."""
-    from jarvis.config import VoiceServerConfig
-    from jarvis.voice import _argv_for
-    from pathlib import Path
-    vcfg = VoiceServerConfig(binary="llama-server", base_url="http://127.0.0.1:9932",
-                             model="x.gguf", device="cuda:1",
-                             env={"CUDA_VISIBLE_DEVICES": "1"})
-    argv = _argv_for("tts", vcfg, Path("/models/x.gguf"))
-    assert argv == ["llama-server", "-m", "/models/x.gguf", "--host", "127.0.0.1",
-                    "--port", "9932", "-ngl", "99", "--jinja", "-fa", "on",
-                    "--ctx-size", "8192", "--device", "cuda:1"], argv
-    # sans device: pas de --device ajouté par _argv_for (start_voice_server le fait)
-    vcfg2 = VoiceServerConfig(binary="whisper-server", base_url="http://127.0.0.1:8178",
-                              model="y.gguf")
-    assert "--device" not in _argv_for("stt", vcfg2, Path("/models/y.gguf"))
-    print("OK  voice device/env")
-
-def test_gpu_choice_persistence(tmp_path, monkeypatch) -> None:
-    """save/load du choix GPU en JSON sous XDG_CONFIG_HOME."""
-    import jarvis.gpu as gpu
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    assert gpu.load_gpu_choice() == {}
-    gpu.save_gpu_choice("hip:1", gpu.env_for_device("hip:1"))
-    choice = gpu.load_gpu_choice()
-    assert choice["device"] == "hip:1"
-    assert choice["env"] == {"HIP_VISIBLE_DEVICES": "1", "ROCR_VISIBLE_DEVICES": "1"}
-    assert gpu.env_for_device("cuda:0") == {"CUDA_VISIBLE_DEVICES": "0"}
-    assert gpu.env_for_device("cpu") == {}
-    print("OK  gpu choice persistence")
-

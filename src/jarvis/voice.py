@@ -47,7 +47,10 @@ class VoiceServerStatus:
     host: str
     port: int
     detail: str = ""
+<<<<<<< Updated upstream
     healthy: bool = False  # /health a répondu 200 (sinon le proc peut être mort)
+=======
+>>>>>>> Stashed changes
 
 
 def host_port(base_url: str) -> tuple[str, int]:
@@ -57,6 +60,7 @@ def host_port(base_url: str) -> tuple[str, int]:
 
 
 def resolve_model_path(model: str | Path, models_root: Path | None = None) -> Path:
+<<<<<<< Updated upstream
     """Résout un chemin de modèle : ~ expansé ; relatif -> d'abord le cwd s'il
     existe, sinon models_root (~/models)."""
     p = Path(str(model)).expanduser()
@@ -66,6 +70,14 @@ def resolve_model_path(model: str | Path, models_root: Path | None = None) -> Pa
         return p.resolve()
     root = models_root or (Path.home() / "models")
     return root / p
+=======
+    """Résout un chemin de modèle : ~ expansé, relatif -> models_root (~/models)."""
+    p = Path(str(model)).expanduser()
+    if not p.is_absolute():
+        root = models_root or (Path.home() / "models")
+        p = root / p
+    return p
+>>>>>>> Stashed changes
 
 
 # ---------- gestion des processus serveurs voix ----------
@@ -80,6 +92,7 @@ def _log_path(name: str) -> Path:
 
 def _argv_for(name: str, vcfg: VoiceServerConfig, model_path: Path) -> list[str]:
     host, port = host_port(vcfg.base_url)
+<<<<<<< Updated upstream
     extra = list(vcfg.extra_args)
     if vcfg.device and "--device" not in extra:
         extra += ["--device", vcfg.device]
@@ -88,16 +101,28 @@ def _argv_for(name: str, vcfg: VoiceServerConfig, model_path: Path) -> list[str]
                 "-m", str(model_path), *extra]
     return [vcfg.binary, "-m", str(model_path), "--host", host, "--port", str(port),
             "-ngl", "99", "--jinja", "-fa", "on", "--ctx-size", "8192", *extra]
+=======
+    if name == "stt":
+        return [vcfg.binary, "--host", host, "--port", str(port),
+                "-m", str(model_path), *vcfg.extra_args]
+    return [vcfg.binary, "-m", str(model_path), "--host", host, "--port", str(port),
+            "-ngl", "99", "--jinja", "-fa", "on", "--ctx-size", "8192",
+            *vcfg.extra_args]
+>>>>>>> Stashed changes
 
 
 async def voice_server_status(name: str, vcfg: VoiceServerConfig,
                               timeout: float = 2.0) -> VoiceServerStatus:
+<<<<<<< Updated upstream
     """GET /health sur le serveur voix. Ne lève jamais : offline si rien ne répond.
 
     `healthy` = /health a répondu 200. `state` vaut "managed" dès qu'un
     processus lancé par jarvis tourne, MÊME si /health ne répond pas encore
     (chargement) — ne pas confondre avec healthy.
     """
+=======
+    """GET /health sur le serveur voix. Ne lève jamais : offline si rien ne répond."""
+>>>>>>> Stashed changes
     host, port = host_port(vcfg.base_url)
     proc = _procs.get(name)
     state = "managed" if proc is not None and proc.poll() is None else "offline"
@@ -107,7 +132,11 @@ async def voice_server_status(name: str, vcfg: VoiceServerConfig,
             resp = await http.get("/health")
             if resp.status_code == 200:
                 return VoiceServerStatus(name, "online" if state == "offline" else "managed",
+<<<<<<< Updated upstream
                                          host, port, healthy=True)
+=======
+                                         host, port)
+>>>>>>> Stashed changes
             return VoiceServerStatus(name, state, host, port, detail=f"HTTP {resp.status_code}")
     except (httpx.TransportError, httpx.HTTPError) as exc:
         return VoiceServerStatus(name, state, host, port,
@@ -130,6 +159,7 @@ async def start_voice_server(name: str, vcfg: VoiceServerConfig,
         return st  # déjà en ligne (externe ou déjà lancé)
 
     host, port = host_port(vcfg.base_url)
+<<<<<<< Updated upstream
     # Choix GPU global enregistré (pop-up 1er lancement / onglet Réglages) :
     # appliqué si la config du serveur ne précise pas déjà device/env.
     try:
@@ -143,6 +173,8 @@ async def start_voice_server(name: str, vcfg: VoiceServerConfig,
             vcfg.env = env_for_device(choice["device"])
     except Exception:  # noqa: BLE001
         pass
+=======
+>>>>>>> Stashed changes
     argv = _argv_for(name, vcfg, model)
     log_path = _log_path(name)
     try:
@@ -151,9 +183,14 @@ async def start_voice_server(name: str, vcfg: VoiceServerConfig,
         pass
     log = open(log_path, "ab", buffering=0)
     log.write(f"\n--- {argv} ---\n".encode())
+<<<<<<< Updated upstream
     env = {**os.environ, **vcfg.env} if vcfg.env else None
     proc = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT,
                             start_new_session=True, env=env)
+=======
+    proc = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT,
+                            start_new_session=True)
+>>>>>>> Stashed changes
     _procs[name] = proc
 
     deadline = asyncio.get_running_loop().time() + (ready_timeout or vcfg.ready_timeout)
@@ -162,6 +199,7 @@ async def start_voice_server(name: str, vcfg: VoiceServerConfig,
             _procs.pop(name, None)
             return VoiceServerStatus(name, "offline", host, port,
                                      detail=f"{vcfg.binary} mort (code {proc.returncode}), voir {log_path}")
+<<<<<<< Updated upstream
         # /health répond ? -> prêt. (state "managed" seul ne suffit pas :
         # le proc peut être vivant mais le modèle pas encore chargé)
         st = await voice_server_status(name, vcfg, timeout=1.0)
@@ -174,6 +212,12 @@ async def start_voice_server(name: str, vcfg: VoiceServerConfig,
             _procs.pop(name, None)
             return VoiceServerStatus(name, "offline", host, port,
                                      detail=f"{vcfg.binary} mort (code {proc.returncode}), voir {log_path}")
+=======
+        st = await voice_server_status(name, vcfg, timeout=1.0)
+        if st.state != "offline":
+            return st
+        await asyncio.sleep(1.0)
+>>>>>>> Stashed changes
     return VoiceServerStatus(name, "managed", host, port,
                              detail="démarrage en cours (chargement long)")
 
