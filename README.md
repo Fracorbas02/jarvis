@@ -62,7 +62,10 @@ via **l'API Mistral** (`POST /v1/audio/speech`, modèles `voxtral-*-tts-2603`).
 ```toml
 [voice.tts_api]
 enabled = true
-model = "voxtral-mini-tts-2603"   # ou voxtral-tts-2603 (qualité max)
+model = "voxtral-mini-tts-3-0"     # Voxtral TTS 3 (dernier, 20/10/2026) ; ou 2603/latest
+# La liste du combo "Modèle TTS" dans l'app est rafraîchie dynamiquement via
+# GET /v1/models (bouton Rafraîchir / auto après la clé) : les nouveaux modèles
+# TTS y apparaissent sans mise à jour du code.
 voice_id = "voice_592"            # Marie, FR
 response_format = "mp3"           # mp3 | wav | pcm | flac | opus
 ```
@@ -182,6 +185,27 @@ uv run jarvis-app                 # fenêtre native GTK4 (PyGObject + libadwaita
 uv run jarvis-app --config /chemin/config.toml
 ```
 
+> **Dépendances système (PAS installées par uv/pip)** : PyGObject (`gi`) vient du
+> système, et le venv uv utilise son propre Python isolé qui ne voit pas les
+> site-packages système. Si `uv run jarvis-app` plante avec
+> `ModuleNotFoundError: No module named 'gi'` :
+> ```sh
+> # 1) paquet système (une fois) :
+> #    Arch/Manjaro :  sudo pacman -S python-gobject gtk4 libadwaita
+> #    Debian/Ubuntu:  sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1
+> #    Fedora :        sudo dnf install python3-gobject gtk4 libadwaita
+> #    WebKitGTK (optionnel, meilleur rendu Markdown des réponses) :
+> #    Arch: sudo pacman -S webkit2gtk-6.0   Debian/Ubuntu: sudo apt install gir1.2-webkit-6.0
+> #    Fedora: sudo dnf install webkitgtk6.0  (sans WebKit, l'app retombe sur
+> #    le rendu natif GTK, toujours fonctionnel)
+> # 2) venv sur le Python système AVEC site-packages système (sinon gi reste invisible) :
+> rm -rf .venv
+> uv venv --system-site-packages --python /usr/bin/python3
+> uv sync --frozen
+> ```
+> Pour **refaire un `uv sync` propre** (une dep a sauté) : c'est le dossier
+> **`.venv`** qu'il faut supprimer, jamais `uv.lock` (voir ci-dessus).
+
 UI native GTK4, qui ne touche à rien d'autre que la partie graphique
 (le cœur LLM + MCP + voix + sessions est réutilisé tel quel) :
 
@@ -190,9 +214,16 @@ UI native GTK4, qui ne touche à rien d'autre que la partie graphique
   le popover statut, `--ctx-size` réglable) puis ouvre la conversation ;
   sinon il ouvre directement la conversation. Le prompt texte est dans le
   **menu (Ctrl+P)**, avec les conversations (Ctrl+O) et la lecture TTS.
-- **Conversation** : centrée sur l'échange — barre du bas avec micro (STT
+- **Conversation** : **sidebar repliable** (bouton toggle en haut à gauche,
+  `Adw.OverlaySplitView`) listant les conversations passées (titre + date +
+  nb messages, clic = reprise, conversation active surlignée, bouton + pour
+  une nouvelle) ; barre d'actions en haut avec **Nouvelle** (Ctrl+N) et
+  **Reset contexte** (cible LLM / STT / TTS) : redémarre le serveur **géré par
+  Jarvis** avec le même GGUF (jamais un serveur externe) pour repartir sur un
+  contexte vierge. Zone d'échange centrée : barre du bas avec micro (STT
   local : record → transcribe → tour LLM) + champ texte + envoyer ; réponses
-  en streaming **rendues en Markdown complet** (CommonMark + GFM : titres,
+  en streaming **rendues en Markdown 100% (markdown-it-py + GFM, HTML dans
+  WebKitGTK si installé, sinon widgets GTK natifs) : titres,
   **gras**/*italique*/`code`/~~barré~~, liens cliquables, images, listes
   puces/numérotées/tâches, citations, tableaux, blocs ```, footnotes,
   séparateurs — widgets GTK natifs, re-rendu à chaque fragment), avec
@@ -207,6 +238,11 @@ UI native GTK4, qui ne touche à rien d'autre que la partie graphique
   d'enregistrement réel de 0,5 s qui déclenche la demande système GNOME ;
   le dialogue ne se remontre plus ensuite, flag `mic_permission_asked`
   dans `ui.json`).
+- **Notifications en cloche** : plus de toasts en bas de fenêtre — cloche dans
+  le header avec badge compteur, clic = popover listant les notifications +
+  « Tout effacer ».
+- **Barre d'usage du contexte en live** dans le header (`used/n_ctx` tokens,
+  LevelBar, via GET /slots à chaque poll de statut).
 - Popover de statut serveur (icône réseau) : en ligne / géré / hors ligne,
   modèle servi, usage réel du contexte (GET /slots), start/stop du serveur géré.
 

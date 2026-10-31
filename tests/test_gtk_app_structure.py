@@ -56,12 +56,19 @@ def main() -> int:
                         "_on_mic_changed", "_on_test_mic", "_on_open_gnome_privacy",
                         "_fill_mic_devices", "_on_mic_permission",
                         "_ask_mic_permission_first_run", "_on_mic_perm_response",
+                        "_on_bell_clicked", "_bell_icon", "_draw_bell", "_clear_notifs", "_refresh_notif_ui",
+                        "_toast", "_on_reset_context", "_do_reset", "_on_toggle_sidebar",
+                        "_on_split_sidebar_changed", "_fill_conv_list", "_on_conv_row_activated",
                         "_dispatch", "_on_server_status", "_on_turn_done",
-                        "_replay_history", "_build_stt_test", "_on_stack_changed",
-                        "_on_stt_test_mic", "_on_stt_start_stop",
+                        "_replay_history", "_fill_tools_group", "_build_stt_test",
+                        "_on_stack_changed", "_on_stt_test_mic", "_on_stt_start_stop",
                         "_on_stt_server_status", "_on_stt_test_done",
                         "_on_stt_test_seconds_changed"):
             assert hasattr(gtk_app.JarvisWindow, handler), handler
+        import inspect
+        src = inspect.getsource(gtk_app.JarvisWindow._fill_tools_group)
+        assert "self.tools_group.remove(" not in src, "remove() sur AdwPreferencesGroup plante (non-child)"
+        assert "box.remove(child)" in src
 
         # rendu Markdown des réponses : MessageBox.set_markdown / append_text
         import jarvis.gtk.widgets as gtk_widgets
@@ -72,6 +79,19 @@ def main() -> int:
         import inspect
         init_src = inspect.getsource(gtk_widgets.MessageBox.__init__)
         assert "self.tools_box" in init_src and "self.meta_label" in init_src
+        # hexpand sur la MessageBox : sinon halign START/END (bulles user/assistant) n'a
+        # aucun effet et toutes les bulles s'étalent pleine largeur
+        assert "self.set_hexpand(True)" in init_src
+        # webview assistant : cachée à la création (sinon bulle fantôme), affichée au rendu
+        assert "self.webview.set_visible(False)" in init_src
+        render_src = inspect.getsource(gtk_widgets.MessageBox._render_md)
+        assert "self.webview.set_visible(True)" in render_src
+        # la webview ne doit JAMAIS être re-cachée dans la branche webkit de _render_md
+        # (texte vide en streaming) : set_visible(True) puis load_html, pas de set_visible(False)
+        webkit_branch = render_src.split("if self.webview is not None:")[1].split("self._clear_content()")[0]
+        assert "self.webview.set_visible(True)" in webkit_branch
+        assert "self.webview.set_visible(False)" not in webkit_branch
+        assert "load_html" in webkit_branch
         # et la property text_label ne doit pas contenir de code après son return
         prop_src = inspect.getsource(gtk_widgets.MessageBox.text_label.fget)
         body = prop_src.split("return", 1)[1]

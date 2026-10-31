@@ -64,14 +64,16 @@ model = "~/models/tts/voxtral-4b-tts-q4_k.gguf"
 # sinon on retombe sur le serveur TTS local ci-dessus.
 #   POST {base_url}/v1/audio/speech  {"model", "input", "voice_id", "response_format"}
 #   GET  {base_url}/v1/audio/voices   (liste des voix preset + workspace)
-# Modèles : voxtral-mini-tts-2603 (rapide, recommandé), voxtral-tts-2603 (qualité max).
+# Modèles : voxtral-mini-tts-3-0 (dernier, Voxtral TTS 3, 35+ langues), voxtral-mini-tts-2603
+# (rapide), voxtral-tts-2603 (qualité max). La liste affichée dans l'app est rafraîchie
+# dynamiquement via GET /v1/models.
 # Voix preset : voice_592 (Marie, FR), voice_3137 (Manon, FR), gb_jane_neutral (EN-GB),
 # en_paul_neutral (EN-US), voice_481 (Heidi, DE)... ou une voix clonée de ton workspace.
 # La clé API n'est PAS dans ce fichier : ~/.config/jarvis/mistral.json (chmod 600).
 # [voice.tts_api]
 # enabled = true
 # base_url = "https://api.mistral.ai"
-# model = "voxtral-mini-tts-2603"
+# model = "voxtral-mini-tts-3-0"        # Voxtral TTS 3 (20/10/2026, public preview)
 # voice_id = "voice_592"          # Marie, français
 # response_format = "mp3"         # mp3 | wav | pcm | flac | opus
 

@@ -151,11 +151,44 @@ async def amain() -> int:
         gtk_backend.save_ui_settings({"mic_permission_asked": True})
         assert gtk_backend.load_ui_settings()["mic_permission_asked"] is True
 
+        # server.last_managed_model : mémorisé au start_server géré, cleared au stop
+        from jarvis import server as _srv
+        assert _srv.last_managed_model() is None
+        _srv._last_model = "/models/test.gguf"  # simule un start_server géré
+        assert _srv.last_managed_model() == "/models/test.gguf"
+        _srv._last_model = None
+
+        # reset_context sur serveur NON géré -> événement context_reset ok=False
+        # (llama-server mock non lancé par server_mod : _proc est None)
+        from jarvis import server as server_mod
+        server_mod._proc = None
+        await backend._areset("llm", None, None)
+        ev = backend.events.get_nowait()
+        assert ev["type"] == "context_reset" and ev["which"] == "llm" and ev["ok"] is False, ev
+
+        # reset STT non géré -> ok=False aussi
+        await backend._areset("stt", None, None)
+        ev = backend.events.get_nowait()
+        assert ev["type"] == "context_reset" and ev["which"] == "stt" and ev["ok"] is False, ev
+
         # server_ctx_usage ne lève jamais, même serveur absent
         usage = await server_ctx_usage("http://127.0.0.1:1/v1")
         assert usage["n_ctx"] is None and usage["used"] == 0, usage
         usage = await server_ctx_usage("http://127.0.0.1:18091/v1")
         assert usage["n_ctx"] is None  # le mock ne sert pas /props ni /slots
+
+        # stop() rapide : sauvegarde synchrone + tâche de fond, join <= 0.5 s.
+        # (ici la boucle n'est pas lancée -> run_coroutine_threadsafe échoue,
+        #  ce qui est le chemin "boucle déjà arrêtée" ; on vérifie juste que
+        #  stop() ne bloque pas et sauvegarde la session)
+        import time as _t
+        t0 = _t.time()
+        import threading as _th
+        backend._thread = _th.Thread(target=lambda: None)  # jamais démarré
+        backend.stop()  # boucle du test en cours de run -> tâche de fond lancée normalement
+        elapsed = _t.time() - t0
+        assert elapsed < 2.0, f"stop() a pris {elapsed:.2f}s (bloquant)"
+        assert backend.sessions.list(limit=5)  # session persistée (synchrone)
 
         await backend.tools.stop()
         await backend.llm.aclose()

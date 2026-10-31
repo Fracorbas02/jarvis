@@ -22,6 +22,7 @@ import httpx
 
 # processus lancé par la GUI (None si le serveur est externe ou absent)
 _proc: subprocess.Popen | None = None
+_last_model: str | None = None  # GGUF servi par le dernier start_server géré
 _log_path: Path = Path(os.environ.get("JARVIS_LOG_DIR", Path.home() / ".cache" / "jarvis")) / "llama-server-gui.log"
 
 
@@ -70,6 +71,11 @@ def is_managed_running() -> bool:
     return _proc is not None and _proc.poll() is None
 
 
+def last_managed_model() -> str | None:
+    """GGUF servi par le dernier llama-server lancé (et géré) par Jarvis."""
+    return _last_model
+
+
 async def start_server(model_path: str | Path, base_url: str,
                        extra_args: list[str] | None = None,
                        ready_timeout: float = 120.0) -> ServerStatus:
@@ -79,13 +85,13 @@ async def start_server(model_path: str | Path, base_url: str,
     _log_path.parent.mkdir(parents=True, exist_ok=True)
     # Choix GPU global (onglet Réglages / pop-up 1er lancement) : un mécanisme
     # par backend — env (CUDA_VISIBLE_DEVICES & co) pour cuda/hip/cpu,
-    # --device <index> pour vulkan (pas de variable d'env équivalente).
+    # --device <nom ggml> pour vulkan (pas de variable d'env équivalente).
     # Les args du choix vont avant extra_args pour que la config puisse
     # surcharger ; jamais de --device brut type "vulkan:0".
     env = None
     gpu_args: list[str] = []
     try:
-        from ..gpu import choice_args, choice_env
+        from .gpu import choice_args, choice_env
         gpu_env = choice_env()
         if gpu_env:
             env = {**os.environ, **gpu_env}
@@ -104,6 +110,7 @@ async def start_server(model_path: str | Path, base_url: str,
         log.write(f"\n--- {argv} ---\n".encode())
         if env:
             log.write(f"--- env: {env} ---\n".encode())
+        _last_model = str(model_path)
         _proc = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT,
                                  start_new_session=True, env=env)
     finally:
@@ -133,5 +140,6 @@ async def stop_server(base_url: str) -> ServerStatus:
             _proc.kill()
             _proc.wait(timeout=5)
     _proc = None
+    _last_model = None
     await asyncio.sleep(0.5)
     return await get_status(base_url)

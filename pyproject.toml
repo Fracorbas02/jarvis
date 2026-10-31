@@ -4,7 +4,12 @@ version = "0.1.0"
 description = "Jarvis — assistant local (LLM local + outils MCP, voix à venir)"
 requires-python = ">=3.11"
 dependencies = [
+    "bleach>=6.4.0",
+    "tinycss2>=1.4",   # requis par bleach.css_sanitizer (dépendance optionnelle de bleach)
     "httpx>=0.27",
+    "linkify-it-py>=2.2.0",
+    "markdown-it-py[plugins]>=4.2.0",
+    "matplotlib>=3.11.2",
     "mcp>=2.3,<3",
     "prompt-toolkit>=3.0.53",
     "rich>=15.0.0",

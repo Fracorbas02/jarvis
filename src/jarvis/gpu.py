@@ -240,29 +240,67 @@ def args_for_device(device: str) -> list[str]:
         pass
     return []
 
+def _llama_device_names() -> list[str]:
+    return [d for d, _ in list_llama_devices()]
+
+
+def _warn(msg: str) -> None:
+    import sys
+    print(f"[jarvis] gpu: {msg}", file=sys.stderr)
+
+
 def choice_env() -> dict[str, str]:
     """Env du choix GPU global enregistré (Réglages / pop-up 1er lancement).
-    {} si aucun choix. Sert à passer env= au Popen des serveurs locaux."""
+    {} si aucun choix. Sert à passer env= au Popen des serveurs locaux.
+    Si l'index enregistré dépasse les devices actuels (GPU débranché),
+    l'env est ignoré (un CUDA_VISIBLE_DEVICES hors plage masquerait tous les
+    GPU) avec un warning."""
     try:
         choice = load_gpu_choice()
     except Exception:  # noqa: BLE001
         return {}
-    if choice.get("env"):
-        return dict(choice["env"])
-    if choice.get("device"):
-        return env_for_device(choice["device"])
-    return {}
+    dev = choice.get("device", "")
+    env = dict(choice["env"]) if choice.get("env") else (env_for_device(dev) if dev else {})
+    if not env or not dev:
+        return env
+    backend, idx = _backend_index(dev)
+    if backend in ("cuda", "hip", "rocm") and idx.isdigit():
+        prefix = {"cuda": ("CUDA",), "hip": ("ROCm", "HIP"),
+                  "rocm": ("ROCm", "HIP")}[backend]
+        names = [d for d in _llama_device_names()
+                 if d.startswith(prefix)]
+        if names and int(idx) >= len(names):
+            _warn(f"device {dev!r} hors plage (devices {backend}: {names}) "
+                  f"-> env ignoré")
+            return {}
+    return env
+
 
 def choice_args() -> list[str]:
     """Args CLI (--device <nom ggml> pour vulkan) du choix GPU global
-    enregistré. [] si aucun choix ou si le backend se force par env."""
+    enregistré. [] si aucun choix ou si le backend se force par env.
+    Si le device enregistré n'existe plus (GPU débranché/changé), fallback
+    sur le premier device ggml dispo — un --device invalide empêcherait
+    llama-server de démarrer (« invalid device: Vulkan1 »)."""
     try:
         choice = load_gpu_choice()
     except Exception:  # noqa: BLE001
         return []
-    if choice.get("device"):
-        return args_for_device(choice["device"])
-    return []
+    dev = choice.get("device", "")
+    if not dev:
+        return []
+    args = args_for_device(dev)
+    names = _llama_device_names()
+    if not names:
+        return args  # --list-devices indispo : on tente tel quel
+    if args and args[1] in names:
+        return args
+    backend, _ = _backend_index(dev)
+    if backend == "vulkan" or args:
+        _warn(f"device {dev!r} (args {args}) introuvable parmi {names} "
+              f"-> fallback sur {names[0]}")
+        return ["--device", names[0]]
+    return args
 
 def _vulkaninfo_gpu_names() -> list[str]:
     """Noms des GPU dans l'ordre vulkaninfo (GPU0, GPU1…). Sert à convertir

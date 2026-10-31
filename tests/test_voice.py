@@ -483,6 +483,11 @@ def test_gpu_choice_persistence(tmp_path, monkeypatch) -> None:
     """save/load du choix GPU en JSON sous XDG_CONFIG_HOME."""
     import jarvis.gpu as gpu
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    # devices ggml fictifs (2 GPU) pour choice_args/choice_env
+    list_devices = ("  Vulkan0: AMD Radeon RX 9070 XT (RADV GFX1201) (16304 MiB, 16115 MiB free)\n"
+                    "  Vulkan1: AMD Radeon 890M Graphics (RADV STRIX1) (48701 MiB, 45878 MiB free)\n")
+    monkeypatch.setattr(gpu, "_run",
+                        lambda cmd: list_devices if cmd[:2] == ["llama-server", "--list-devices"] else "")
     assert gpu.load_gpu_choice() == {}
     assert gpu.choice_env() == {}
     gpu.save_gpu_choice("hip:1", gpu.env_for_device("hip:1"))
@@ -514,6 +519,37 @@ def test_gpu_choice_persistence(tmp_path, monkeypatch) -> None:
     assert gpu.device_index("Vulkan0") == "0"
     assert gpu.device_index("cpu") == "cpu"
     print("OK  gpu choice persistence")
+
+
+def test_choice_args_fallback_gpu_debranche(monkeypatch, tmp_path) -> None:
+    """gpu.json = Vulkan1 mais seul Vulkan0 existe (GPU débranché) -> fallback
+    --device Vulkan0, au lieu d'un --device invalide qui empêcherait
+    llama-server de démarrer (« invalid device: Vulkan1 »)."""
+    import jarvis.gpu as gpu
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    only_apu = "  Vulkan0: AMD Radeon 890M Graphics (RADV STRIX1) (48701 MiB, 46971 MiB free)\n"
+    monkeypatch.setattr(gpu, "_run",
+                        lambda cmd: only_apu if cmd[:2] == ["llama-server", "--list-devices"] else "")
+    gpu.save_gpu_choice("Vulkan1", {})
+    assert gpu.choice_args() == ["--device", "Vulkan0"]
+    gpu.save_gpu_choice("Vulkan0", {})
+    assert gpu.choice_args() == ["--device", "Vulkan0"]  # valide : pas de fallback
+    print("OK  choice_args fallback gpu débranché")
+
+
+def test_choice_env_hors_plage(monkeypatch, tmp_path) -> None:
+    """cuda:1 enregistré mais un seul device CUDA existe -> env ignoré
+    (CUDA_VISIBLE_DEVICES=1 masquerait tous les GPU)."""
+    import jarvis.gpu as gpu
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    one_cuda = "  CUDA0: NVIDIA RTX 4090 (24576 MiB, 24000 MiB free)\n"
+    monkeypatch.setattr(gpu, "_run",
+                        lambda cmd: one_cuda if cmd[:2] == ["llama-server", "--list-devices"] else "")
+    gpu.save_gpu_choice("cuda:1", gpu.env_for_device("cuda:1"))
+    assert gpu.choice_env() == {}
+    gpu.save_gpu_choice("cuda:0", gpu.env_for_device("cuda:0"))
+    assert gpu.choice_env() == {"CUDA_VISIBLE_DEVICES": "0"}
+    print("OK  choice_env hors plage")
 
 
 def test_args_for_device_vulkan_legacy_index(monkeypatch) -> None:

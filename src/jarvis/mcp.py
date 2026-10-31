@@ -71,6 +71,20 @@ class McpToolProvider:
     def names(self) -> list[str]:
         return sorted(self._tools)
 
+    def descriptions(self) -> dict[str, str]:
+        """full_name -> description de l'outil (pour l'UI réglages)."""
+        return {full: (getattr(tool, "description", "") or "")
+                for full, (_srv, tool) in self._tools.items()}
+
+    def by_server(self) -> dict[str, list[str]]:
+        """server_name -> [full_name...] triés (pour grouper l'affichage)."""
+        out: dict[str, list[str]] = {}
+        for full, (srv, _tool) in self._tools.items():
+            out.setdefault(srv, []).append(full)
+        for v in out.values():
+            v.sort()
+        return out
+
     async def call(self, full_name: str, arguments: dict) -> str:
         if full_name not in self._tools:
             return f"ERREUR: outil inconnu '{full_name}'"
