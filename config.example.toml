@@ -76,6 +76,9 @@ model = "~/models/tts/voxtral-4b-tts-q4_k.gguf"
 # Pour forcer une source micro précise (PipeWire), ex. :
 #   pactl list short sources | grep alsa_input | grep -v monitor
 #   pactl set-default-source <source>   (sinon « default » est suivi)
+# Sans alsa-utils (pas de arecord), l'app GTK liste aussi les sources PipeWire
+# (pactl) dans le sélecteur de micro : choisir une entrée "pulse:..."
+# enregistre via ffmpeg -f pulse -i <source>.
 # record_cmd = ["ffmpeg", "-loglevel", "error", "-f", "pulse", "-i",
 #               "alsa_input.pci-0000_d4_00.6.HiFi__Mic1__source",
 #               "-ar", "16000", "-ac", "1", "-f", "s16le", "-"]

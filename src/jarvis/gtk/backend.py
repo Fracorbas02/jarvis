@@ -308,10 +308,20 @@ class GtkBackend:
         self._run(self._arecord_stt(seconds, device))
 
     def _record_cfg(self, device: str | None):
-        """VoiceConfig clon\u00e9 avec un record_cmd pointant sur le micro choisi
-        (arecord -D <device>). device None/"default" -> record_cmd d'origine."""
+        """VoiceConfig cloné avec un record_cmd pointant sur le micro choisi.
+
+        - device None/"default" -> record_cmd d'origine (arecord, fallback ffmpeg) ;
+        - device commençant par "pulse:" -> source PipeWire explicite, enregistrée
+          via ffmpeg -f pulse -i <source> (arecord absent sur les systèmes
+          100 % PipeWire/PulseAudio sans alsa-utils) ;
+        - sinon device ALSA -> arecord -D <device>."""
         from dataclasses import replace
         if device and device != "default":
+            if device.startswith("pulse:"):
+                source = device[len("pulse:"):]
+                return replace(self.cfg.voice, record_cmd=[
+                    "ffmpeg", "-loglevel", "error", "-f", "pulse", "-i", source,
+                    "-ar", "16000", "-ac", "1", "-f", "s16le", "-"])
             return replace(self.cfg.voice, record_cmd=[
                 "arecord", "-q", "-D", device,
                 "-f", "S16_LE", "-r", "16000", "-c", "1", "-"])
@@ -586,30 +596,64 @@ class GtkBackend:
         """Liste les cartes son d'entr\u00e9e (arecord -L) -> \u00e9v\u00e9nement mic_devices."""
         self._run(self._alist_mic())
 
+    @staticmethod
+    def _pactl_sources() -> list[tuple[str, str]]:
+        """Sources d'entrée PipeWire/PulseAudio via `pactl list short sources`
+        (pour les systèmes sans alsa-utils/arecord) : [(pulse:<source>, label)].
+        On exclut les .monitor (ce sont des sorties)."""
+        import shutil
+        import subprocess
+        if not shutil.which("pactl"):
+            return []
+        out = subprocess.run(["pactl", "list", "short", "sources"],
+                             capture_output=True, text=True, timeout=10).stdout
+        devs: list[tuple[str, str]] = []
+        for line in out.splitlines():
+            parts = line.split("\t")
+            if len(parts) < 3:
+                continue
+            name, desc = parts[1], parts[2]
+            if name.endswith(".monitor"):
+                continue
+            label = desc if desc and desc != name else name
+            devs.append((f"pulse:{name}", f"{label}  ({name})"))
+        return devs
+
     async def _alist_mic(self) -> None:
         import re
+        import shutil
         import subprocess
         devices: list[tuple[str, str]] = [("default", "Micro par d\u00e9faut du syst\u00e8me")]
+        error = ""
+        if shutil.which("arecord"):
+            try:
+                out = subprocess.run(["arecord", "-L"], capture_output=True, text=True,
+                                     timeout=10).stdout
+                cur = None
+                for line in out.splitlines():
+                    m = re.match(r"^(\S+)\s*$", line)
+                    if m and not line.startswith((" ", "\t")):
+                        cur = m.group(1)
+                        devices.append((cur, cur))
+                    elif cur and line.startswith((" ", "\t")):
+                        desc = line.strip()
+                        # premi\u00e8re ligne descriptive = nom de la carte (ex. "HDA Intel PCH, ...")
+                        if devices[-1][1] == cur and desc and not desc.startswith(
+                                ("Discard", "Direct", "Hardware", "Default", "Sysdefault")):
+                            devices[-1] = (cur, f"{cur} \u2014 {desc}")
+            except Exception as exc:  # noqa: BLE001
+                error = f"arecord -L a \u00e9chou\u00e9 : {exc}"
+        else:
+            error = "arecord indisponible (alsa-utils non install\u00e9)"
+        # sources PipeWire en compl\u00e9ment (utile sans arecord, et pour choisir
+        # explicitement une source : pactl list short sources)
         try:
-            out = subprocess.run(["arecord", "-L"], capture_output=True, text=True,
-                                 timeout=10).stdout
-            cur = None
-            for line in out.splitlines():
-                m = re.match(r"^(\S+)\s*$", line)
-                if m and not line.startswith((" ", "\t")):
-                    cur = m.group(1)
-                    devices.append((cur, cur))
-                elif cur and line.startswith((" ", "\t")):
-                    desc = line.strip()
-                    # premi\u00e8re ligne descriptive = nom de la carte (ex. "HDA Intel PCH, ...")
-                    if devices[-1][1] == cur and desc and not desc.startswith(
-                            ("Discard", "Direct", "Hardware", "Default", "Sysdefault")):
-                        devices[-1] = (cur, f"{cur} — {desc}")
-        except Exception as exc:  # noqa: BLE001 — arecord absent
-            self.events.put({"type": "mic_devices", "devices": devices,
-                             "error": f"arecord -L indisponible : {exc}"})
-            return
-        self.events.put({"type": "mic_devices", "devices": devices, "error": ""})
+            devices += self._pactl_sources()
+        except Exception as exc:  # noqa: BLE001
+            error = (error + " ; " if error else "") + f"pactl indisponible : {exc}"
+        if len(devices) == 1 and error:
+            error += " \u2014 aucun micro d\u00e9tect\u00e9 (installe alsa-utils ou pipewire/pulseaudio)"
+        self.events.put({"type": "mic_devices", "devices": devices, "error": error})
 
     def apply_gpu(self, device: str) -> dict:
         """Persiste le choix GPU (gpu.json, appliqué aux serveurs locaux au

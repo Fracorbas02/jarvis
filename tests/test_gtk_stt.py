@@ -110,5 +110,44 @@ async def _amain() -> int:
         thread.join(timeout=5)
 
 
+def test_pactl_sources_parsing(monkeypatch):
+    """_pactl_sources parse `pactl list short sources` (tab-séparé), exclut
+    les .monitor, et produit des ids "pulse:<source>"."""
+    import subprocess
+    from jarvis.gtk.backend import GtkBackend
+    fake_out = (
+        "59\talsa_output.pci-0000_38_00.1.HiFi__HDMI4__sink.monitor\tPipeWire\ts32le 2ch 48000Hz\tSUSPENDED\n"
+        "68\talsa_input.usb-Jieli_Technology.mono-fallback\tPipeWire\ts16le 1ch 48000Hz\tSUSPENDED\n"
+        "789\talsa_input.pci-0000_d4_00.6.HiFi__Mic1__source\tPipeWire\ts32le 2ch 48000Hz\tRUNNING\n"
+    )
+    monkeypatch.setattr("shutil.which", lambda c: "/usr/bin/pactl" if c == "pactl" else None)
+    monkeypatch.setattr(subprocess, "run",
+                        lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout=fake_out, stderr=""))
+    devs = GtkBackend._pactl_sources()
+    ids = [d for d, _ in devs]
+    assert "pulse:alsa_input.pci-0000_d4_00.6.HiFi__Mic1__source" in ids
+    assert "pulse:alsa_input.usb-Jieli_Technology.mono-fallback" in ids
+    assert not any("monitor" in d for d in ids), ids
+    labels = dict(devs)
+    assert "Mic1" in labels["pulse:alsa_input.pci-0000_d4_00.6.HiFi__Mic1__source"]
+
+
+def test_record_cfg_pulse_source():
+    """Un micro choisi au format pulse:<source> produit un record_cmd
+    ffmpeg -f pulse -i <source> ; un device ALSA classique reste arecord -D."""
+    from jarvis.config import Config
+    from jarvis.gtk.backend import GtkBackend
+    b = GtkBackend.__new__(GtkBackend)
+    b.cfg = Config()
+    vcfg = b._record_cfg("pulse:alsa_input.pci-0000_d4_00.6.HiFi__Mic1__source")
+    assert vcfg.record_cmd[:5] == ["ffmpeg", "-loglevel", "error", "-f", "pulse"]
+    assert "alsa_input.pci-0000_d4_00.6.HiFi__Mic1__source" in vcfg.record_cmd
+    assert vcfg.record_cmd[-1] == "-"
+    vcfg2 = b._record_cfg("hw:CARD=0,DEV=0")
+    assert vcfg2.record_cmd[0] == "arecord" and "-D" in vcfg2.record_cmd
+    vcfg3 = b._record_cfg("default")
+    assert vcfg3.record_cmd == b.cfg.voice.record_cmd
+
+
 if __name__ == "__main__":
     sys.exit(asyncio.run(_amain()))
