@@ -263,22 +263,31 @@ def _pointer_monitor(root, scale: float) -> tuple[int, int, int, int] | None:
 def _center_geometry(root, scale: float) -> str:
     """Géométrie centrée sur le moniteur du pointeur (pas sur l'écran virtuel
     entier) : sinon la fenêtre s'ouvre sur tous les écrans en multi-monitor."""
-    mon = _pointer_monitor(root, scale)
-    if mon is None:
-        return adaptive_geometry(root)
-    mx, my, mw, mh = mon[0], mon[1], mon[2], mon[3]
-    # Coordonnées de geometry() = unités LOGIQUES du compositor (physiques / scale
-    # du moniteur concerné) : sous Wayland scale 2, XWayland voit l'écran virtuel
-    # en logiques, donc on divise par le scale du moniteur choisi.
-    s = mon[4] if len(mon) > 4 else scale
-    mw_l, mh_l = round(mw / s), round(mh / s)
-    w = max(int(mw_l * 0.62), round(adaptive_minsize()[0] / s))
-    h = max(int(mh_l * 0.68), round(adaptive_minsize()[1] / s))
-    w = min(w, mw_l)
-    h = min(h, mh_l)
-    x = round(mx / s) + max((mw_l - w) // 2, 0)
-    y = round(my / s) + max((mh_l - h) // 2, 0)
-    return f"{w}x{h}+{x}+{y}"
+    # Sous Wayland, winfo_screenwidth/height = écran virtuel LOGIQUE (ex. 3840x2160
+    # pour 3 écrans) et winfo_pointerxy = coordonnées PHYSIQUES du compositor.
+    # On travaille donc tout en logiques : moniteur logique depuis monitors.xml,
+    # pointeur logique = pointerxy / scale.
+    mons = _monitors_xml_layout()
+    if mons:
+        try:
+            px, py = root.winfo_pointerxy()
+            s = scale
+            pxl, pyl = px / s, py / s
+            for (x, y, w, h, ms) in mons:
+                if x <= pxl < x + w and y <= pyl < y + h:
+                    mw_l, mh_l = w, h
+                    mx_l, my_l = x, y
+                    s = ms
+                    w_ = max(int(mw_l * 0.62), round(adaptive_minsize()[0] / s))
+                    h_ = max(int(mh_l * 0.68), round(adaptive_minsize()[1] / s))
+                    w_ = min(w_, mw_l)
+                    h_ = min(h_, mh_l)
+                    x_ = mx_l + max((mw_l - w_) // 2, 0)
+                    y_ = my_l + max((mh_l - h_) // 2, 0)
+                    return f"{w_}x{h_}+{x_}+{y_}"
+        except Exception:  # noqa: BLE001
+            pass
+    return adaptive_geometry(root)
 
 
 def setup_window(root, scale: float) -> None:

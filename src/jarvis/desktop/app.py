@@ -247,8 +247,10 @@ def main() -> None:
     root.title("Jarvis")
 
     # Curseur souris : sous XWayland scale 2, XCURSOR_SIZE n'est pas propagé
-    # et le curseur reste en 24px (minuscule sur écran HiDPI). On le scale via
-    # XCURSOR_SIZE (lu par libXcursor au chargement des curseurs de la Textbox).
+    # et le curseur reste en 24px (minuscule sur écran HiDPI) dans les widgets
+    # Tk bruts (PanedWindow sash, Text du chat). XCURSOR_SIZE ne suffit pas
+    # (lu une seule fois par libXcursor) : on pose explicitement le curseur
+    # sur chaque widget concerné, après création de l'app.
     if "XCURSOR_SIZE" not in os.environ:
         try:
             os.environ["XCURSOR_SIZE"] = str(int(24 * detect_scale(root)))
@@ -263,6 +265,15 @@ def main() -> None:
     root.configure(fg_color=BG)
 
     app = DesktopApp(root, args.config, scale=scale)
+    # curseurs explicites sur les widgets Tk bruts (sash du PanedWindow, textbox
+    # du chat) : XCURSOR_SIZE seul ne les atteint pas sous XWayland.
+    for w in (app.pw, app.chat.text, app.chat.text._textbox, app.chat.entry,
+              app.chat.entry._entry):
+        try:
+            w.configure(cursor="arrow")
+        except Exception:  # noqa: BLE001
+            pass
+    app.pw.configure(cursor="sb_h_double_arrow")
     if os.environ.get("JARVIS_DEBUG_SCALE"):
         _debug_scale(root, scale, app)
     try:
