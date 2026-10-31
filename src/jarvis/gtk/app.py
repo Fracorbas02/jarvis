@@ -121,6 +121,34 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.mic_button.connect("clicked", self._on_mic)
         header.pack_end(self.mic_button)
 
+        # cloche de notifications (badge compteur) + popover
+        self._notifs: list[str] = []
+        self._notif_badge = Gtk.Label(label="", halign=Gtk.Align.CENTER,
+                                      valign=Gtk.Align.CENTER)
+        self._notif_badge.add_css_class("jarvis-notif-badge")
+        self._notif_badge.set_visible(False)
+        bell_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+        bell_box.append(Gtk.Image(icon_name="notifications-symbolic"))
+        bell_box.append(self._notif_badge)
+        self.bell_button = Gtk.Button(tooltip_text="Notifications")
+        self.bell_button.set_child(bell_box)
+        self.bell_button.connect("clicked", self._on_bell_clicked)
+        header.pack_end(self.bell_button)
+        self._build_notif_popover()
+
+        # usage du contexte (n_ctx) en live, dans le header
+        self.ctx_bar = Gtk.LevelBar(min_value=0, max_value=1, value=0,
+                                    tooltip_text="Usage du contexte")
+        self.ctx_bar.set_size_request(120, -1)
+        self.ctx_bar.add_css_class("jarvis-ctx-bar")
+        self.ctx_label = Gtk.Label(label="ctx ?", tooltip_text="Contexte utilisé")
+        self.ctx_label.add_css_class("dim-label")
+        ctx_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6,
+                          valign=Gtk.Align.CENTER)
+        ctx_box.append(self.ctx_label)
+        ctx_box.append(self.ctx_bar)
+        header.pack_end(ctx_box)
+
         # pages
         self.stack.add_titled_with_icon(self._build_home(), "home", "Accueil",
                                         "go-home-symbolic")
@@ -129,10 +157,7 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.stack.add_titled_with_icon(self._build_settings(), "settings", "R\u00e9glages",
                                         "emblem-system-symbolic")
         toolbar.set_content(self.stack)
-
-        self.toast_overlay = Adw.ToastOverlay()
-        self.toast_overlay.set_child(toolbar)
-        self.set_content(self.toast_overlay)
+        self.set_content(toolbar)
 
     def _build_home(self) -> Gtk.Widget:
         clamp = Adw.Clamp(maximum_size=640, tightening_threshold=480)
@@ -435,6 +460,54 @@ class JarvisWindow(Adw.ApplicationWindow):
             except Exception:  # noqa: BLE001
                 continue
         self._toast("Ouvre manuellement : Paramètres > Confidentialité")
+
+    def _build_notif_popover(self) -> None:
+        self.notif_popover = Gtk.Popover()
+        self.notif_popover.set_parent(self.bell_button)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
+                      margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
+        box.set_size_request(320, -1)
+        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        head.append(Gtk.Label(label="Notifications", xalign=0, hexpand=True))
+        clear_btn = Gtk.Button(label="Tout effacer")
+        clear_btn.connect("clicked", lambda b: self._clear_notifs())
+        head.append(clear_btn)
+        box.append(head)
+        self.notif_list = Gtk.ListBox()
+        self.notif_list.add_css_class("boxed-list")
+        self.notif_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        scroll = Gtk.ScrolledWindow(vexpand=True, min_content_height=80,
+                                    max_content_height=360, propagate_natural_height=True)
+        scroll.set_child(self.notif_list)
+        box.append(scroll)
+        self.notif_empty = Gtk.Label(label="Aucune notification", halign=Gtk.Align.CENTER)
+        self.notif_empty.add_css_class("dim-label")
+        box.append(self.notif_empty)
+        self.notif_popover.set_child(box)
+        self._refresh_notif_ui()
+
+    def _on_bell_clicked(self, _btn) -> None:
+        self.notif_popover.popup()
+
+    def _clear_notifs(self) -> None:
+        self._notifs.clear()
+        self._refresh_notif_ui()
+
+    def _refresh_notif_ui(self) -> None:
+        child = self.notif_list.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            self.notif_list.remove(child)
+            child = nxt
+        for text in reversed(self._notifs[-30:]):
+            row = Gtk.Label(label=text, xalign=0, wrap=True, selectable=True,
+                            margin_top=6, margin_bottom=6,
+                            margin_start=8, margin_end=8)
+            self.notif_list.append(row)
+        n = len(self._notifs)
+        self._notif_badge.set_text(str(n) if n < 100 else "99+")
+        self._notif_badge.set_visible(n > 0)
+        self.notif_empty.set_visible(n == 0)
 
     def _build_status_popover(self) -> None:
         self.status_popover = Gtk.Popover()
@@ -827,6 +900,15 @@ class JarvisWindow(Adw.ApplicationWindow):
         state_txt = labels.get(self._status_state, self._status_state)
         host = event.get("host", "")
         port = event.get("port", "")
+        ctx = event.get("ctx") or {}
+        if ctx.get("n_ctx"):
+            self.ctx_bar.set_value(ctx["used"] / max(1, ctx["n_ctx"]))
+            self.ctx_label.set_text(f"{ctx['used']}/{ctx['n_ctx']} tok")
+            self.ctx_bar.set_tooltip_text(
+                f"Contexte : {ctx['used']} / {ctx['n_ctx']} tokens utilisés")
+        else:
+            self.ctx_bar.set_value(0)
+            self.ctx_label.set_text("ctx ?")
         txt = f"{state_txt} — {host}:{port} — {models}{ctx_txt}"
         self.home_status.set_text(txt)
         self.pop_status_label.set_text(txt + (f"\n{event.get('detail') or ''}"
@@ -897,7 +979,9 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.chat_hint.set_text(text)
 
     def _toast(self, text: str) -> None:
-        self.toast_overlay.add_toast(Adw.Toast(title=text, timeout=4))
+        """Notification : empilée dans la cloche (badge + popover), jamais en bas."""
+        self._notifs.append(text)
+        self._refresh_notif_ui()
 
     def do_close_request(self) -> bool:
         self.backend.stop()
