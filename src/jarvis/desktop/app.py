@@ -119,7 +119,7 @@ class DesktopApp:
         self.root.destroy()
 
 
-def _debug_scale(root, scale: float) -> None:
+def _debug_scale(root, scale: float, app=None) -> None:
     """Dump de diagnostic du scaling (JARVIS_DEBUG_SCALE=1) : toujours sur
     stderr + /tmp/jarvis-debug.log, jamais bloquant (try/except)."""
     import sys
@@ -142,6 +142,25 @@ def _debug_scale(root, scale: float) -> None:
     except Exception:
         lines.append("[jarvis] debug: ERREUR dans le dump:")
         lines.extend(traceback.format_exc().splitlines())
+    if app is not None:
+        try:
+            def walk(w, depth=0):
+                if depth > 4:
+                    return
+                for c in w.winfo_children():
+                    if isinstance(c, _ctk.CTkLabel):
+                        txt = str(c.cget("text"))[:20]
+                        lines.append(
+                            f"[jarvis] debug: label {txt!r} font={c._label.cget('font')}")
+                    walk(c, depth + 1)
+            walk(app.root)
+            tb = app.chat.text._textbox
+            lines.append(
+                f"[jarvis] debug: chat default font={tb.cget('font')} "
+                f"tag reasoning font={tb.tag_cget('reasoning', 'font')}")
+        except Exception:
+            lines.append("[jarvis] debug: ERREUR scan widgets:")
+            lines.extend(traceback.format_exc().splitlines())
     text = "\n".join(lines)
     sys.stderr.write(text + "\n")
     sys.stderr.flush()
@@ -180,10 +199,9 @@ def main() -> None:
     setup_window(root, scale)
     root.configure(fg_color=BG)
 
-    if os.environ.get("JARVIS_DEBUG_SCALE"):
-        _debug_scale(root, scale)
-
     app = DesktopApp(root, args.config, scale=scale)
+    if os.environ.get("JARVIS_DEBUG_SCALE"):
+        _debug_scale(root, scale, app)
     try:
         root.mainloop()
     except KeyboardInterrupt:
