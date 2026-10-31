@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import logging
 import queue
+from pathlib import Path
 import sys
 
 try:
@@ -42,10 +43,12 @@ except ModuleNotFoundError:
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
 from ..gpu import detect_gpus, load_gpu_choice
 from .backend import APP_ID, GtkBackend, load_ui_settings, save_ui_settings
+
+ICONS_DIR = Path(__file__).resolve().parent / "icons"
 from .widgets import (MessagesColumn, assistant_message, error_message,
                       user_message, _css)
 
@@ -148,7 +151,7 @@ class JarvisWindow(Adw.ApplicationWindow):
         self._notif_badge.add_css_class("jarvis-notif-badge")
         self._notif_badge.set_visible(False)
         bell_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
-        bell_box.append(Gtk.Image(icon_name="alarm-symbolic"))
+        bell_box.append(Gtk.Image(icon_name="bell-symbolic"))
         bell_box.append(self._notif_badge)
         self.bell_button = Gtk.Button(tooltip_text="Notifications")
         self.bell_button.set_child(bell_box)
@@ -269,6 +272,8 @@ class JarvisWindow(Adw.ApplicationWindow):
                                                    tooltip_text="Afficher/masquer les conversations")
         self.btn_toggle_sidebar.connect("toggled", self._on_toggle_sidebar)
         conv_bar.append(self.btn_toggle_sidebar)
+        self._syncing_sidebar = False
+        self.split.connect("notify::show-sidebar", self._on_split_sidebar_changed)
         btn_new = Gtk.Button(label="Nouvelle", icon_name="list-add-symbolic",
                              tooltip_text="Nouvelle conversation (Ctrl+N)")
         btn_new.connect("clicked", lambda b: self._on_new_session())
@@ -845,9 +850,18 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.backend.new_session()
 
     def _on_toggle_sidebar(self, btn) -> None:
+        if self._syncing_sidebar:
+            return
         self.split.set_show_sidebar(btn.get_active())
         if btn.get_active():
             self.backend.list_sessions()  # refresh à l'ouverture
+
+    def _on_split_sidebar_changed(self, split, _pspec) -> None:
+        # le split se ferme tout seul (clic hors sidebar en mode collapsed) :
+        # on resynchronise le bouton sans réémettre toggled
+        self._syncing_sidebar = True
+        self.btn_toggle_sidebar.set_active(split.get_show_sidebar())
+        self._syncing_sidebar = False
 
     def _fill_conv_list(self, sessions: list[dict]) -> None:
         child = self.conv_list.get_first_child()
@@ -1175,6 +1189,17 @@ class JarvisApp(Adw.Application):
         win.present()
 
 
+def _register_icons() -> None:
+    """Ajoute src/jarvis/gtk/icons au thème d'icônes (bell-symbolic embarqué).
+    Best-effort : aucun échec ne bloque le lancement."""
+    try:
+        display = Gdk.Display.get_default()
+        if display is not None:
+            Gtk.IconTheme.get_for_display(display).add_search_path(str(ICONS_DIR))
+    except Exception as exc:  # noqa: BLE001
+        log.debug("register icons: %s", exc)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="jarvis-app",
                                      description="Interface GTK4 de Jarvis")
@@ -1185,6 +1210,7 @@ def main(argv: list[str] | None = None) -> int:
                         format="%(asctime)s %(name)s %(levelname)s %(message)s")
     # les requ\u00eates de statut (httpx) polluent le terminal toutes les 2 s
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    _register_icons()
     app = JarvisApp(config_path=args.config)
     return app.run([])
 
