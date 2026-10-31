@@ -291,7 +291,16 @@ def _code_card(code: str, lang: str) -> Gtk.Widget:
     lbl.set_margin_end(10)
     lbl.set_margin_bottom(8)
     lbl.set_selectable(True)
-    card.append(lbl)
+    lbl.set_wrap(False)          # jamais de retour à la ligne : le code garde ses lignes
+    lbl.set_wrap_mode(Pango.WrapMode.NONE)
+    lbl.set_ellipsize(Pango.EllipsizeMode.NONE)
+    lbl.set_single_line_mode(False)
+    lbl.set_max_width_chars(-1)
+    # scroll horizontal si une ligne dépasse la largeur de la bulle
+    scroll = Gtk.ScrolledWindow(hexpand=True)
+    scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+    scroll.set_child(lbl)
+    card.append(scroll)
     return card
 
 
