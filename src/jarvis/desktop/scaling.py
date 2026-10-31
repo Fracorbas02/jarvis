@@ -166,26 +166,17 @@ def setup_window(root, scale: float) -> None:
     """Applique le scaling puis configure la fenêtre (géométrie adaptative,
     redimensionnable).
 
+    Sous GNOME Wayland scale 2 (XWayland non scalé, Xft.dpi=192) : Tk travaille
+    en pixels physiques (winfo_screenwidth = 2880) ; CTk set_widget_scaling(scale)
+    scale dimensions et polices (font 22 -> -44 px). --scale / JARVIS_SCALE forcent.
+
     Ordre important : CTk bloque maxsize à la taille courante dans son
     _set_scaling (appelé par set_window_scaling) — il faut donc déverrouiller
     maxsize APRÈS les set_*_scaling et AVANT geometry/minsize, sinon la
     fenêtre reste coincée à 600x500 et non redimensionnable.
-
     """
     import customtkinter as ctk
 
-    # Sous Linux, CTk ne détecte pas le DPI (get_window_dpi_scaling -> 1) : il
-    # faut set_widget_scaling(scale) pour scaler dimensions ET polices (CTkFont
-    # passe la taille en pixels négatifs: -size*scale). MAIS Tk applique aussi
-    # son propre tk scaling (Xft.dpi/72 = 2.667 à 192 DPI) aux tailles en POINTS
-    # ; les pixels négatifs sont convertis en points (÷ tk scaling) puis rendus
-    # en pixels (× tk scaling) => double application partielle. On neutralise
-    # donc tk scaling (= 1.0, soit Xft.dpi=72) pour que 1 px demandé = 1 px rendu,
-    # et on laisse CTk faire tout le scaling.
-    try:
-        root.tk.call("tk", "scaling", "-displayof", ".", 1.0)
-    except Exception:  # noqa: BLE001 — best-effort
-        pass
     ctk.set_widget_scaling(scale)
     ctk.set_window_scaling(scale)
     root.maxsize(root.winfo_screenwidth(), root.winfo_screenheight())
