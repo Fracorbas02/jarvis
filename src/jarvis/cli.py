@@ -30,6 +30,7 @@ from .agent import Agent
 from .config import load_config
 from .llm import LLMClient
 from .mcp import McpToolProvider
+from .sessions import SessionStore
 from .tui import Display
 
 HELP = """\
@@ -42,12 +43,16 @@ HELP = """\
   /undo            retire le dernier échange de l'historique
   /copy            copie la dernière réponse dans le presse-papier
   /save [fichier]  exporte la conversation en Markdown
+  /sessions        liste les conversations passées (reprise auto au démarrage)
+  /load N          reprend la conversation n°N de /sessions
+  /new             démarre une nouvelle conversation (archive l'actuelle)
   /reset           efface l'historique de conversation
   /verbose         bascule les logs console en DEBUG (fichier: ~/.cache/jarvis/jarvis.log)
   /quit            quitte (ou Ctrl+D)"""
 
 COMMANDS = ["/help", "/tools", "/thinking", "/tool", "/history", "/undo",
-            "/copy", "/save", "/reset", "/verbose", "/quit"]
+            "/copy", "/save", "/sessions", "/load", "/new", "/reset",
+            "/verbose", "/quit"]
 
 
 def _state_dir() -> Path:
@@ -171,6 +176,12 @@ def _copy_to_clipboard(text: str) -> str | None:
     return None
 
 
+def _with_system(history: list[dict], system_prompt: str) -> list[dict]:
+    """Remet le system prompt courant en tête (il peut avoir changé en config)."""
+    return [{"role": "system", "content": system_prompt},
+            *[m for m in history if m.get("role") != "system"]]
+
+
 def _export_markdown(history: list[dict], path: Path) -> int:
     """Exporte la conversation en Markdown. Retourne le nombre de messages écrits."""
     out: list[str] = [f"# Session jarvis — {datetime.now():%Y-%m-%d %H:%M}\n"]
@@ -212,12 +223,23 @@ async def amain() -> int:
     server = await _server_status(cfg.llm.base_url)
     display.set_header(_banner(cfg, tools, server))
     hist_file = _setup_readline()
+    store = SessionStore(_state_dir())
+    # reprend la dernière conversation, comme un contexte qui reste
+    sid = store.latest_id()
+    if sid is not None:
+        history = _with_system(store.load(sid), cfg.agent.system_prompt)
+        meta = next(s for s in store.list() if s["id"] == sid)
+        console.print(f"[dim]session reprise : « {meta['title']} » "
+                      f"({meta['count']} messages, {meta['updated']}) — "
+                      f"/sessions pour en changer, /new pour repartir à zéro[/]")
+    else:
+        sid = SessionStore.new_id()
+        history = []
     loop = asyncio.get_running_loop()
     try:
         loop.add_signal_handler(signal.SIGWINCH, display.on_resize)
     except (NotImplementedError, AttributeError):
         pass  # Windows / pas de signaux : le repaint suivra au prochain token
-    history: list[dict] = []
     verbose = False
     last_interrupt = 0.0
     try:
@@ -245,6 +267,7 @@ async def amain() -> int:
             if user == "/reset":
                 history.clear()
                 display.reset_blocks()  # sinon les blocs reviennent au prochain resize
+                store.save(sid, history)
                 console.print("[dim]historique réinitialisé[/]")
                 continue
             if user == "/tools":
@@ -274,6 +297,7 @@ async def amain() -> int:
                     history.pop()
                 if history and history[-1].get("role") == "user":
                     history.pop()
+                    store.save(sid, history)
                     console.print("[dim]dernier échange retiré[/]")
                 else:
                     console.print("[dim]rien à retirer[/]")
@@ -309,6 +333,35 @@ async def amain() -> int:
                 else:
                     console.print(f"[dim]{n} messages exportés dans {path}[/]")
                 continue
+            if user == "/sessions":
+                sessions = store.list()
+                if not sessions:
+                    console.print("[dim]aucune session enregistrée[/]")
+                else:
+                    for i, s in enumerate(sessions, 1):
+                        mark = " [dim](actuelle)[/]" if s["id"] == sid else ""
+                        console.print(f"[dim]{i}.[/] {s['updated']}  {s['title']}"
+                                      f"  ({s['count']} msg){mark}")
+                continue
+            if user.startswith("/load"):
+                parts = user.split()
+                sessions = store.list()
+                if len(parts) == 2 and parts[1].isdigit() and 1 <= int(parts[1]) <= len(sessions):
+                    sid = sessions[int(parts[1]) - 1]["id"]
+                    history = _with_system(store.load(sid), cfg.agent.system_prompt)
+                    display.reset_blocks()
+                    console.print(f"[dim]session « {SessionStore.title_of(history)} » chargée "
+                                  f"({len(history)} messages)[/]")
+                else:
+                    console.print(f"[dim]usage: /load N (1..{len(sessions)}) — voir /sessions[/]")
+                continue
+            if user == "/new":
+                store.save(sid, history)  # archive l'actuelle
+                sid = SessionStore.new_id()
+                history = []
+                display.reset_blocks()
+                console.print("[dim]nouvelle conversation démarrée[/]")
+                continue
             if user.startswith("/tool"):
                 parts = user.split()
                 if len(parts) == 2 and parts[1].isdigit():
@@ -331,6 +384,7 @@ async def amain() -> int:
                 if reply and not display.content_started:
                     display.print_content(reply)
                 display.end_turn()
+                store.save(sid, history)  # la session persiste entre les lancements
             except KeyboardInterrupt:
                 history = snapshot
                 display.end_turn()
