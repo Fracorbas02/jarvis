@@ -54,8 +54,10 @@ def main() -> int:
         for handler in ("_on_home_mic", "_on_mic", "_on_entry_activate", "_on_prompt",
                         "_on_theme_changed", "_on_gpu_changed", "_on_ctx_changed",
                         "_on_mic_changed", "_on_test_mic", "_on_open_gnome_privacy",
-                        "_fill_mic_devices", "_dispatch",
-                        "_on_server_status", "_on_turn_done", "_replay_history"):
+                        "_fill_mic_devices", "_on_mic_permission",
+                        "_ask_mic_permission_first_run", "_on_mic_perm_response",
+                        "_dispatch", "_on_server_status", "_on_turn_done",
+                        "_replay_history"):
             assert hasattr(gtk_app.JarvisWindow, handler), handler
 
         # main() parse --config sans lancer la boucle GTK

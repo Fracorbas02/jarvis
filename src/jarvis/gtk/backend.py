@@ -46,6 +46,8 @@ from ..sessions import SessionStore
 
 log = logging.getLogger("jarvis.gtk.backend")
 
+APP_ID = "io.github.Fracorbas02.Jarvis"
+
 _LLM_PARAMS = set(inspect.signature(LLMClient.__init__).parameters) - {"self"}
 
 
@@ -63,7 +65,10 @@ def load_ui_settings() -> dict:
 def save_ui_settings(patch: dict) -> dict:
     data = load_ui_settings()
     data.update(patch)
-    ui_settings_path().write_text(json.dumps(data, indent=2), encoding="utf-8")
+    path = ui_settings_path()
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    tmp.replace(path)  # écriture atomique
     return data
 
 
@@ -320,6 +325,34 @@ class GtkBackend:
             self.events.put({"type": "mic_test", "ok": True, "message": ""})
         except VoiceError as exc:
             self.events.put({"type": "mic_test", "ok": False, "message": str(exc)})
+
+    def check_mic_permission(self) -> None:
+        """Interroge le portail XDG (PermissionStore, table 'microphone') pour
+        savoir si NOTRE app_id a l'autorisation micro : événement
+        {"type": "mic_permission", "state": "yes"|"no"|"unknown"}.
+        Best-effort via gdbus (pas de dep D-Bus) : 'unknown' si indisponible."""
+        self._run(self._acheck_perm())
+
+    async def _acheck_perm(self) -> None:
+        import re
+        import subprocess
+        state = "unknown"
+        try:
+            out = subprocess.run(
+                ["gdbus", "call", "--session",
+                 "--dest", "org.freedesktop.portal.PermissionStore",
+                 "--object-path", "/org/freedesktop/portal/permission_store",
+                 "--method", "org.freedesktop.portal.PermissionStore.Lookup",
+                 "microphone", "microphone"],
+                capture_output=True, text=True, timeout=5).stdout
+            # (<{'autre.app': <['yes']>, 'io.github.Fracorbas02.Jarvis': <['no']>},)
+            # -> on ancre sur NOTRE app-id, pas sur le 1er 'yes'/'no' venu
+            m = re.search(rf"['\"]{re.escape(APP_ID)}['\"]:\s*<\[['\"](yes|no)['\"]", out)
+            if m:
+                state = m.group(1)
+        except Exception as exc:  # noqa: BLE001 — portail absent (pas GNOME/Flatpak)
+            log.debug("portail permission indisponible: %s", exc)
+        self.events.put({"type": "mic_permission", "state": state})
 
     def tts_speak(self, text: str) -> None:
         self._run(self._atts(text))

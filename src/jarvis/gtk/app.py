@@ -25,14 +25,11 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
 from ..gpu import detect_gpus, load_gpu_choice
-from .backend import (GtkBackend, load_ui_settings, save_ui_settings)
+from .backend import APP_ID, GtkBackend, load_ui_settings, save_ui_settings
 from .widgets import (MessagesColumn, assistant_message, error_message,
                       user_message, _css)
 
 log = logging.getLogger("jarvis.gtk")
-
-APP_ID = "io.github.Fracorbas02.Jarvis"
-
 
 class JarvisWindow(Adw.ApplicationWindow):
     def __init__(self, app: Adw.Application, backend: GtkBackend):
@@ -46,6 +43,7 @@ class JarvisWindow(Adw.ApplicationWindow):
         self._busy = False
         self._status_state = "unknown"
         self._ctx = self.settings.get("ctx_size", 16384)
+        self.mic_device = self.settings.get("mic", "default")
 
         _css()
         self._build_actions()
@@ -53,6 +51,8 @@ class JarvisWindow(Adw.ApplicationWindow):
         self._apply_theme()
         self._poll_events()
         backend.start()
+        if not self.settings.get("mic_permission_asked"):
+            GLib.idle_add(self._ask_mic_permission_first_run)
         GLib.timeout_add_seconds(2, self._refresh_status)
         self._refresh_status()
 
@@ -289,6 +289,11 @@ class JarvisWindow(Adw.ApplicationWindow):
         g_perm = Adw.PreferencesGroup(title="Autorisations système",
                                       description="GNOME contrôle l'accès au micro "
                                                   "par application (Paramètres > Confidentialité)")
+        self.mic_perm_row = Adw.ActionRow(
+            title="Autorisation micro",
+            subtitle="Interrogation du portail système…")
+        self.mic_perm_row.set_subtitle("Statut inconnu")
+        g_perm.add(self.mic_perm_row)
         row_test = Adw.ActionRow(title="Tester le micro",
                                  subtitle="Enregistre 0,5 s pour vérifier l'autorisation")
         btn_test = Gtk.Button(label="Tester", valign=Gtk.Align.CENTER)
@@ -303,10 +308,19 @@ class JarvisWindow(Adw.ApplicationWindow):
         g_perm.add(row_gnome)
         page.add(g_perm)
 
-        # liste les micros disponibles dès l'ouverture de l'onglet
+        # liste les micros + interroge l'autorisation dès l'ouverture de l'onglet
         self.backend.list_input_devices()
+        self.backend.check_mic_permission()
 
         return scroll
+
+    def _on_mic_permission(self, state: str) -> None:
+        labels = {"yes": "Autorisée (portail système)",
+                  "no": "Refusée — ouvre Paramètres > Confidentialité > Micro",
+                  "unknown": "Non demandée / portail indisponible — le test "
+                             "d'enregistrement déclenchera la demande système"}
+        if hasattr(self, "mic_perm_row"):
+            self.mic_perm_row.set_subtitle(labels.get(state, state))
 
     def _fill_mic_devices(self, devices: list, error: str) -> None:
         """Remplit le ComboRow des micros depuis arecord -L."""
@@ -335,7 +349,7 @@ class JarvisWindow(Adw.ApplicationWindow):
 
     def _on_test_mic(self, _btn) -> None:
         self._toast("Test du micro…")
-        self.backend.test_mic(self.mic_device)
+        self.backend.test_mic(getattr(self, "mic_device", "default"))
 
     def _on_open_gnome_privacy(self, _btn) -> None:
         import subprocess
@@ -412,6 +426,34 @@ class JarvisWindow(Adw.ApplicationWindow):
         if act is not None:
             act.set_state(GLib.Variant.new_boolean(self.tts_enabled))
 
+    # ---------- autorisation micro (1er lancement) ----------
+
+    def _ask_mic_permission_first_run(self) -> bool:
+        self._mic_perm_dialog = Adw.AlertDialog.new(
+            "Autoriser le micro ?",
+            "Jarvis fonctionne à la voix : il enregistre le micro pour te "
+            "transcrire (STT local), puis répond. Aucune donnée ne quitte "
+            "ta machine.\n\nL'autorisation se gère dans Paramètres GNOME > "
+            "Confidentialité > Micro, tu peux la révoquer à tout moment.")
+        self._mic_perm_dialog.add_response("later", "Plus tard")
+        self._mic_perm_dialog.add_response("allow", "Autoriser le micro")
+        self._mic_perm_dialog.set_response_appearance(
+            "allow", Adw.ResponseAppearance.SUGGESTED)
+        self._mic_perm_dialog.set_default_response("allow")
+        self._mic_perm_dialog.set_close_response("later")
+        self._mic_perm_dialog.connect("response", self._on_mic_perm_response)
+        self._mic_perm_dialog.present(self)
+        return GLib.SOURCE_REMOVE
+
+    def _on_mic_perm_response(self, dialog, response: str) -> None:
+        save_ui_settings({"mic_permission_asked": True})
+        self.settings["mic_permission_asked"] = True
+        if response == "allow":
+            # test réel : enregistre 0,5 s pour déclencher la vraie demande
+            # d'autorisation système et vérifier que ça marche
+            self._toast("Test du micro…")
+            self.backend.test_mic(getattr(self, "mic_device", "default"))
+
     # ---------- page d'accueil ----------
 
     def _on_home_mic(self, _btn) -> None:
@@ -461,7 +503,7 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.mic_button.set_sensitive(False)
         self.chat_entry.set_sensitive(False)
         self._set_chat_hint("Enregistrement…")
-        self.backend.stt_record_and_transcribe(6.0, device=self.mic_device)
+        self.backend.stt_record_and_transcribe(6.0, device=getattr(self, "mic_device", "default"))
 
     def _on_entry_activate(self, _widget) -> None:
         text = self.chat_entry.get_text().strip()
@@ -606,6 +648,8 @@ class JarvisWindow(Adw.ApplicationWindow):
                 self._toast("Micro OK — autorisation et périphérique fonctionnent")
             else:
                 self._toast(f"Micro indisponible : {event.get('message', '')}")
+        elif t == "mic_permission":
+            self._on_mic_permission(event.get("state", "unknown"))
         elif t == "session_new":
             self.messages.clear()
             self._assistant_box = None
