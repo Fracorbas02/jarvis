@@ -548,15 +548,14 @@ class MessageBox(Gtk.Box):
 
     def _render_md(self, text: str) -> None:
         if self.webview is not None:
-            # rendu HTML complet via markdown-it-py + WebKit
+            # rendu HTML complet via markdown-it-py + WebKit.
+            # Toujours visible (hauteur mini 40px) même si le texte est vide :
+            # en streaming, les 1ers fragments peuvent être vides et la bulle
+            # ne doit pas disparaître (0px) avant le 1er contenu.
             self.content_box.set_visible(False)
             self.webview.set_visible(True)
             self.webview.set_vexpand(True)
-            if not text.strip():
-                # rien à afficher : garde la webview cachée pour ne pas occuper de place
-                self.webview.set_visible(False)
-                return
-            self.webview.load_html(markdown_to_html(text), "about:blank")
+            self.webview.load_html(markdown_to_html(text or " "), "about:blank")
             return
         self._clear_content()
         if self.webview is not None:
