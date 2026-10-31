@@ -16,6 +16,7 @@ stream_turn, la GUI n'a pas à gérer les messages.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from typing import Any, Callable
 
@@ -28,11 +29,16 @@ log = logging.getLogger("jarvis.gui.backend")
 
 Sink = Callable[[dict], None]
 
+# Paramètres acceptés par LLMClient.__init__ : on filtre la config avec, pour
+# ne pas casser si LLMConfig gagne des champs réservés au CLI (ex. ctx_size).
+_LLM_PARAMS = set(inspect.signature(LLMClient.__init__).parameters) - {"self"}
+
 
 class GuiBackend:
     def __init__(self, config_path: str | None = None):
         self.cfg: Config = load_config(config_path)
-        self.llm = LLMClient(**self.cfg.llm.__dict__)
+        self.llm = LLMClient(**{k: v for k, v in self.cfg.llm.__dict__.items()
+                                if k in _LLM_PARAMS})
         self.tools = McpToolProvider(self.cfg.mcp_servers)
         self.agent = Agent(self.llm, self.tools,
                            self.cfg.agent.system_prompt,
