@@ -104,9 +104,12 @@ GGUF audio en `model`). Le client essaie l'endpoint du protocole configuré
 (`POST /v1/audio/transcriptions`), puis retombe en cas de 404 sur l'autre
 endpoint, et en cas de 501 « does not support chat/completions » (route batch
 ASR inactive) sur un `POST /v1/chat/completions` multimodal avec le WAV en
-base64 (bloc `input_audio`) — un serveur lancé à la main avec l'autre
-binaire fonctionne donc aussi. Le mmproj est auto-ajouté en `--mmproj` s'il
-est dans le même dossier que le GGUF texte (sinon `extra_args`). Dans l'app GTK, une page **Test STT**
+base64 (bloc `input_audio`), et enfin le websocket
+`GET /v1/realtime?intent=transcription` (PCM16 base64 en `input_audio_buffer.append`
+puis `commit`) — c'est le seul chemin supporté par llama-server pour les
+modèles ASR streaming comme Voxtral Mini 4B Realtime, qui n'ont pas de route
+batch. Le mmproj est auto-ajouté en `--mmproj` s'il est dans le même dossier
+que le GGUF texte (sinon `extra_args`). Dans l'app GTK, une page **Test STT**
 (onglet dédié) permet de parler au micro et de voir la transcription sans
 envoyer de tour au LLM, avec statut/démarrage du serveur STT.
 

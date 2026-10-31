@@ -310,6 +310,26 @@ def test_start_voice_server_reports_load_error(tmp_path, monkeypatch):
     assert "unknown model architecture: 'voxtral_realtime'" in st.detail, st.detail
 
 
+def test_realtime_ws_transcribe():
+    """RealtimeSTTClient contre le mock websocket /v1/realtime (tests/ws_mock.py) :
+    handshake 101, session.update, append PCM, commit -> transcription reçue."""
+    import asyncio
+    from jarvis.voice import RealtimeSTTClient
+    from ws_mock import start_ws_realtime
+    port, _ready, stop = start_ws_realtime(text="bonjour jarvis")
+    try:
+        async def go():
+            client = RealtimeSTTClient(f"http://127.0.0.1:{port}", timeout=30.0)
+            wav = pcm_to_wav_bytes(b"\x01\x02" * 16000)  # 1 s de PCM 16 kHz
+            tmp = Path("/tmp/jarvis-test-ws.wav")
+            tmp.write_bytes(wav)
+            return await client.transcribe_wav(tmp, language="fr")
+        text = asyncio.run(go())
+        assert "bonjour jarvis" in text, text
+    finally:
+        stop()
+
+
 def test_voice_config_defaults():
     cfg = VoiceConfig()
     assert cfg.stt.binary == "whisper-server"

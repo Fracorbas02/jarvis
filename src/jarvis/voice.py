@@ -307,6 +307,220 @@ async def stop_all_voice_servers(voice_cfg: VoiceConfig) -> None:
 
 # ---------- clients ----------
 
+class RealtimeSTTClient:
+    """Transcription d'un fichier audio via le websocket OpenAI-compatible
+    POST /v1/realtime?intent=transcription de llama-server (modèles ASR
+    streaming type Voxtral Mini 4B Realtime, dont la route batch
+    /v1/audio/transcriptions n'existe pas).
+
+    Protocole (stdlib uniquement, pas de dep websocket) : handshake HTTP
+    Upgrade, puis trames WS texte JSON. Le client envoie session.update
+    (modalities ["text"], input_audio_format pcm16, transcription objet),
+    découpe le WAV 16 kHz mono en blocs input_audio_buffer.append (PCM16
+    base64), termine par input_audio_buffer.commit, et collecte les
+    événements jusqu'à conversation.item.input_audio_transcription.completed
+    (ou response.done / error).
+    """
+
+    def __init__(self, base_url: str, timeout: float = 300.0, model: str = "stt",
+                 chunk_ms: int = 200):
+        from urllib.parse import urlparse
+        u = urlparse(base_url if "://" in base_url else f"http://{base_url}")
+        self.host = u.hostname or "127.0.0.1"
+        self.port = u.port or 80
+        self.secure = (u.scheme or "http") == "https"
+        self.model = model
+        self.timeout = timeout
+        self.chunk_ms = chunk_ms
+
+    # ---------- mini client websocket (RFC 6455, trames texte/close/ping) ----------
+
+    async def _ws_connect(self):
+        import asyncio
+        import base64 as _b64
+        import os as _os
+        import struct as _struct
+        reader, writer = await asyncio.open_connection(self.host, self.port)
+        key = _b64.b64encode(_os.urandom(16)).decode()
+        scheme = "wss" if self.secure else "ws"
+        req = (f"GET /v1/realtime?intent=transcription HTTP/1.1\r\n"
+               f"Host: {self.host}:{self.port}\r\n"
+               f"Upgrade: websocket\r\nConnection: Upgrade\r\n"
+               f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n"
+               f"Sec-WebSocket-Protocol: realtime\r\n\r\n")
+        writer.write(req.encode())
+        await writer.drain()
+        # lit l'en-tête de réponse jusqu'à \r\n\r\n
+        buf = b""
+        while b"\r\n\r\n" not in buf:
+            chunk = await asyncio.wait_for(reader.read(4096), timeout=10.0)
+            if not chunk:
+                raise VoiceError("websocket /v1/realtime : connexion fermée au handshake")
+            buf += chunk
+        head, _, rest = buf.partition(b"\r\n\r\n")
+        status = head.split(b"\r\n", 1)[0].decode(errors="replace")
+        if "101" not in status:
+            raise VoiceError(f"websocket /v1/realtime refusé : {status} {head.decode(errors='replace')[:200]}")
+        return reader, writer, rest
+
+    @staticmethod
+    async def _ws_recv(reader, pending: bytes):
+        """Lit une trame WS texte/close. Retourne (opcode, payload, pending)."""
+        import asyncio
+        import struct as _struct
+        while True:
+            if len(pending) >= 2:
+                b1, b2 = pending[0], pending[1]
+                opcode = b1 & 0x0F
+                masked = b2 & 0x80
+                length = b2 & 0x7F
+                offset = 2
+                if length == 126:
+                    if len(pending) < 4:
+                        pending += await asyncio.wait_for(reader.read(65536), timeout=30.0)
+                        continue
+                    length = _struct.unpack(">H", pending[2:4])[0]
+                    offset = 4
+                elif length == 127:
+                    if len(pending) < 10:
+                        pending += await asyncio.wait_for(reader.read(65536), timeout=30.0)
+                        continue
+                    length = _struct.unpack(">Q", pending[2:10])[0]
+                    offset = 10
+                if len(pending) < offset + length:
+                    pending += await asyncio.wait_for(reader.read(65536), timeout=30.0)
+                    continue
+                payload = pending[offset:offset + length]
+                pending = pending[offset + length:]
+                if opcode == 0x8:  # close
+                    return 0x8, payload, pending
+                if opcode == 0x9:  # ping -> pong
+                    return 0x9, payload, pending
+                if opcode in (0x1, 0x0, 0x2):
+                    return opcode, payload, pending
+            pending += await asyncio.wait_for(reader.read(65536), timeout=30.0)
+
+    @staticmethod
+    async def _ws_send_text(writer, text: str) -> None:
+        import struct as _struct
+        payload = text.encode()
+        header = bytearray([0x81])  # FIN + texte
+        n = len(payload)
+        if n < 126:
+            header.append(0x80 | n)  # masqué (client -> serveur)
+        elif n < 65536:
+            header.append(0x80 | 126)
+            header += _struct.pack(">H", n)
+        else:
+            header.append(0x80 | 127)
+            header += _struct.pack(">Q", n)
+        mask = b"\x12\x34\x56\x78"
+        header += mask
+        masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+        writer.write(bytes(header) + masked)
+        await writer.drain()
+
+    # ---------- transcription d'un WAV via /v1/realtime ----------
+
+    async def transcribe_wav(self, wav_path: str | Path, language: str | None = None) -> str:
+        import asyncio
+        import base64 as _b64
+        import json as _json
+        path = Path(wav_path)
+        if not path.is_file():
+            raise VoiceError(f"fichier audio introuvable : {path}")
+        # lit le WAV (notre record_wav produit du 16 kHz mono 16-bit)
+        with wave.open(str(path), "rb") as w:
+            if w.getsampwidth() != 2:
+                raise VoiceError("WAV attendu en 16-bit pour /v1/realtime")
+            rate, channels = w.getframerate(), w.getnchannels()
+            pcm = w.readframes(w.getnframes())
+        if rate != SAMPLE_RATE or channels != 1:
+            # conversion 16 kHz mono via ffmpeg (garde-fou pour un WAV externe)
+            fixed = await to_wav_16k_mono(path)
+            with wave.open(str(fixed), "rb") as w2:
+                pcm = w2.readframes(w2.getnframes())
+
+        reader, writer, pending = await asyncio.wait_for(
+            self._ws_connect(), timeout=min(30.0, self.timeout))
+        try:
+            async def send(obj: dict) -> None:
+                await self._ws_send_text(writer, _json.dumps(obj))
+
+            await send({
+                "type": "session.update",
+                "session": {
+                    "modalities": ["text"],
+                    "input_audio_format": "pcm16",
+                    "turn_detection": None,
+                    "input_audio_transcription": {
+                        "model": self.model,
+                        **({"language": language} if language else {}),
+                    },
+                },
+            })
+            chunk_bytes = max(1, SAMPLE_RATE * 2 * self.chunk_ms // 1000)
+            for i in range(0, len(pcm), chunk_bytes):
+                await send({"type": "input_audio_buffer.append",
+                            "audio": _b64.b64encode(pcm[i:i + chunk_bytes]).decode()})
+            await send({"type": "input_audio_buffer.commit"})
+
+            texts: list[str] = []
+            deadline = asyncio.get_running_loop().time() + self.timeout
+            while asyncio.get_running_loop().time() < deadline:
+                try:
+                    opcode, payload, pending = await asyncio.wait_for(
+                        self._ws_recv(reader, pending), timeout=max(1.0, deadline - asyncio.get_running_loop().time()))
+                except TimeoutError:
+                    break
+                if opcode == 0x8:
+                    break
+                if opcode == 0x9:  # ping -> pong
+                    import struct as _struct
+                    header = bytearray([0x8A, 0x80 | len(payload)]) + b"\x00\x00\x00\x00"
+                    writer.write(bytes(header) + payload)
+                    await writer.drain()
+                    continue
+                try:
+                    ev = _json.loads(payload.decode())
+                except ValueError:
+                    continue
+                etype = ev.get("type", "")
+                if etype in ("conversation.item.input_audio_transcription.completed",
+                             "transcription.completed"):
+                    tr = ev.get("transcription")
+                    if tr is None:
+                        item = ev.get("item") or {}
+                        content = item.get("content")
+                        if isinstance(content, list):
+                            for part in content:
+                                if isinstance(part, dict) and part.get("transcription"):
+                                    tr = part["transcription"]
+                                    break
+                        if tr is None:
+                            tr = item.get("transcription")
+                    if isinstance(tr, dict):
+                        tr = tr.get("text", "")
+                    texts.append(str(tr or ""))
+                elif etype in ("transcript.text.delta", "transcription.text.delta",
+                               "response.audio_transcript.delta"):
+                    texts.append(str(ev.get("delta", "")))
+                elif etype == "error":
+                    err = ev.get("error") or {}
+                    raise VoiceError(f"/v1/realtime erreur : {err.get('message', ev)}")
+                elif etype in ("response.done", "session.updated",
+                               "input_audio_buffer.committed", "input_audio_buffer.speech_started",
+                               "input_audio_buffer.speech_stopped"):
+                    if etype == "response.done" and texts:
+                        break
+            return " ".join(t for t in texts if t).strip()
+        finally:
+            try:
+                writer.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+
 class STTClient:
     """Transcription d'un fichier audio.
 
@@ -413,6 +627,18 @@ class STTClient:
                     if text is not None:
                         return text
                 last_err += f" ; chat multimodal -> HTTP {chat.status_code}"
+        # Dernier recours (modèles ASR streaming type Voxtral Realtime, sans
+        # route batch ni chat multimodal) : websocket /v1/realtime.
+        if self.protocol == "voxtral" or last_err:
+            try:
+                ws = RealtimeSTTClient(self.root, timeout=self._http.timeout.read or 300.0,
+                                       model=self.model)
+                text = await ws.transcribe_wav(path, language=language)
+                if text:
+                    return text
+                last_err += " ; /v1/realtime: transcription vide"
+            except VoiceError as exc:
+                last_err += f" ; /v1/realtime: {exc}"
         if last_err:
             raise VoiceError(f"serveur STT injoignable sur tous les endpoints : {last_err}")
         raise VoiceError("serveur STT HTTP 404 sur tous les endpoints connus "
