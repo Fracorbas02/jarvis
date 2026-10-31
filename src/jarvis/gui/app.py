@@ -55,7 +55,12 @@ def build_page(state: GuiState) -> None:
                 sidebar = build_sidebar(state, on_mode_change=lambda m: paint_main(m))
                 state.sidebar = sidebar  # type: ignore[attr-defined]
         with splitter.after:
-            with ui.column().classes("w-full h-full p-6 overflow-hidden"):
+            with ui.column().classes("w-full h-full p-6 pt-4 overflow-hidden gap-3"):
+                # en-tête de la zone principale : mode courant + modèle choisi
+                with ui.row().classes("w-full items-center gap-2 px-1"):
+                    h_icon = ui.icon("", size="26px").classes("text-[#4cc2ff]")
+                    h_label = ui.label("").classes("text-lg font-bold")
+                    h_model = ui.chip("").props("dense outline").classes("text-xs text-gray-400")
                 main_box = ui.column().classes("w-full h-full")
                 state.main_box = main_box  # type: ignore[attr-defined]
 
@@ -69,8 +74,14 @@ def build_page(state: GuiState) -> None:
     def paint_main(mode: str) -> None:
         for m, panel in panels.items():
             panel.visible = (m == mode)
+        meta = MODES[mode]
+        h_icon.name = meta["icon"]
+        h_label.text = meta["label"]
+        sel = state.selected.get(mode)
+        h_model.text = sel.name if sel else "aucun modèle sélectionné"
 
     paint_main(state.mode)
+    state.model_listeners.append(lambda: paint_main(state.mode))
 
     # Le backend MCP démarre en on_startup : attendre qu'il soit prêt pour
     # remplir outils + statut, puis rafraîchir le statut périodiquement.

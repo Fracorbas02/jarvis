@@ -142,6 +142,7 @@ class Sidebar:
         if self.model_select.value:
             self.state.selected[self.state.mode] = self._model_by_path(self.model_select.value)
         self._refresh_model_hint()
+        self.state.notify_model_change()
 
     def _refresh_model_hint(self) -> None:
         assert self.model_hint is not None

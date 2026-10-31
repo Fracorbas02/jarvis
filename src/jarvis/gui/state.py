@@ -20,6 +20,11 @@ class GuiState:
     selected: dict[str, ModelInfo | None] = field(default_factory=dict)
     server_status: ServerStatus | None = None
     reset_listeners: list[Callable[[], None]] = field(default_factory=list)
+    model_listeners: list[Callable[[], None]] = field(default_factory=list)
+
+    def notify_model_change(self) -> None:
+        for listener in self.model_listeners:
+            listener()
     # refs UI remplies par build_page (sidebar / zone principale)
     sidebar: object | None = None
     main_box: object | None = None
