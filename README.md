@@ -46,9 +46,15 @@ uv run jarvis
 
 Commandes REPL : `/help` (liste complète), `/tools` (table outil/description),
 `/thinking` (revoir le raisonnement du dernier tour), `/tool N` (résultat
-complet du N-ième outil du dernier tour), `/reset`, `/verbose` (logs console
-en DEBUG ; le log complet est toujours dans `~/.cache/jarvis/jarvis.log`),
-`/quit`.
+complet du N-ième outil du dernier tour), `/history` (derniers messages),
+`/undo` (retirer le dernier échange), `/copy` (dernière réponse dans le
+presse-papier), `/save [fichier]` (exporter la conversation en Markdown),
+`/reset`, `/verbose` (logs console en DEBUG ; le log complet est toujours
+dans `~/.cache/jarvis/jarvis.log`), `/quit`. Tab complète les commandes `/` ;
+l'historique des saisies persiste dans `~/.cache/jarvis/history`. Ctrl+C
+annule la saisie, double Ctrl+C quitte. Une ligne de métriques (tok, tok/s,
+durée) suit chaque réponse streamée ; la bannière affiche le statut du
+serveur (GET /v1/models au démarrage).
 
 ## Outils MCP
 

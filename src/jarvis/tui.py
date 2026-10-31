@@ -156,6 +156,8 @@ class Display:
         self._reasoning_last_render = 0.0
         self._content_parts: list[str] = []
         self._content_last_render = 0.0
+        self._content_chars = 0
+        self._content_t0 = 0.0
         self.content_started = False
         # persistants entre les tours (consultables via /thinking, /tool N)
         self.last_reasoning: Reasoning | None = None
@@ -213,6 +215,9 @@ class Display:
         if self._reasoning_active:
             self._close_reasoning()
         self.content_started = True
+        if self._content_t0 == 0.0:
+            self._content_t0 = time.monotonic()
+        self._content_chars += len(chunk)
         self._content_parts.append(chunk)
         now = time.monotonic()
         if self._content.height == 0:
@@ -289,7 +294,15 @@ class Display:
             panel = self._render_content()
             self._content.keep(panel)  # version finale, laissée affichée
             self._blocks.append(panel)  # mémorisée pour le redraw au resize
+            if self._content_t0:
+                duration = time.monotonic() - self._content_t0
+                tok = max(1, self._content_chars // 4)  # estimation ~4 car./token
+                if duration > 0.05:
+                    self._emit(f"[{DIM}]{tok} tok · {tok / duration:.1f} tok/s "
+                               f"· {duration:.1f}s[/]")
             self._content_parts = []
+            self._content_chars = 0
+            self._content_t0 = 0.0
 
     def end_turn(self) -> None:
         """Archive les résultats d'outils du tour et remet à zéro le streaming."""

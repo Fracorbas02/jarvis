@@ -19,6 +19,7 @@ import tomllib
 from datetime import datetime
 from pathlib import Path
 
+import httpx
 from rich import box
 from rich.console import Console
 from rich.panel import Panel
@@ -94,12 +95,28 @@ def _make_console() -> Console:
     return Console()
 
 
-def _banner(cfg, tools: McpToolProvider) -> Panel:
+async def _server_status(base_url: str) -> tuple[str, bool]:
+    """GET /v1/models : (description, ok). Permet de savoir au démarrage si
+    llama-server répond, plutôt que de le découvrir à la première question."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as http:
+            r = await http.get(f"{base_url.rstrip('/')}/models")
+        if r.status_code == 200:
+            ids = [m.get("id", "?") for m in r.json().get("data", [])]
+            return (", ".join(ids) if ids else "modèle chargé"), True
+        return f"HTTP {r.status_code}", False
+    except Exception as exc:  # noqa: BLE001 — juste un statut
+        return f"{type(exc).__name__}: {exc}", False
+
+
+def _banner(cfg, tools: McpToolProvider, server: tuple[str, bool]) -> Panel:
     n = len(tools.names())
     servers = ", ".join(sorted(cfg.mcp_servers)) or "aucun"
+    srv_style = "green" if server[1] else "red"
     body = Text.from_markup(
         f"[bold]assistant local[/]\n"
         f"[dim]modèle[/]  {cfg.llm.model} @ {cfg.llm.base_url}\n"
+        f"[{srv_style}]serveur[/]  {server[0]}\n"
         f"[dim]outils[/]  {n} chargés ({servers})\n"
         f"[dim]/help[/] pour les commandes"
     )
@@ -192,7 +209,8 @@ async def amain() -> int:
 
     console = _make_console()
     display = Display(console)
-    display.set_header(_banner(cfg, tools))
+    server = await _server_status(cfg.llm.base_url)
+    display.set_header(_banner(cfg, tools, server))
     hist_file = _setup_readline()
     loop = asyncio.get_running_loop()
     try:
