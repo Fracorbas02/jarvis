@@ -100,7 +100,15 @@ uv run pytest tests/ -v
 ```sh
 uv run jarvis-app             # fenêtre native customtkinter (dark mode)
 uv run jarvis-app --config /chemin/config.toml
+uv run jarvis-app --scale 2   # forcer le facteur d'échelle (défaut: auto)
 ```
+
+La fenêtre est redimensionnable (sash déplaçable entre la sidebar et la zone
+principale) et s'adapte à la résolution de l'écran (62 % x 68 %, centrée).
+Le facteur d'échelle est détecté automatiquement (DPI de l'écran, hints
+`GDK_SCALE`/`QT_SCREEN_SCALE_FACTORS`, override `--scale`) et appliqué avant
+la création des widgets : dimensions et polices suivent le scaling GNOME
+(200 % → tout est x2).
 
 Même expérience que la GUI web, en application native : sélecteur de mode
 (Chat LLM / TTS / STT), modèles détectés par mode, panneau serveur
