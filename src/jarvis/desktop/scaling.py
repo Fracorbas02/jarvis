@@ -251,12 +251,12 @@ def _pointer_monitor(root, scale: float) -> tuple[int, int, int, int] | None:
     if mons:
         for (x, y, w, h, s) in mons:
             if x * s <= px < (x + w) * s and y * s <= py < (y + h) * s:
-                return (round(x * s), round(y * s), round(w * s), round(h * s))
+                return (round(x * s), round(y * s), round(w * s), round(h * s), s)
         return None
     # fallback X11: un seul écran vu par Tk
     sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
     if 0 <= px < sw and 0 <= py < sh:
-        return (0, 0, sw, sh)
+        return (0, 0, sw, sh, scale)
     return None
 
 
@@ -266,14 +266,18 @@ def _center_geometry(root, scale: float) -> str:
     mon = _pointer_monitor(root, scale)
     if mon is None:
         return adaptive_geometry(root)
-    mx, my, mw, mh = mon
-    sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
-    w = max(int(mw * 0.62), adaptive_minsize()[0])
-    h = max(int(mh * 0.68), adaptive_minsize()[1])
-    w = min(w, mw)
-    h = min(h, mh)
-    x = mx + max((mw - w) // 2, 0)
-    y = my + max((mh - h) // 2, 0)
+    mx, my, mw, mh = mon[0], mon[1], mon[2], mon[3]
+    # Coordonnées de geometry() = unités LOGIQUES du compositor (physiques / scale
+    # du moniteur concerné) : sous Wayland scale 2, XWayland voit l'écran virtuel
+    # en logiques, donc on divise par le scale du moniteur choisi.
+    s = mon[4] if len(mon) > 4 else scale
+    mw_l, mh_l = round(mw / s), round(mh / s)
+    w = max(int(mw_l * 0.62), round(adaptive_minsize()[0] / s))
+    h = max(int(mh_l * 0.68), round(adaptive_minsize()[1] / s))
+    w = min(w, mw_l)
+    h = min(h, mh_l)
+    x = round(mx / s) + max((mw_l - w) // 2, 0)
+    y = round(my / s) + max((mh_l - h) // 2, 0)
     return f"{w}x{h}+{x}+{y}"
 
 

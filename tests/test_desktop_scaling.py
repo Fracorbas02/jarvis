@@ -137,16 +137,23 @@ def test_unit() -> None:
             # pointeur sur l'écran DP-1 (logique x=1440..3360, scale 1 => physiques idem)
             r = PtrRoot(96, 4800, 1080, 3000, 500)
             mon = scaling_mod._pointer_monitor(r, 2.0)
-            assert mon == (1440, 0, 1920, 1080), mon
+            assert mon == (1440, 0, 1920, 1080, 1.0), mon
+            # geometry en unités LOGIQUES (scale 1 sur DP-1) : centrée sur DP-1
             g = scaling_mod._center_geometry(r, 2.0)
             w, rest = g.split("x", 1)
             h, xy = rest.split("+", 1)
             x, y = xy.split("+", 1)
             assert (int(x), int(y)) == (1440 + (1920 - 1190) // 2, (1080 - 734) // 2), g
-            # pointeur sur eDP-1 (0..2880): fenêtre sur le premier écran
-            r2 = PtrRoot(192, 4800, 1080, 1000, 500)
+            # pointeur sur eDP-1 (scale 2 => physiques 0..2880, logiques 0..1440)
+            r2 = PtrRoot(192, 3840, 1800, 1000, 500)
             mon2 = scaling_mod._pointer_monitor(r2, 2.0)
-            assert mon2 == (0, 0, 2880, 1800), mon2
+            assert mon2 == (0, 0, 2880, 1800, 2.0), mon2
+            g2 = scaling_mod._center_geometry(r2, 2.0)
+            # logiques: moniteur 1440x900, fenêtre 62% = 892 (min 440), centrée
+            w2, rest2 = g2.split("x", 1)
+            h2, xy2 = rest2.split("+", 1)
+            x2, y2 = xy2.split("+", 1)
+            assert int(x2) == (1440 - int(w2)) // 2 and 0 <= int(y2), g2
         finally:
             scaling_mod._monitors_xml_layout = orig_layout
     finally:

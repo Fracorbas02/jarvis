@@ -246,6 +246,15 @@ def main() -> None:
     root = ctk.CTk()
     root.title("Jarvis")
 
+    # Curseur souris : sous XWayland scale 2, XCURSOR_SIZE n'est pas propagé
+    # et le curseur reste en 24px (minuscule sur écran HiDPI). On le scale via
+    # XCURSOR_SIZE (lu par libXcursor au chargement des curseurs de la Textbox).
+    if "XCURSOR_SIZE" not in os.environ:
+        try:
+            os.environ["XCURSOR_SIZE"] = str(int(24 * detect_scale(root)))
+        except Exception:  # noqa: BLE001
+            pass
+
     # Scaling HiDPI (GNOME) + fenêtre adaptative et redimensionnable.
     # setup_window applique set_*_scaling AVANT la création des widgets
     # (scale dimensions + polices) et déverrouille maxsize (CTk le bloque).
