@@ -179,6 +179,16 @@ def _debug_scale(root, scale: float, app=None) -> None:
                 xdg = os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
                 lines.append(f"[jarvis] debug: XDG_DATA_HOME={xdg} "
                              f"fonts dir exists={os.path.isdir(os.path.join(xdg, 'fonts'))}")
+                lines.append(f"[jarvis] debug: DISPLAY={os.environ.get('DISPLAY')} "
+                             f"WAYLAND_DISPLAY={os.environ.get('WAYLAND_DISPLAY')}")
+                import subprocess as _sp
+                try:
+                    out = _sp.run(["xlsfonts"], capture_output=True, text=True, timeout=5).stdout
+                    n = len(out.splitlines())
+                    rob = [l for l in out.splitlines() if "oboto" in l][:3]
+                    lines.append(f"[jarvis] debug: xlsfonts n={n} roboto={rob}")
+                except Exception as e:
+                    lines.append(f"[jarvis] debug: xlsfonts erreur: {e}")
                 for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont"):
                     f = tkfont.nametofont(name)
                     lines.append(

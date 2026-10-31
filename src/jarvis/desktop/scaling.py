@@ -190,6 +190,17 @@ def ensure_fonts(root) -> None:
                 subprocess.run(["fc-cache", "-f"], capture_output=True, timeout=10)
             except Exception:  # noqa: BLE001
                 pass
+        # Enregistrer aussi le dossier dans le font path du SERVEUR X
+        # (XWayland a son propre font path, indépendant de fontconfig) :
+        # sans ça, tkfont.families() ne voit que 'fixed' et Tk ignore 'Roboto'.
+        if os.environ.get("DISPLAY"):
+            try:
+                subprocess.run(["xset", "fp+", str(dst_dir)],
+                               capture_output=True, timeout=5)
+                subprocess.run(["xset", "fp", "rehash"],
+                               capture_output=True, timeout=5)
+            except Exception:  # noqa: BLE001
+                pass
     except Exception:  # noqa: BLE001 — best-effort
         pass
 
