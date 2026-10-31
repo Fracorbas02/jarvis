@@ -152,14 +152,7 @@ class JarvisWindow(Adw.ApplicationWindow):
         self._notif_badge.set_visible(False)
         self._notif_badge.add_css_class("jarvis-notif-badge")
         bell_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
-        try:
-            from gi.repository import GdkPixbuf
-            loader = GdkPixbuf.PixbufLoader.new_with_type("svg")
-            loader.write(BELL_SVG)
-            loader.close()
-            bell_box.append(Gtk.Image(pixbuf=loader.get_pixbuf()))
-        except Exception:  # noqa: BLE001 — fallback thème si le SVG échoue
-            bell_box.append(Gtk.Image(icon_name="bell-symbolic"))
+        bell_box.append(self._bell_icon())  # cloche dessinée en Cairo (zéro dépendance)
         bell_box.append(self._notif_badge)
         self.bell_button = Gtk.Button(tooltip_text="Notifications")
         self.bell_button.set_child(bell_box)
@@ -563,6 +556,29 @@ class JarvisWindow(Adw.ApplicationWindow):
             except Exception:  # noqa: BLE001
                 continue
         self._toast("Ouvre manuellement : Paramètres > Confidentialité")
+
+    def _bell_icon(self) -> Gtk.Widget:
+        """Cloche dessinée en Cairo dans un DrawingArea 16x16, couleur = foreground
+        du widget (suit le thème clair/sombre). Aucun thème d'icônes requis."""
+        da = Gtk.DrawingArea()
+        da.set_size_request(16, 16)
+        da.set_draw_func(self._draw_bell)
+        return da
+
+    @staticmethod
+    def _draw_bell(area, cr, width, height) -> None:
+        import math
+        c = area.get_color()
+        cr.set_source_rgb(c.red, c.green, c.blue)
+        # dôme de la cloche
+        cr.arc(8, 6.5, 4.0, math.pi, 0.0)
+        cr.line_to(12.6, 11.2)
+        cr.line_to(3.4, 11.2)
+        cr.close_path()
+        cr.fill()
+        # battant
+        cr.arc(8, 13.0, 1.4, 0.0, 2.0 * math.pi)
+        cr.fill()
 
     def _build_notif_popover(self) -> None:
         self.notif_popover = Gtk.Popover()
