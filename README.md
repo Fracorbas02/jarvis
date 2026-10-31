@@ -82,6 +82,46 @@ CLI et les interfaces les lancent automatiquement avec le GGUF choisi :
 # STT : whisper.cpp (ggml), sert POST /inference
 whisper-server --host 127.0.0.1 --port 8178 -m ~/models/stt/Q4_K_M.gguf -ngl 99
 
+# STT alternatif : llama-server + modèle audio llama.cpp (ex. Voxtral Mini
+# 4B Realtime), sert POST /v1/audio/transcriptions (OpenAI-compatible).
+# Nécessite llama.cpp >= b11675 (release v0.8.0) : un build plus ancien
+# échoue avec « unknown model architecture: 'voxtral_realtime' » (l'app
+# remonte cette erreur dans le statut du serveur STT).
+#
+# Voxtral Realtime = DEUX GGUF : le décodeur texte (arch mistral3) en -m,
+# plus l'encodeur audio mmproj (arch voxtral_realtime) en --mmproj. Si le
+# mmproj*.gguf est dans le même dossier que le modèle, jarvis l'ajoute
+# automatiquement ; sinon : extra_args = ["--mmproj", "~/models/stt/mmproj-...-BF16.gguf"]
+# ex. : hf download ggml-org/Voxtral-Mini-4B-Realtime-2602-GGUF \
+#         Voxtral-Mini-4B-Realtime-2602-Q4_K_M.gguf mmproj-Voxtral-Mini-4B-Realtime-2602-BF16.gguf \
+#         --local-dir ~/models/stt/
+# (CLI officielle depuis huggingface_hub v1.0 : `hf`, ex-huggingface-cli déprécié)
+llama-server -m ~/models/stt/Voxtral-Mini-4B-Realtime-2602-Q4_K_M.gguf \
+  --mmproj ~/models/stt/mmproj-Voxtral-Mini-4B-Realtime-2602-BF16.gguf \
+  --host 127.0.0.1 --port 8178 -ngl 99 --jinja --ctx-size 8192
+```
+
+Le protocole STT se choisit dans `config.toml` (`[voice.stt] protocol =
+"whisper"` par défaut, ou `"voxtral"` avec `binary = "llama-server"` et le
+GGUF audio en `model`). Le client essaie l'endpoint du protocole configuré
+(`POST /v1/audio/transcriptions`), puis retombe en cas de 404 sur l'autre
+endpoint, et en cas de 501 « does not support chat/completions » (route batch
+ASR inactive) sur un `POST /v1/chat/completions` multimodal avec le WAV en
+base64 (bloc `input_audio`), et enfin le websocket
+`GET /v1/realtime?intent=transcription` (PCM16 base64 en `input_audio_buffer.append`
+puis `commit`) — c'est le seul chemin supporté par llama-server pour les
+modèles ASR streaming comme Voxtral Mini 4B Realtime, qui n'ont pas de route
+batch. Le mmproj est auto-ajouté en `--mmproj` s'il est dans le même dossier
+que le GGUF texte (sinon `extra_args`). Dans l'app GTK, le bouton micro de la **Conversation** et la page **Test STT**
+enregistrent avec **VAD** (détection de fin de parole par seuil RMS sur le flux
+live, plafond 60 s ; la page Test STT permet de repasser en durée fixe avec 0 =
+auto). Toutes les transcriptions passent par la même cascade (route batch ->
+chat multimodal -> websocket /v1/realtime). Une page **Test STT**
+(onglet dédié) permet de parler au micro et de voir la transcription sans
+envoyer de tour au LLM, avec statut/démarrage du serveur STT.
+
+```sh
+
 # TTS : llama-server avec un modèle de synthèse, sert POST /v1/audio/speech
 # (et POST /tts sur les builds récents)
 llama-server -m ~/models/tts/voxtral-4b-tts-q4_k.gguf \
@@ -96,8 +136,9 @@ sinon par heuristique de nom (`whisper`/`ggml-` → STT,
 Commandes CLI :
 
 - `/tts <texte>` : synthétise en WAV (écrit dans `~/.cache/jarvis/`) et le joue ;
-- `/stt [fichier.wav]` : transcrit le fichier, ou enregistre 5 s de micro
-  (arecord, fallback ffmpeg) s'il n'y a pas d'argument ;
+- `/stt [fichier.wav]` : transcrit le fichier, ou enregistre le micro
+  **jusqu'à la fin de parole** (VAD par seuil RMS, plafond 60 s) s'il n'y a
+  pas d'argument ;
 - `/voice` : statut des deux serveurs voix.
 
 Dans l'app GTK4 (`jarvis-app`), la conversation se fait au micro (STT :

@@ -60,7 +60,10 @@ def main() -> int:
                         "_toast", "_on_reset_context", "_do_reset", "_on_toggle_sidebar",
                         "_on_split_sidebar_changed", "_fill_conv_list", "_on_conv_row_activated",
                         "_dispatch", "_on_server_status", "_on_turn_done",
-                        "_replay_history", "_fill_tools_group"):
+                        "_replay_history", "_fill_tools_group", "_build_stt_test",
+                        "_on_stack_changed", "_on_stt_test_mic", "_on_stt_start_stop",
+                        "_on_stt_server_status", "_on_stt_test_done",
+                        "_on_stt_test_seconds_changed"):
             assert hasattr(gtk_app.JarvisWindow, handler), handler
         import inspect
         src = inspect.getsource(gtk_app.JarvisWindow._fill_tools_group)

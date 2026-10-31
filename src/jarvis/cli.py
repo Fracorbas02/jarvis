@@ -40,8 +40,9 @@ from .llm import LLMClient
 from .mcp import McpToolProvider
 from .sessions import SessionStore
 from .tui import Display
-from .voice import (VoiceError, play_wav, record_wav, stop_all_voice_servers,
-                    synthesize, transcribe_file, voice_server_status)
+from .voice import (VoiceError, play_wav, record_wav, record_wav_vad,
+                    stop_all_voice_servers, synthesize, transcribe_file,
+                    voice_server_status)
 
 HELP = """\
 [bold]commandes[/]
@@ -343,7 +344,12 @@ async def _voice_status_lines(cfg) -> list[str]:
     lines = []
     for name, vcfg in (("stt", cfg.voice.stt), ("tts", cfg.voice.tts)):
         st = await voice_server_status(name, vcfg)
-        label = "STT whisper-server" if name == "stt" else "TTS llama-server"
+        if name == "stt":
+            proto = getattr(vcfg, "protocol", "whisper")
+            label = ("STT llama-server (voxtral)" if proto == "voxtral"
+                     else "STT whisper-server")
+        else:
+            label = "TTS llama-server"
         lines.append(f"[dim]{label}[/] {st.host}:{st.port} — "
                      f"{'en ligne' if st.state == 'online' else 'géré par jarvis' if st.state == 'managed' else 'hors ligne'}"
                      + (f" ({st.detail})" if st.detail and st.state == "offline" else ""))
@@ -407,9 +413,11 @@ async def _cmd_stt(cfg, console, args: str) -> None:
     """/stt [fichier.wav] : transcription ; sans argument, enregistre 5 s de micro."""
     path = Path(args.strip()).expanduser() if args.strip() else None
     if path is None:
-        console.print("[dim]enregistrement 5 s depuis le micro…[/]")
+        def _phase(msg: str) -> None:
+            console.print(f"[dim]{msg}[/]")
+        console.print("[dim]enregistrement depuis le micro, jusqu'à la fin de parole (VAD)…[/]")
         try:
-            path = await record_wav(5.0, cfg.voice)
+            path = await record_wav_vad(cfg.voice, max_seconds=60.0, on_status=_phase)
         except VoiceError as exc:
             console.print(f"[bold red]erreur enregistrement:[/] {exc}")
             return
@@ -418,6 +426,7 @@ async def _cmd_stt(cfg, console, args: str) -> None:
         console.print(f"[bold red]erreur:[/] fichier introuvable : {path}")
         return
     try:
+        console.print("[dim]transcription en cours…[/]")
         text = await transcribe_file(cfg.voice, path, language="fr")
     except VoiceError as exc:
         console.print(f"[bold red]erreur STT:[/] {exc}")

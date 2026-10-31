@@ -35,17 +35,21 @@ class AgentConfig:
 
 @dataclass
 class VoiceServerConfig:
-    """Un serveur voix local (STT whisper.cpp ou TTS llama.cpp).
+    """Un serveur voix local (STT whisper.cpp ou llama.cpp, ou TTS llama.cpp).
 
     binary        : exécutable lancé si aucun serveur ne répond (ex. whisper-server)
     base_url      : racine du serveur (le client ajoute /inference ou /v1/...)
     model         : GGUF à charger au démarrage (chemin relatif à ~/models ou absolu)
+    protocol      : pour le STT, "whisper" (whisper-server, POST /inference) ou
+                    "voxtral" (llama-server + modèle audio type Voxtral Mini 4B
+                    Realtime, POST /v1/audio/transcriptions) ; ignoré pour le TTS
     extra_args    : arguments supplémentaires passés au binaire
     ready_timeout : attente max du /health (chargement du modèle, peut être long)
     """
     binary: str = ""
     base_url: str = ""
     model: str = ""
+    protocol: str = "whisper"
     extra_args: list[str] = field(default_factory=list)
     ready_timeout: float = 180.0
     device: str = ""        # nom ggml du device (ex. "Vulkan1", voir llama-server
@@ -69,6 +73,7 @@ class VoiceConfig:
         binary="whisper-server",
         base_url="http://127.0.0.1:8178",
         model="~/models/stt/Q4_K_M.gguf",
+        protocol="whisper",
     ))
     tts: VoiceServerConfig = field(default_factory=lambda: VoiceServerConfig(
         binary="llama-server",
@@ -119,7 +124,12 @@ def load_config(path: str | Path | None = None) -> Config:
             "Copie config.example.toml en config.toml."
         )
 
-    raw = tomllib.loads(cfg_path.read_text(encoding="utf-8"))
+    try:
+        raw = tomllib.loads(cfg_path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as exc:
+        raise tomllib.TOMLDecodeError(
+            f"{cfg_path}: {exc}. Clé dupliquée ? (souvent un bloc copié de "
+            f"config.example.toml laissé sous le tien)") from exc
     cfg = Config()
     cfg.llm = LLMConfig(**{k: v for k, v in raw.get("llm", {}).items()
                            if k in LLMConfig.__dataclass_fields__})

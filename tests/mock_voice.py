@@ -1,10 +1,17 @@
-"""Mock des deux serveurs voix (stdlib, threadé) pour tester sans modèles.
+"""Mock des serveurs voix (stdlib, threadé) pour tester sans modèles.
 
-- whisper-server : GET /health -> {"status":"ok"}, POST /inference
-  (multipart avec un champ file) -> {"text": "..."} en fonction du contenu.
-- llama-server TTS : GET /health -> ok, POST /v1/audio/speech (JSON avec
-  "input") -> WAV 16 kHz valide ; si le JSON contient "_use_tts_fallback",
-  /v1/audio/speech renvoie 404 pour tester le fallback POST /tts.
+- mode "stt" (whisper-server) : GET /health -> {"status":"ok"},
+  POST /inference (multipart avec un champ file) -> {"text": "..."}.
+- mode "voxtral" (llama-server + modèle audio, ex. Voxtral Mini 4B Realtime) :
+  GET /health -> ok, POST /v1/audio/transcriptions (multipart, champ file)
+  -> {"text": "..."} ; /inference renvoie 404 (pour tester le fallback).
+- mode "voxtral-501" : comme voxtral, mais /v1/audio/transcriptions renvoie
+  501 {"error":{"message":"this server does not support chat/completions"}}
+  et /v1/chat/completions accepte un bloc input_audio (base64) -> chat
+  classique avec le texte transcrit (teste le fallback chat multimodal).
+- mode "tts" (llama-server TTS) : GET /health -> ok, POST /v1/audio/speech
+  (JSON avec "input") -> WAV 16 kHz valide ; si le JSON contient
+  "_use_tts_fallback", /v1/audio/speech renvoie 404 (fallback POST /tts).
 """
 
 from __future__ import annotations
@@ -38,7 +45,7 @@ def _read_multipart_file(body: bytes, boundary: str) -> bytes:
 
 
 class Handler(BaseHTTPRequestHandler):
-    mode = "stt"          # "stt" ou "tts" (remplacé par instance via server attributes)
+    mode = "stt"          # "stt" | "voxtral" | "tts" (remplacé via server attributes)
     tts_fallback = False  # si True, /v1/audio/speech -> 404 (test du fallback /tts)
 
     def log_message(self, *a):
@@ -80,16 +87,44 @@ class Handler(BaseHTTPRequestHandler):
         body = self.rfile.read(length)
         ctype = self.headers.get("Content-Type", "")
 
-        if self._mode == "stt" and self.path.rstrip("/") == "/inference":
-            if "multipart/form-data" not in ctype:
-                self._json({"error": "attendu multipart/form-data"}, code=400)
+        if self._mode == "voxtral-501" and self.path.rstrip("/") == "/v1/audio/transcriptions":
+            self._json({"error": {"code": 501,
+                                  "message": "this server does not support chat/completions",
+                                  "type": "not_supported_error"}}, code=501)
+            return
+
+        if self._mode in ("stt", "voxtral", "voxtral-501") and self.path.rstrip("/") == "/v1/chat/completions" and self._mode == "voxtral-501":
+            payload = json.loads(body)
+            msgs = payload.get("messages", [])
+            has_audio = any(
+                isinstance(m.get("content"), list)
+                and any(isinstance(c, dict) and c.get("type") == "input_audio"
+                        for c in m["content"])
+                for m in msgs)
+            if has_audio:
+                self._json({"choices": [{"message": {"role": "assistant",
+                                                     "content": "transcription chat multimodal"}}]})
                 return
-            boundary = ctype.split("boundary=")[-1].strip()
-            audio = _read_multipart_file(body, boundary)
-            if not audio:
-                self._json({"error": "pas de champ file"}, code=400)
+            self._json({"error": "no audio"}, code=400)
+            return
+
+        if self._mode in ("stt", "voxtral", "voxtral-501"):
+            # whisper-server sert /inference, llama-server audio sert
+            # /v1/audio/transcriptions ; l'autre endpoint renvoie 404
+            path = self.path.rstrip("/")
+            want = "/inference" if self._mode == "stt" else "/v1/audio/transcriptions"
+            if path == want:
+                if "multipart/form-data" not in ctype:
+                    self._json({"error": "attendu multipart/form-data"}, code=400)
+                    return
+                boundary = ctype.split("boundary=")[-1].strip()
+                audio = _read_multipart_file(body, boundary)
+                if not audio:
+                    self._json({"error": "pas de champ file"}, code=400)
+                    return
+                self._json({"text": f"transcription de {len(audio)} octets audio"})
                 return
-            self._json({"text": f"transcription de {len(audio)} octets audio"})
+            self.send_error(404)
             return
 
         if self._mode == "tts":
@@ -121,7 +156,7 @@ def start_mock_voice(port: int, mode: str, tts_fallback: bool = False
 if __name__ == "__main__":
     import sys
     mode = sys.argv[1] if len(sys.argv) > 1 else "stt"
-    port = int(sys.argv[2]) if len(sys.argv) > 2 else (8178 if mode == "stt" else 9932)
+    port = int(sys.argv[2]) if len(sys.argv) > 2 else (9932 if mode == "tts" else 8178)
     srv, t = start_mock_voice(port, mode)
     print(f"mock {mode} sur http://127.0.0.1:{port}")
     try:

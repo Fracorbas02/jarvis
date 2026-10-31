@@ -107,6 +107,26 @@ async def server_ctx_usage(base_url: str, timeout: float = 3.0) -> dict:
     return out
 
 
+def _wav_rms(path) -> float | None:
+    """Niveau RMS d'un WAV 16-bit mono (diagnostic : 0 = silence, micro muet)."""
+    import math
+    import wave
+    try:
+        with wave.open(str(path), "rb") as w:
+            if w.getsampwidth() != 2:
+                return None
+            frames = w.readframes(w.getnframes())
+        if not frames:
+            return 0.0
+        n = len(frames) // 2
+        total = 0
+        for i in range(0, min(len(frames), 16000 * 2 * 10), 2):
+            total += int.from_bytes(frames[i:i + 2], "little", signed=True) ** 2
+        return math.sqrt(total / max(1, min(n, 16000 * 10)))
+    except Exception:  # noqa: BLE001
+        return None
+
+
 class GtkBackend:
     """C\u0153ur async de l'UI GTK : config + LLM + MCP + Agent + sessions."""
 
@@ -372,30 +392,178 @@ class GtkBackend:
 
     # ---------- voix ----------
 
+    async def _transcribe_path(self, path, on_status=None) -> str:
+        """Transcription d'un WAV via le serveur STT, toujours par la même
+        cascade (STTClient : route batch -> chat multimodal -> WS /v1/realtime)."""
+        from ..voice import STTClient, ensure_voice_server, VoiceError
+        st = await ensure_voice_server("stt", self.cfg.voice.stt)
+        if st.state == "offline":
+            raise VoiceError(f"serveur STT indisponible : {st.detail}")
+        client = STTClient(self.cfg.voice.stt.base_url,
+                           protocol=self.cfg.voice.stt.protocol)
+        try:
+            return await client.transcribe(path, language="fr", on_status=on_status)
+        finally:
+            await client.aclose()
+
     def stt_record_and_transcribe(self, seconds: float = 6.0,
                                   device: str | None = None) -> None:
         self._run(self._arecord_stt(seconds, device))
 
+    @staticmethod
+    def _pulse_source_exists(source: str) -> bool:
+        """True si la source PipeWire existe encore (sinon ffmpeg -i <source>
+        échoue en silence). 'default' existe toujours."""
+        if source == "default":
+            return True
+        try:
+            return any(s.removeprefix("pulse:") == source
+                       for s, _ in GtkBackend._pactl_sources())
+        except Exception:  # noqa: BLE001 — pactl absent -> on tente tel quel
+            return True
+
     def _record_cfg(self, device: str | None):
-        """VoiceConfig clon\u00e9 avec un record_cmd pointant sur le micro choisi
-        (arecord -D <device>). device None/"default" -> record_cmd d'origine."""
+        """VoiceConfig cloné avec un record_cmd pointant sur le micro choisi.
+
+        - device None/"default" -> record_cmd d'origine (arecord, fallback ffmpeg) ;
+        - device commençant par "pulse:" -> source PipeWire explicite, enregistrée
+          via ffmpeg -f pulse -i <source> (arecord absent sur les systèmes
+          100 % PipeWire/PulseAudio sans alsa-utils) ;
+        - sinon device ALSA -> arecord -D <device>."""
         from dataclasses import replace
         if device and device != "default":
+            if device.startswith("pulse:"):
+                source = device[len("pulse:"):]
+                if not self._pulse_source_exists(source):
+                    import logging
+                    logging.getLogger("jarvis.gtk.backend").warning(
+                        "source pulse %s inexistante (renommée ?) -> default", source)
+                    source = "default"
+                return replace(self.cfg.voice, record_cmd=[
+                    "ffmpeg", "-loglevel", "error", "-f", "pulse", "-i", source,
+                    "-ar", "16000", "-ac", "1", "-f", "s16le", "-"])
             return replace(self.cfg.voice, record_cmd=[
                 "arecord", "-q", "-D", device,
                 "-f", "S16_LE", "-r", "16000", "-c", "1", "-"])
         return self.cfg.voice
 
     async def _arecord_stt(self, seconds: float, device: str | None) -> None:
-        from ..voice import VoiceError, record_wav, transcribe_file
+        """Page Conversation : micro -> transcription -> tour LLM.
+
+        seconds > 0 : durée fixe (record_wav). seconds <= 0 : VAD, on enregistre
+        jusqu'à la fin de parole détectée (record_wav_vad)."""
+        from ..voice import VoiceError, record_wav, record_wav_vad
         vcfg = self._record_cfg(device)
         try:
+            def _phase(msg: str) -> None:
+                self.events.put({"type": "stt_phase", "message": msg})
+
             self.events.put({"type": "stt_recording", "seconds": seconds})
-            path = await record_wav(seconds, vcfg)
-            text = await transcribe_file(self.cfg.voice, path, language="fr")
+            if seconds and seconds > 0:
+                path = await record_wav(seconds, vcfg)
+            else:
+                path = await record_wav_vad(vcfg, max_seconds=60.0, on_status=_phase)
+            text = await self._transcribe_path(path, on_status=_phase)
             self.events.put({"type": "stt_done", "text": text})
         except VoiceError as exc:
             self.events.put({"type": "voice_error", "message": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            log.exception("stt record/transcribe en erreur")
+            self.events.put({"type": "voice_error",
+                             "message": f"erreur interne STT : {type(exc).__name__}: {exc}"})
+
+    def refresh_stt_status(self) -> None:
+        """Statut du serveur STT -> événement stt_server_status."""
+        self._run(self._astt_status())
+
+    def _stt_status_event(self, st) -> dict:
+        from ..voice import _find_mmproj, resolve_model_path
+        mmproj = None
+        if (self.cfg.voice.stt.protocol or "whisper") == "voxtral":
+            try:
+                mmproj = _find_mmproj(resolve_model_path(self.cfg.voice.stt.model))
+            except Exception:  # noqa: BLE001
+                mmproj = None
+            if mmproj is None and "--mmproj" in (self.cfg.voice.stt.extra_args or []):
+                i = self.cfg.voice.stt.extra_args.index("--mmproj")
+                if i + 1 < len(self.cfg.voice.stt.extra_args):
+                    mmproj = self.cfg.voice.stt.extra_args[i + 1]
+        return {"type": "stt_server_status", "state": st.state, "host": st.host,
+                "port": st.port, "detail": st.detail, "healthy": st.healthy,
+                "protocol": self.cfg.voice.stt.protocol,
+                "model": self.cfg.voice.stt.model, "binary": self.cfg.voice.stt.binary,
+                "mmproj": str(mmproj) if mmproj else ""}
+
+    async def _astt_status(self) -> None:
+        from ..voice import voice_server_status
+        st = await voice_server_status("stt", self.cfg.voice.stt)
+        self.events.put(self._stt_status_event(st))
+
+    def start_stt_server(self) -> None:
+        self._run(self._astt_start())
+
+    async def _astt_start(self) -> None:
+        from ..voice import start_voice_server
+        st = await start_voice_server("stt", self.cfg.voice.stt)
+        self.events.put(self._stt_status_event(st))
+
+    def stop_stt_server(self) -> None:
+        self._run(self._astt_stop())
+
+    async def _astt_stop(self) -> None:
+        from ..voice import stop_voice_server
+        st = await stop_voice_server("stt", self.cfg.voice.stt)
+        self.events.put(self._stt_status_event(st))
+
+    def stt_test_transcribe(self, seconds: float = 6.0,
+                            device: str | None = None) -> None:
+        """Phase de test STT : enregistre puis transcrit, SANS lancer de tour
+        LLM. Événements : stt_test_recording -> stt_test_done / voice_error."""
+        self._run(self._astt_test(seconds, device))
+
+    async def _astt_test(self, seconds: float, device: str | None) -> None:
+        import time
+        from ..voice import VoiceError, ensure_voice_server, record_wav, record_wav_vad
+        vcfg = self._record_cfg(device)
+        try:
+            st = await ensure_voice_server("stt", self.cfg.voice.stt)
+            if st.state == "offline":
+                raise VoiceError(f"serveur STT indisponible : {st.detail}")
+            def _phase(msg: str) -> None:
+                self.events.put({"type": "stt_test_phase", "message": msg})
+
+            self.events.put({"type": "stt_test_recording", "seconds": seconds})
+            if seconds and seconds > 0:
+                path = await record_wav(seconds, vcfg)
+            else:
+                path = await record_wav_vad(vcfg, max_seconds=60.0, on_status=_phase)
+            # copie de diagnostic stable (le rec-* est horodaté) :
+            import shutil as _shutil
+            stable = self._state_dir() / "stt-test-last.wav" if hasattr(self, "_state_dir") else None
+            try:
+                from .backend import state_dir as _sd
+                stable = _sd() / "stt-test-last.wav"
+                _shutil.copyfile(path, stable)
+                path = stable
+            except Exception:  # noqa: BLE001
+                pass
+            audio_rms = _wav_rms(path)
+            t0 = time.monotonic()
+            text = await self._transcribe_path(path, on_status=_phase)
+            self.events.put({"type": "stt_test_done", "text": text,
+                             "seconds": seconds,
+                             "elapsed": time.monotonic() - t0,
+                             "protocol": self.cfg.voice.stt.protocol,
+                             "server": f"{st.host}:{st.port}",
+                             "audio_rms": audio_rms,
+                             "wav_path": str(path),
+                             "wav_bytes": path.stat().st_size if path.is_file() else 0})
+        except VoiceError as exc:
+            self.events.put({"type": "voice_error", "message": str(exc)})
+        except Exception as exc:  # noqa: BLE001 — JAMAIS laisser la coroutine mourir en silence
+            log.exception("stt_test en erreur")
+            self.events.put({"type": "voice_error",
+                             "message": f"erreur interne STT : {type(exc).__name__}: {exc}"})
 
     def test_mic(self, device: str | None = None) -> None:
         """Enregistrement de test (0.5 s) pour v\u00e9rifier l'autorisation micro."""
@@ -625,34 +793,79 @@ class GtkBackend:
         """Liste les cartes son d'entr\u00e9e (arecord -L) -> \u00e9v\u00e9nement mic_devices."""
         self._run(self._alist_mic())
 
+    @staticmethod
+    def _pactl_sources() -> list[tuple[str, str]]:
+        """Sources d'entrée PipeWire/PulseAudio via `pactl list short sources`
+        (pour les systèmes sans alsa-utils/arecord) : [(pulse:<source>, label)].
+        On exclut les .monitor (ce sont des sorties)."""
+        import shutil
+        import subprocess
+        if not shutil.which("pactl"):
+            return []
+        out = subprocess.run(["pactl", "list", "short", "sources"],
+                             capture_output=True, text=True, timeout=10).stdout
+        devs: list[tuple[str, str]] = []
+        for line in out.splitlines():
+            parts = line.split("\t")
+            if len(parts) < 3:
+                continue
+            name, desc = parts[1], parts[2]
+            if name.endswith(".monitor"):
+                continue
+            label = desc if desc and desc != name else name
+            devs.append((f"pulse:{name}", f"{label}  ({name})"))
+        return devs
+
     async def _alist_mic(self) -> None:
         import re
+        import shutil
         import subprocess
         devices: list[tuple[str, str]] = [("default", "Micro par d\u00e9faut du syst\u00e8me")]
+        error = ""
+        if shutil.which("arecord"):
+            try:
+                out = subprocess.run(["arecord", "-L"], capture_output=True, text=True,
+                                     timeout=10).stdout
+                cur = None
+                for line in out.splitlines():
+                    m = re.match(r"^(\S+)\s*$", line)
+                    if m and not line.startswith((" ", "\t")):
+                        cur = m.group(1)
+                        devices.append((cur, cur))
+                    elif cur and line.startswith((" ", "\t")):
+                        desc = line.strip()
+                        # premi\u00e8re ligne descriptive = nom de la carte (ex. "HDA Intel PCH, ...")
+                        if devices[-1][1] == cur and desc and not desc.startswith(
+                                ("Discard", "Direct", "Hardware", "Default", "Sysdefault")):
+                            devices[-1] = (cur, f"{cur} \u2014 {desc}")
+            except Exception as exc:  # noqa: BLE001
+                error = f"arecord -L a \u00e9chou\u00e9 : {exc}"
+        else:
+            error = "arecord indisponible (alsa-utils non install\u00e9)"
+        # sources PipeWire en compl\u00e9ment (utile sans arecord, et pour choisir
+        # explicitement une source : pactl list short sources)
         try:
-            out = subprocess.run(["arecord", "-L"], capture_output=True, text=True,
-                                 timeout=10).stdout
-            cur = None
-            for line in out.splitlines():
-                m = re.match(r"^(\S+)\s*$", line)
-                if m and not line.startswith((" ", "\t")):
-                    cur = m.group(1)
-                    devices.append((cur, cur))
-                elif cur and line.startswith((" ", "\t")):
-                    desc = line.strip()
-                    # premi\u00e8re ligne descriptive = nom de la carte (ex. "HDA Intel PCH, ...")
-                    if devices[-1][1] == cur and desc and not desc.startswith(
-                            ("Discard", "Direct", "Hardware", "Default", "Sysdefault")):
-                        devices[-1] = (cur, f"{cur} — {desc}")
-        except Exception as exc:  # noqa: BLE001 — arecord absent
-            self.events.put({"type": "mic_devices", "devices": devices,
-                             "error": f"arecord -L indisponible : {exc}"})
-            return
-        self.events.put({"type": "mic_devices", "devices": devices, "error": ""})
+            devices += self._pactl_sources()
+        except Exception as exc:  # noqa: BLE001
+            error = (error + " ; " if error else "") + f"pactl indisponible : {exc}"
+        if len(devices) == 1 and error:
+            error += " \u2014 aucun micro d\u00e9tect\u00e9 (installe alsa-utils ou pipewire/pulseaudio)"
+        self.events.put({"type": "mic_devices", "devices": devices, "error": error})
 
     def apply_gpu(self, device: str) -> dict:
         """Persiste le choix GPU (gpu.json, appliqué aux serveurs locaux au
-        prochain démarrage) et dans ui.json. Retourne le choix effectif."""
+        prochain démarrage) et dans ui.json. Retourne le choix effectif.
+
+        Si le device choisi n'existe plus dans `llama-server --list-devices`
+        (GPU débranché), on persiste le 1er device ggml disponible à la place."""
+        from ..gpu import device_is_available, list_llama_devices
+        if not device_is_available(device):
+            devs = list_llama_devices()
+            if devs:
+                import logging
+                logging.getLogger("jarvis.gtk.backend").warning(
+                    "GPU %s indisponible, choix forcé sur %s", device, devs[0][0])
+                device = devs[0][0]
         env = env_for_device(device)
         data = save_gpu_choice(device, env)
         save_ui_settings({"gpu": device})
