@@ -18,7 +18,7 @@ import customtkinter as ctk
 
 from .chat_panel import ChatPanel
 from .controller import DesktopController, default_repo_root
-from .scaling import detect_scale, setup_window
+from .scaling import _monitors_xml_layout, detect_scale, setup_window
 from .sidebar import Sidebar
 from .theme import BG, PANEL
 from .voice_panel import VoicePanel
@@ -164,6 +164,9 @@ def _debug_scale(root, scale: float, app=None) -> None:
                 f"[jarvis] debug: root winfo={root.winfo_width()}x{root.winfo_height()} "
                 f"req={root.winfo_reqwidth()}x{root.winfo_reqheight()} "
                 f"screen={root.winfo_screenwidth()}x{root.winfo_screenheight()} "
+                f"pointerxy={root.winfo_pointerxy()} "
+                f"geometry={root.geometry()} "
+                f"monitors={_monitors_xml_layout()} "
                 f"screenmm={root.winfo_screenmmwidth()}x{root.winfo_screenmmheight()}mm "
                 f"pw={app.pw.winfo_width()}x{app.pw.winfo_height()} "
                 f"sidebar_w={app.sidebar.winfo_width()} chat_w={app.chat.winfo_width()}")
@@ -265,15 +268,6 @@ def main() -> None:
     root.configure(fg_color=BG)
 
     app = DesktopApp(root, args.config, scale=scale)
-    # curseurs explicites sur les widgets Tk bruts (sash du PanedWindow, textbox
-    # du chat) : XCURSOR_SIZE seul ne les atteint pas sous XWayland.
-    for w in (app.pw, app.chat.text, app.chat.text._textbox, app.chat.entry,
-              app.chat.entry._entry):
-        try:
-            w.configure(cursor="arrow")
-        except Exception:  # noqa: BLE001
-            pass
-    app.pw.configure(cursor="sb_h_double_arrow")
     if os.environ.get("JARVIS_DEBUG_SCALE"):
         _debug_scale(root, scale, app)
     try:

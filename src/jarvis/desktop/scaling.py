@@ -271,8 +271,13 @@ def _center_geometry(root, scale: float) -> str:
     if mons:
         try:
             px, py = root.winfo_pointerxy()
-            s = scale
-            pxl, pyl = px / s, py / s
+            sw = root.winfo_screenwidth()
+            # winfo_pointerxy peut renvoyer des coordonnées physiques (compositeur)
+            # ou déjà logiques (X11 pur) : on détecte via la taille d'écran vue par Tk.
+            if px > sw * 1.5 or py > root.winfo_screenheight() * 1.5:
+                pxl, pyl = px / scale, py / scale
+            else:
+                pxl, pyl = px, py
             for (x, y, w, h, ms) in mons:
                 if x <= pxl < x + w and y <= pyl < y + h:
                     mw_l, mh_l = w, h
