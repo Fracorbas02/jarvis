@@ -353,9 +353,13 @@ class JarvisWindow(Adw.ApplicationWindow):
                         "accompagné de son mmproj*.gguf (auto-ajouté s'il est "
                         "dans le même dossier que le modèle)")
         self.stt_status_row.set_subtitle(txt)
-        self.stt_cfg_row.set_subtitle(
-            f"protocole {event.get('protocol', '?')} · binaire "
-            f"{event.get('binary', '?')} · modèle {event.get('model', '?')}")
+        cfg_txt = (f"protocole {event.get('protocol', '?')} · binaire "
+                   f"{event.get('binary', '?')} · modèle {event.get('model', '?')}")
+        if event.get("mmproj"):
+            cfg_txt += f" · mmproj {event['mmproj']}"
+        elif (event.get("protocol") or "") == "voxtral":
+            cfg_txt += " · mmproj NON détecté (même dossier que le modèle ou extra_args)"
+        self.stt_cfg_row.set_subtitle(cfg_txt)
         if self._stt_state == "managed":
             self.stt_start_btn.set_label("Arrêter le serveur STT")
             self.stt_start_btn.set_sensitive(True)
@@ -931,7 +935,12 @@ class JarvisWindow(Adw.ApplicationWindow):
                 self.stt_test_mic.set_sensitive(True)
                 if hasattr(self, "stt_result_meta"):
                     self.stt_result_meta.set_text("")
-            self._toast(event["message"])
+            msg = event["message"]
+            if "501" in msg and "chat" in msg.lower():
+                msg += (" — le serveur n'a pas la route batch ASR : vérifie que le "
+                        "mmproj est bien passé (même dossier que le modèle, "
+                        'auto-ajouté, ou extra_args = ["--mmproj", ...])')
+            self._toast(msg)
         elif t == "stt_server_status":
             self._on_stt_server_status(event)
         elif t == "stt_test_recording":

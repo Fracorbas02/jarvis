@@ -343,10 +343,22 @@ class GtkBackend:
         self._run(self._astt_status())
 
     def _stt_status_event(self, st) -> dict:
+        from ..voice import _find_mmproj, resolve_model_path
+        mmproj = None
+        if (self.cfg.voice.stt.protocol or "whisper") == "voxtral":
+            try:
+                mmproj = _find_mmproj(resolve_model_path(self.cfg.voice.stt.model))
+            except Exception:  # noqa: BLE001
+                mmproj = None
+            if mmproj is None and "--mmproj" in (self.cfg.voice.stt.extra_args or []):
+                i = self.cfg.voice.stt.extra_args.index("--mmproj")
+                if i + 1 < len(self.cfg.voice.stt.extra_args):
+                    mmproj = self.cfg.voice.stt.extra_args[i + 1]
         return {"type": "stt_server_status", "state": st.state, "host": st.host,
                 "port": st.port, "detail": st.detail, "healthy": st.healthy,
                 "protocol": self.cfg.voice.stt.protocol,
-                "model": self.cfg.voice.stt.model, "binary": self.cfg.voice.stt.binary}
+                "model": self.cfg.voice.stt.model, "binary": self.cfg.voice.stt.binary,
+                "mmproj": str(mmproj) if mmproj else ""}
 
     async def _astt_status(self) -> None:
         from ..voice import voice_server_status

@@ -100,6 +100,23 @@ def test_stt_transcribe_voxtral():
         assert "transcription de" in text and "octets audio" in text
 
 
+def test_stt_fallback_501_chat_multimodal():
+    """Serveur voxtral sans route batch (/v1/audio/transcriptions -> 501
+    "does not support chat/completions") : le client retombe sur
+    /v1/chat/completions avec le WAV en base64 (bloc input_audio)."""
+    with _Mock("voxtral-501") as m:
+        async def go():
+            client = STTClient(f"http://127.0.0.1:{m.port}", protocol="voxtral")
+            wav = pcm_to_wav_bytes(b"\x00\x00" * 8000)
+            tmp = Path("/tmp/jarvis-test-501.wav")
+            tmp.write_bytes(wav)
+            text = await client.transcribe(tmp, language="fr")
+            await client.aclose()
+            return text
+        text = _run(go())
+        assert text == "transcription chat multimodal", text
+
+
 def test_stt_fallback_404_whisper_to_voxtral():
     """Un serveur whisper (protocole voxtral configuré) répond 404 sur
     /v1/audio/transcriptions : le client retombe sur /inference."""
@@ -305,6 +322,7 @@ if __name__ == "__main__":
     test_wav_helpers(Path("/tmp"))
     test_stt_transcribe()
     test_stt_transcribe_voxtral()
+    test_stt_fallback_501_chat_multimodal()
     test_stt_fallback_404_whisper_to_voxtral()
     test_stt_fallback_404_voxtral_to_whisper()
     test_argv_for_stt_voxtral()

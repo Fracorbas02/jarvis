@@ -337,30 +337,86 @@ class STTClient:
             files = {"file": (path.name, fh, "audio/wav")}
             return await self._http.post(endpoint, data=data, files=files)
 
+    async def _post_chat_audio(self, path: Path, language: str | None) -> "httpx.Response":
+        """Fallback chat multimodal : POST /v1/chat/completions avec le WAV en
+        base64 dans un bloc input_audio (chemin des mod\u00e8les audio llama.cpp
+        quand la route /v1/audio/transcriptions n'est pas enregistr\u00e9e)."""
+        import base64
+        b64 = base64.b64encode(path.read_bytes()).decode("ascii")
+        lang_hint = f" in {language}" if language else ""
+        payload = {
+            "model": self.model,
+            "temperature": 0.0,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "input_audio",
+                     "input_audio": {"data": b64, "format": "wav"}},
+                    {"type": "text",
+                     "text": f"Transcribe this audio{lang_hint} verbatim. "
+                             "Output only the transcript."},
+                ],
+            }],
+        }
+        return await self._http.post("/v1/chat/completions", json=payload)
+
+    @staticmethod
+    def _text_from_chat(payload) -> str | None:
+        try:
+            choice = payload["choices"][0]
+            content = choice["message"]["content"]
+            if isinstance(content, str):
+                return content.strip()
+            if isinstance(content, list):
+                parts = [c.get("text", "") for c in content
+                         if isinstance(c, dict) and c.get("type") == "text"]
+                return "".join(parts).strip() or None
+        except (KeyError, IndexError, TypeError):
+            return None
+        return None
+
     async def transcribe(self, wav_path: str | Path, language: str | None = None) -> str:
         path = Path(wav_path)
         if not path.is_file():
             raise VoiceError(f"fichier audio introuvable : {path}")
-        # endpoint prioritaire selon le protocole, l'autre en fallback 404
+        # Strat\u00e9gies selon le protocole, en cascade :
+        #  voxtral : /v1/audio/transcriptions -> chat multimodal -> /inference
+        #  whisper : /inference -> /v1/audio/transcriptions -> chat multimodal
+        # Le chat multimodal ne sert que si le serveur a une capacit\u00e9 audio
+        # (mmproj charg\u00e9) mais pas la route batch ; /inference couvre un
+        # whisper-server lanc\u00e9 \u00e0 la main.
         if self.protocol == "voxtral":
             endpoints = [("/v1/audio/transcriptions", {"model": self.model}),
                          ("/inference", {})]
         else:
             endpoints = [("/inference", {}),
                          ("/v1/audio/transcriptions", {"model": self.model})]
-        resp = None
+        last_err = ""
         for endpoint, extra in endpoints:
             resp = await self._post_transcription(path, language, endpoint, extra)
-            if resp.status_code != 404:
-                break
-        assert resp is not None
-        if resp.status_code != 200:
-            raise VoiceError(f"serveur STT HTTP {resp.status_code}: {resp.text[:500]}")
-        payload = resp.json()
-        text = payload.get("text") if isinstance(payload, dict) else None
-        if text is None:
-            raise VoiceError(f"réponse inattendue du serveur STT : {str(payload)[:500]}")
-        return text.strip()
+            if resp.status_code == 200:
+                payload = resp.json()
+                text = payload.get("text") if isinstance(payload, dict) else None
+                if text is None:
+                    raise VoiceError(
+                        f"r\u00e9ponse inattendue du serveur STT : {str(payload)[:500]}")
+                return text.strip()
+            if resp.status_code == 404:
+                continue  # endpoint absent -> on essaie le suivant
+            last_err = f"{endpoint} -> HTTP {resp.status_code}: {resp.text[:300]}"
+            # 501/400 "does not support chat/completions" : la route batch est
+            # inactive mais le mod\u00e8le peut avoir la capacit\u00e9 audio -> chat
+            if resp.status_code in (400, 501) and "chat" in resp.text.lower():
+                chat = await self._post_chat_audio(path, language)
+                if chat.status_code == 200:
+                    text = self._text_from_chat(chat.json())
+                    if text is not None:
+                        return text
+                last_err += f" ; chat multimodal -> HTTP {chat.status_code}"
+        if last_err:
+            raise VoiceError(f"serveur STT injoignable sur tous les endpoints : {last_err}")
+        raise VoiceError("serveur STT HTTP 404 sur tous les endpoints connus "
+                         "(/inference, /v1/audio/transcriptions)")
 
     async def aclose(self) -> None:
         await self._http.aclose()

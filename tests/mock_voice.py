@@ -5,6 +5,10 @@
 - mode "voxtral" (llama-server + modèle audio, ex. Voxtral Mini 4B Realtime) :
   GET /health -> ok, POST /v1/audio/transcriptions (multipart, champ file)
   -> {"text": "..."} ; /inference renvoie 404 (pour tester le fallback).
+- mode "voxtral-501" : comme voxtral, mais /v1/audio/transcriptions renvoie
+  501 {"error":{"message":"this server does not support chat/completions"}}
+  et /v1/chat/completions accepte un bloc input_audio (base64) -> chat
+  classique avec le texte transcrit (teste le fallback chat multimodal).
 - mode "tts" (llama-server TTS) : GET /health -> ok, POST /v1/audio/speech
   (JSON avec "input") -> WAV 16 kHz valide ; si le JSON contient
   "_use_tts_fallback", /v1/audio/speech renvoie 404 (fallback POST /tts).
@@ -83,7 +87,28 @@ class Handler(BaseHTTPRequestHandler):
         body = self.rfile.read(length)
         ctype = self.headers.get("Content-Type", "")
 
-        if self._mode in ("stt", "voxtral"):
+        if self._mode == "voxtral-501" and self.path.rstrip("/") == "/v1/audio/transcriptions":
+            self._json({"error": {"code": 501,
+                                  "message": "this server does not support chat/completions",
+                                  "type": "not_supported_error"}}, code=501)
+            return
+
+        if self._mode in ("stt", "voxtral", "voxtral-501") and self.path.rstrip("/") == "/v1/chat/completions" and self._mode == "voxtral-501":
+            payload = json.loads(body)
+            msgs = payload.get("messages", [])
+            has_audio = any(
+                isinstance(m.get("content"), list)
+                and any(isinstance(c, dict) and c.get("type") == "input_audio"
+                        for c in m["content"])
+                for m in msgs)
+            if has_audio:
+                self._json({"choices": [{"message": {"role": "assistant",
+                                                     "content": "transcription chat multimodal"}}]})
+                return
+            self._json({"error": "no audio"}, code=400)
+            return
+
+        if self._mode in ("stt", "voxtral", "voxtral-501"):
             # whisper-server sert /inference, llama-server audio sert
             # /v1/audio/transcriptions ; l'autre endpoint renvoie 404
             path = self.path.rstrip("/")

@@ -101,8 +101,12 @@ llama-server -m ~/models/stt/Voxtral-Mini-4B-Realtime-2602-Q4_K_M.gguf \
 Le protocole STT se choisit dans `config.toml` (`[voice.stt] protocol =
 "whisper"` par défaut, ou `"voxtral"` avec `binary = "llama-server"` et le
 GGUF audio en `model`). Le client essaie l'endpoint du protocole configuré
-puis retombe sur l'autre en cas de 404, donc un serveur lancé à la main
-avec l'autre binaire fonctionne aussi. Dans l'app GTK, une page **Test STT**
+(`POST /v1/audio/transcriptions`), puis retombe en cas de 404 sur l'autre
+endpoint, et en cas de 501 « does not support chat/completions » (route batch
+ASR inactive) sur un `POST /v1/chat/completions` multimodal avec le WAV en
+base64 (bloc `input_audio`) — un serveur lancé à la main avec l'autre
+binaire fonctionne donc aussi. Le mmproj est auto-ajouté en `--mmproj` s'il
+est dans le même dossier que le GGUF texte (sinon `extra_args`). Dans l'app GTK, une page **Test STT**
 (onglet dédié) permet de parler au micro et de voir la transcription sans
 envoyer de tour au LLM, avec statut/démarrage du serveur STT.
 
