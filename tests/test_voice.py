@@ -140,3 +140,22 @@ if __name__ == "__main__":
     test_voice_server_status_online()
     test_voice_config_defaults()
     print("OK")
+
+def test_voice_device_env() -> None:
+    """device -> --device, env -> Popen(env=...) : pour cibler le bon GPU en multi-GPU."""
+    from jarvis.config import VoiceServerConfig
+    from jarvis.voice import _argv_for
+    from pathlib import Path
+    vcfg = VoiceServerConfig(binary="llama-server", base_url="http://127.0.0.1:9932",
+                             model="x.gguf", device="cuda:1",
+                             env={"CUDA_VISIBLE_DEVICES": "1"})
+    argv = _argv_for("tts", vcfg, Path("/models/x.gguf"))
+    assert argv == ["llama-server", "-m", "/models/x.gguf", "--host", "127.0.0.1",
+                    "--port", "9932", "-ngl", "99", "--jinja", "-fa", "on",
+                    "--ctx-size", "8192", "--device", "cuda:1"], argv
+    # sans device: pas de --device ajouté par _argv_for (start_voice_server le fait)
+    vcfg2 = VoiceServerConfig(binary="whisper-server", base_url="http://127.0.0.1:8178",
+                              model="y.gguf")
+    assert "--device" not in _argv_for("stt", vcfg2, Path("/models/y.gguf"))
+    print("OK  voice device/env")
+

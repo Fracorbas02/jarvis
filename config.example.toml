@@ -29,12 +29,16 @@ binary = "whisper-server"                      # binaire whisper.cpp (examples/s
 base_url = "http://127.0.0.1:8178"
 model = "~/models/stt/Q4_K_M.gguf"              # ggml whisper (ex. ggml-large-v3)
 # extra_args = ["-ngl", "99"]                   # ex. offload GPU whisper.cpp
+# device = "cuda:1"                             # GPU cible (sinon le 1er trouvé)
+# env = { "CUDA_VISIBLE_DEVICES" = "1" }        # ou HIP_VISIBLE_DEVICES / ROCR_VISIBLE_DEVICES
 
 [voice.tts]
 binary = "llama-server"                         # sert POST /v1/audio/speech et /tts
 base_url = "http://127.0.0.1:9932"
 model = "~/models/tts/voxtral-4b-tts-q4_k.gguf"
 # extra_args = ["-ngl", "99", "--jinja", "-fa", "on"]
+# device = "cuda:1"
+# env = { "CUDA_VISIBLE_DEVICES" = "1" }
 
 # Enregistrement micro (CLI) et lecture des WAV produits.
 # "-" en dernier élément de record_cmd = chemin du WAV temporaire concaténé.

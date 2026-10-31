@@ -76,12 +76,14 @@ def _log_path(name: str) -> Path:
 
 def _argv_for(name: str, vcfg: VoiceServerConfig, model_path: Path) -> list[str]:
     host, port = host_port(vcfg.base_url)
+    extra = list(vcfg.extra_args)
+    if vcfg.device and "--device" not in extra:
+        extra += ["--device", vcfg.device]
     if name == "stt":
         return [vcfg.binary, "--host", host, "--port", str(port),
-                "-m", str(model_path), *vcfg.extra_args]
+                "-m", str(model_path), *extra]
     return [vcfg.binary, "-m", str(model_path), "--host", host, "--port", str(port),
-            "-ngl", "99", "--jinja", "-fa", "on", "--ctx-size", "8192",
-            *vcfg.extra_args]
+            "-ngl", "99", "--jinja", "-fa", "on", "--ctx-size", "8192", *extra]
 
 
 async def voice_server_status(name: str, vcfg: VoiceServerConfig,
@@ -127,8 +129,9 @@ async def start_voice_server(name: str, vcfg: VoiceServerConfig,
         pass
     log = open(log_path, "ab", buffering=0)
     log.write(f"\n--- {argv} ---\n".encode())
+    env = {**os.environ, **vcfg.env} if vcfg.env else None
     proc = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT,
-                            start_new_session=True)
+                            start_new_session=True, env=env)
     _procs[name] = proc
 
     deadline = asyncio.get_running_loop().time() + (ready_timeout or vcfg.ready_timeout)
