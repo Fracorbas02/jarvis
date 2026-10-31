@@ -153,6 +153,10 @@ uv run jarvis-app --config /chemin/config.toml
 > #    Arch/Manjaro :  sudo pacman -S python-gobject gtk4 libadwaita
 > #    Debian/Ubuntu:  sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1
 > #    Fedora :        sudo dnf install python3-gobject gtk4 libadwaita
+> #    WebKitGTK (optionnel, meilleur rendu Markdown des réponses) :
+> #    Arch: sudo pacman -S webkit2gtk-6.0   Debian/Ubuntu: sudo apt install gir1.2-webkit-6.0
+> #    Fedora: sudo dnf install webkitgtk6.0  (sans WebKit, l'app retombe sur
+> #    le rendu natif GTK, toujours fonctionnel)
 > # 2) venv sur le Python système AVEC site-packages système (sinon gi reste invisible) :
 > rm -rf .venv
 > uv venv --system-site-packages --python /usr/bin/python3
@@ -171,7 +175,8 @@ UI native GTK4, qui ne touche à rien d'autre que la partie graphique
   **menu (Ctrl+P)**, avec les conversations (Ctrl+O) et la lecture TTS.
 - **Conversation** : centrée sur l'échange — barre du bas avec micro (STT
   local : record → transcribe → tour LLM) + champ texte + envoyer ; réponses
-  en streaming **rendues en Markdown complet** (CommonMark + GFM : titres,
+  en streaming **rendues en Markdown 100% (markdown-it-py + GFM, HTML dans
+  WebKitGTK si installé, sinon widgets GTK natifs) : titres,
   **gras**/*italique*/`code`/~~barré~~, liens cliquables, images, listes
   puces/numérotées/tâches, citations, tableaux, blocs ```, footnotes,
   séparateurs — widgets GTK natifs, re-rendu à chaque fragment), avec

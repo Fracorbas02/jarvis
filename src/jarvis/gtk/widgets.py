@@ -32,6 +32,29 @@ from .markdown import (_safe_href, collect_defs, highlight_code, inline_to_pango
                        parse_blocks, render_math_png, sanitize_pango,
                        to_pango)  # noqa: E402
 
+# WebKitGTK optionnel : si présent, le markdown est rendu en HTML complet
+# (markdown-it-py -> HTML -> WebView). Sinon, repli sur les widgets natifs.
+def _webkit_available() -> bool:
+    try:
+        import gi as _gi
+        for ver in ("6.0", "4.1"):
+            try:
+                _gi.require_version("WebKit", ver)
+                from gi.repository import WebKit  # noqa: F401
+                return True
+            except Exception:  # noqa: BLE001
+                continue
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
+WEBKIT_AVAILABLE = _webkit_available()
+
+if WEBKIT_AVAILABLE:
+    from gi.repository import WebKit  # noqa: E402
+    from .markdown_lib import markdown_to_html  # noqa: E402
+
 _HEADING_SIZE = {1: "xx-large", 2: "x-large", 3: "large", 4: "medium",
                  5: "small", 6: "small"}
 
@@ -466,13 +489,17 @@ class MessageBox(Gtk.Box):
             self.reasoning_row.set_visible(False)
             bubble.append(self.reasoning_row)
 
-        # contenu markdown : un Box rempli de widgets par set_markdown/append_text
-        # (text_label conservé pour compatibilité : 1er label du content_box)
+        # contenu markdown : WebView WebKit si dispo (HTML complet), sinon un
+        # Box rempli de widgets natifs (repli)
         self.content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         if role == "user":
             self.content_box.add_css_class("jarvis-text")
         bubble.append(self.content_box)
         self._md_buffer = ""
+        self.webview = None
+        if role == "assistant" and WEBKIT_AVAILABLE:
+            self.webview = self._make_webview()
+            bubble.append(self.webview)
 
         self.tools_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         bubble.append(self.tools_box)
@@ -496,6 +523,9 @@ class MessageBox(Gtk.Box):
     def set_text(self, text: str) -> None:
         """Texte brut (rôles user/system) : un seul label échappé."""
         self._md_buffer = text
+        if self.webview is not None:
+            self.webview.set_visible(False)
+        self.content_box.set_visible(True)
         self._clear_content()
         if text:
             self.content_box.append(_label(escape(text), text))
@@ -513,13 +543,45 @@ class MessageBox(Gtk.Box):
         self._render_md(self._md_buffer)
 
     def _render_md(self, text: str) -> None:
+        if self.webview is not None:
+            # rendu HTML complet via markdown-it-py + WebKit
+            self.content_box.set_visible(False)
+            if self.webview.get_parent() is None:
+                pass  # déjà dans la bulle
+            self.webview.set_visible(True)
+            self.webview.load_html(markdown_to_html(text), "about:blank")
+            return
         self._clear_content()
+        if self.webview is not None:
+            self.webview.set_visible(False)
+        self.content_box.set_visible(True)
         link_defs, footnotes = collect_defs(text)
         for b in parse_blocks(text):
             _render_block(self.content_box, b, link_defs, footnotes)
         if not self.content_box.get_first_child():
             self.content_box.append(_label("", ""))
         self._connect_footnote_anchors()
+
+    def _make_webview(self):
+        """Crée le WebKit.WebView : charge le HTML markdown, intercepte les
+        liens externes (script-message -> xdg-open)."""
+        wv = WebKit.WebView()
+        wv.set_vexpand(True)
+        settings = wv.get_settings()
+        try:
+            settings.set_enable_javascript(True)
+            settings.set_enable_write_console_messages_to_stdout(False)
+        except Exception:  # noqa: BLE001
+            pass
+        # contexte utilisateur pour les script-messages (liens externes)
+        try:
+            ctx = wv.get_user_content_manager()
+            ctx.register_script_message_handler("jarvis_link")
+            ctx.connect("script-message-received::jarvis_link",
+                        lambda _c, msg: _open_uri(msg.get_js_value().to_string()))
+        except Exception:  # noqa: BLE001
+            pass
+        return wv
 
     def _connect_footnote_anchors(self) -> None:
         """Clic sur un exposant [^id] : scroll vers la définition fn-<id> dans la
