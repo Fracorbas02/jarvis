@@ -22,7 +22,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
 from ..gpu import detect_gpus, load_gpu_choice
 from .backend import APP_ID, GtkBackend, load_ui_settings, save_ui_settings
@@ -49,6 +49,8 @@ class JarvisWindow(Adw.ApplicationWindow):
         self._build_actions()
         self._build_ui()
         self._apply_theme()
+        if hasattr(self, "accent_button"):
+            self._apply_accent()
         self._poll_events()
         backend.start()
         if not self.settings.get("mic_permission_asked"):
@@ -136,11 +138,26 @@ class JarvisWindow(Adw.ApplicationWindow):
         header.pack_end(self.bell_button)
         self._build_notif_popover()
 
+        # usage du contexte (n_ctx) en live, dans le header
+        self.ctx_bar = Gtk.LevelBar(min_value=0, max_value=1, value=0,
+                                    tooltip_text="Usage du contexte")
+        self.ctx_bar.set_size_request(120, -1)
+        self.ctx_bar.add_css_class("jarvis-ctx-bar")
+        self.ctx_label = Gtk.Label(label="ctx ?", tooltip_text="Contexte utilisé")
+        self.ctx_label.add_css_class("dim-label")
+        ctx_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6,
+                          valign=Gtk.Align.CENTER)
+        ctx_box.append(self.ctx_label)
+        ctx_box.append(self.ctx_bar)
+        header.pack_end(ctx_box)
+
         # pages
         self.stack.add_titled_with_icon(self._build_home(), "home", "Accueil",
                                         "go-home-symbolic")
         self.stack.add_titled_with_icon(self._build_chat(), "chat", "Conversation",
                                         "emblem-chat-symbolic")
+        self.stack.add_titled_with_icon(self._build_tools(), "tools", "Outils",
+                                        "emblem-tools-symbolic")
         self.stack.add_titled_with_icon(self._build_settings(), "settings", "R\u00e9glages",
                                         "emblem-system-symbolic")
         toolbar.set_content(self.stack)
@@ -154,6 +171,7 @@ class JarvisWindow(Adw.ApplicationWindow):
         page.set_margin_top(48)
         page.set_margin_bottom(48)
 
+        page.add_css_class("jarvis-home-bg")
         title = Gtk.Label(label="Jarvis", halign=Gtk.Align.CENTER)
         title.add_css_class("jarvis-home-title")
         page.append(title)
@@ -179,7 +197,7 @@ class JarvisWindow(Adw.ApplicationWindow):
         page.append(self.home_mic_button)
         self.home_mic_button.connect("clicked", self._on_home_mic)
 
-        hint = Gtk.Label(label="Le prompt texte est dans le menu (Ctrl+P)",
+        hint = Gtk.Label(label="Ctrl+P prompt · Ctrl+O conversations · Ctrl+N nouvelle",
                          halign=Gtk.Align.CENTER)
         hint.add_css_class("dim-label")
         hint.add_css_class("caption")
@@ -187,6 +205,43 @@ class JarvisWindow(Adw.ApplicationWindow):
 
         clamp.set_child(page)
         return clamp
+
+    def _build_tools(self) -> Gtk.Widget:
+        scroll = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        clamp = Adw.Clamp(maximum_size=720, tightening_threshold=560)
+        clamp.set_margin_top(24)
+        clamp.set_margin_bottom(24)
+        clamp.set_margin_start(16)
+        clamp.set_margin_end(16)
+        page = Adw.PreferencesPage()
+        self.tools_page_group = Adw.PreferencesGroup(
+            title="Outils MCP",
+            description="Un clic sur Tester appelle l'outil avec {} et affiche le r\u00e9sultat.")
+        page.add(self.tools_page_group)
+        clamp.set_child(page)
+        scroll.set_child(clamp)
+        return scroll
+
+    def _populate_tools_page(self, names: list[str]) -> None:
+        for name in names:
+            row = Adw.ActionRow(title=name)
+            btn = Gtk.Button(label="Tester", valign=Gtk.Align.CENTER)
+            btn.connect("clicked", lambda b, n=name: self._test_tool(n))
+            row.add_suffix(btn)
+            self.tools_page_group.add(row)
+
+    def _test_tool(self, name: str) -> None:
+        self._toast(f"Appel de {name}\u2026")
+        self.backend.call_tool(name, {})
+
+    def _on_tool_test(self, event: dict) -> None:
+        name, ok, result = event["name"], event["ok"], event["result"]
+        mark = "\u2713" if ok else "\u2717"
+        self._toast(f"{mark} {name} : {result[:120]}")
+        d = Adw.AlertDialog.new(f"{mark} {name}", result)
+        d.add_response("ok", "OK")
+        d.present(self)
 
     def _build_chat(self) -> Gtk.Widget:
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, vexpand=True)
@@ -240,6 +295,17 @@ class JarvisWindow(Adw.ApplicationWindow):
         row_theme.set_selected(theme_map.get(self.settings.get("theme", "system"), 0))
         row_theme.connect("notify::selected", self._on_theme_changed)
         g_appearance.add(row_theme)
+        accent_row = Adw.ActionRow(title="Couleur d'accent",
+                                   subtitle="Appliquée à l'interface (boutons, badges)")
+        self.accent_button = Gtk.ColorButton(valign=Gtk.Align.CENTER,
+                                             tooltip_text="Choisir la couleur d'accent")
+        cur = self.settings.get("accent", "#3584e4")
+        rgba = Gdk.RGBA()
+        rgba.parse(cur)
+        self.accent_button.set_rgba(rgba)
+        self.accent_button.connect("notify::rgba", self._on_accent_changed)
+        accent_row.add_suffix(self.accent_button)
+        g_appearance.add(accent_row)
         page.add(g_appearance)
 
         # --- Modèle / GPU / contexte ---
@@ -292,8 +358,20 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.tools_group = Adw.PreferencesGroup(title="Outils MCP disponibles")
         page.add(self.tools_group)
 
-        # --- Voix : micro + TTS ---
+        # --- Voix : serveurs STT/TTS + micro + TTS ---
         g_voice = Adw.PreferencesGroup(title="Voix")
+        for mode, label in (("stt", "Serveur STT (transcription, whisper.cpp)"),
+                            ("tts", "Serveur TTS (synthèse, llama-server)")):
+            row = Adw.ActionRow(title=label, subtitle="vérification…")
+            btn = Gtk.Button(label="Démarrer", valign=Gtk.Align.CENTER)
+            btn.connect("clicked", lambda b, m=mode: self._on_voice_server(m))
+            row.add_suffix(btn)
+            row.mode = mode
+            row.btn = btn
+            setattr(self, f"voice_row_{mode}", row)
+            g_voice.add(row)
+        self.backend.voice_status("stt")
+        self.backend.voice_status("tts")
         self.mic_row = Adw.ComboRow(title="Micro utilisé pour parler à Jarvis",
                                     subtitle="Liste des cartes d'entrée ALSA (arecord -L)")
         self.mic_row.set_model(Gtk.StringList.new(["default"]))
@@ -342,6 +420,34 @@ class JarvisWindow(Adw.ApplicationWindow):
                              "d'enregistrement déclenchera la demande système"}
         if hasattr(self, "mic_perm_row"):
             self.mic_perm_row.set_subtitle(labels.get(state, state))
+
+    def _on_voice_server(self, mode: str) -> None:
+        row = getattr(self, f"voice_row_{mode}")
+        if row.btn.get_label() == "Démarrer":
+            self.backend.start_voice_server(mode)
+        else:
+            self.backend.stop_voice_server(mode)
+
+    def _on_voice_server_status(self, event: dict) -> None:
+        mode = event["mode"]
+        row = getattr(self, f"voice_row_{mode}", None)
+        if row is None:
+            return
+        state = event["state"]
+        labels = {"online": "en ligne (externe)", "managed": "géré par Jarvis",
+                  "offline": "hors ligne"}
+        row.set_subtitle(f"{labels.get(state, state)} — {event['host']}:{event['port']}"
+                         + (f" ({event['detail']})" if event.get("detail") else ""))
+        row.btn.set_label("Arrêter" if state in ("online", "managed") and
+                          self._voice_managed(mode) else "Démarrer")
+        if state == "online" and not self._voice_managed(mode):
+            row.btn.set_label("Démarrer")  # serveur externe : on ne l'arrête pas
+
+    @staticmethod
+    def _voice_managed(mode: str) -> bool:
+        from ..voice import _procs
+        p = _procs.get(mode)
+        return p is not None and p.poll() is None
 
     def _fill_mic_devices(self, devices: list, error: str) -> None:
         """Remplit le ComboRow des micros depuis arecord -L."""
@@ -400,6 +506,7 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.notif_list = Gtk.ListBox()
         self.notif_list.add_css_class("boxed-list")
         self.notif_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.notif_list.connect("row-activated", self._on_notif_activated)
         scroll = Gtk.ScrolledWindow(vexpand=True, min_content_height=80,
                                     max_content_height=360, propagate_natural_height=True)
         scroll.set_child(self.notif_list)
@@ -413,6 +520,11 @@ class JarvisWindow(Adw.ApplicationWindow):
     def _on_bell_clicked(self, _btn) -> None:
         self.notif_popover.popup()
 
+    def _on_notif_activated(self, _listbox, row) -> None:
+        if getattr(row, "action", None) == "open-chat":
+            self.notif_popover.popdown()
+            self.stack.set_visible_child_name("chat")
+
     def _clear_notifs(self) -> None:
         self._notifs.clear()
         self._refresh_notif_ui()
@@ -423,10 +535,16 @@ class JarvisWindow(Adw.ApplicationWindow):
             nxt = child.get_next_sibling()
             self.notif_list.remove(child)
             child = nxt
-        for text in reversed(self._notifs[-30:]):
-            row = Gtk.Label(label=text, xalign=0, wrap=True, selectable=True,
+        for notif in reversed(self._notifs[-30:]):
+            text, action = (notif if isinstance(notif, tuple) else (notif, None))
+            row = Gtk.ListBoxRow()
+            lbl = Gtk.Label(label=text, xalign=0, wrap=True, selectable=True,
                             margin_top=6, margin_bottom=6,
                             margin_start=8, margin_end=8)
+            row.set_child(lbl)
+            if action:
+                row.action = action
+                row.add_css_class("activatable")
             self.notif_list.append(row)
         n = len(self._notifs)
         self._notif_badge.set_text(str(n) if n < 100 else "99+")
@@ -453,6 +571,24 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.status_popover.set_child(box)
 
     # ---------- réglages ----------
+
+    def _apply_accent(self) -> None:
+        rgba = self.accent_button.get_rgba()
+        hexc = "#{:02x}{:02x}{:02x}".format(
+            int(rgba.red * 255), int(rgba.green * 255), int(rgba.blue * 255))
+        save_ui_settings({"accent": hexc})
+        css = Gtk.CssProvider()
+        css.load_from_string(f"""
+        @define-color accent_bg_color {hexc};
+        @define-color accent_fg_color #ffffff;
+        @define-color accent_color {hexc};
+        window, dialog {{ accent-color: {hexc}; }}
+        """)
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1)
+
+    def _on_accent_changed(self, btn, _pspec) -> None:
+        self._apply_accent()
 
     def _apply_theme(self) -> None:
         sm = Adw.StyleManager.get_default()
@@ -659,6 +795,7 @@ class JarvisWindow(Adw.ApplicationWindow):
             self._toast(f"Prêt — {len(tools)} outils MCP")
             for name in tools:
                 self.tools_group.add(Adw.ActionRow(title=name))
+            self._populate_tools_page(tools)
             if event.get("session_id"):
                 self._replay_history()
         elif t == "backend_error":
@@ -669,6 +806,7 @@ class JarvisWindow(Adw.ApplicationWindow):
             self._on_server_status(event)
             if t == "server_started" and event.get("models"):
                 self.stack.set_visible_child_name("chat")
+                self._toast("Serveur démarré — ouvrir la conversation", action="open-chat")
         elif t == "reasoning":
             if self._assistant_box is not None:
                 self._assistant_box.append_reasoning(event["text"])
@@ -712,6 +850,12 @@ class JarvisWindow(Adw.ApplicationWindow):
             self._set_chat_hint("")
             self._set_busy_ui(False)
             self._toast(event["message"])
+        elif t == "mic_level":
+            self._set_mic_level(event.get("level", 0.0))
+        elif t == "tool_test":
+            self._on_tool_test(event)
+        elif t == "voice_server_status":
+            self._on_voice_server_status(event)
         elif t == "mic_devices":
             self._fill_mic_devices(event.get("devices") or [], event.get("error") or "")
         elif t == "mic_test":
@@ -763,6 +907,15 @@ class JarvisWindow(Adw.ApplicationWindow):
                                               if event.get("detail") else ""))
         if hasattr(self, "sys_server_row"):
             self.sys_server_row.set_subtitle(txt)
+        ctx = event.get("ctx") or {}
+        if ctx.get("n_ctx"):
+            self.ctx_bar.set_value(ctx["used"] / max(1, ctx["n_ctx"]))
+            self.ctx_label.set_text(f"{ctx['used']}/{ctx['n_ctx']} tok")
+            self.ctx_bar.set_tooltip_text(
+                f"Contexte : {ctx['used']} / {ctx['n_ctx']} tokens utilisés")
+        else:
+            self.ctx_bar.set_value(0)
+            self.ctx_label.set_text("ctx ?")
         if self._status_state == "offline":
             self.pop_button.set_label("Démarrer le serveur")
         else:
@@ -828,12 +981,17 @@ class JarvisWindow(Adw.ApplicationWindow):
             self.chat_mic.remove_css_class("jarvis-recording")
             self.home_mic_button.remove_css_class("jarvis-recording")
 
+    def _set_mic_level(self, level: float) -> None:
+        if hasattr(self, "mic_level_bar"):
+            self.mic_level_bar.set_value(min(1.0, max(0.0, level)))
+
     def _set_chat_hint(self, text: str) -> None:
         self.chat_hint.set_text(text)
 
-    def _toast(self, text: str) -> None:
-        """Notification : empilée dans la cloche (badge + popover), jamais en bas."""
-        self._notifs.append(text)
+    def _toast(self, text: str, action: str | None = None) -> None:
+        """Notification : empilée dans la cloche (badge + popover), jamais en bas.
+        action='open-chat' rend la ligne cliquable (ouvre la conversation)."""
+        self._notifs.append((text, action) if action else text)
         self._refresh_notif_ui()
 
     def do_close_request(self) -> bool:

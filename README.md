@@ -118,9 +118,22 @@ UI native GTK4, qui ne touche à rien d'autre que la partie graphique
   llama-server ne répond, le bouton en démarre un (GGUF choisi dans le
   popover, `--ctx-size` réglable) puis ouvre la conversation. Le prompt
   texte est dans le **menu (Ctrl+P)**, conversations en Ctrl+O.
+- **Barre de contexte en live** dans le header (`used/n_ctx` tokens, via
+  GET /slots à chaque poll de statut).
+- **Visualiseur de niveau micro** (barre RMS live) pendant l'enregistrement.
+- **Onglet Outils** : chaque outil MCP a un bouton Tester (appel réel avec {},
+  résultat dans un dialogue).
+- **Serveurs voix STT/TTS** dans Réglages > Voix : statut live + Démarrer/Arrêter.
+- **Couleur d'accent personnalisable** (Réglages > Apparence, persistée dans
+  ui.json, réappliquée via CSS `@define-color accent_bg_color`).
 - **Notifications en cloche** : plus de toasts qui poppent en bas de
   fenêtre — une cloche dans le header avec badge (compteur), clic =
-  popover listant les notifications + « Tout effacer ».
+  popover listant les notifications + « Tout effacer ». Certaines sont
+  cliquables (ex. « Serveur démarré » → ouvre la conversation).
+- **Packaging** : `packaging/jarvis.desktop` + icône SVG
+  (`packaging/io.github.Fracorbas02.Jarvis.svg`) pour lancer Jarvis depuis
+  le menu GNOME (à installer dans `~/.local/share/applications/` et
+  `~/.local/share/icons/hicolor/scalable/apps/`).
 - **Conversation** : centrée sur l'échange — barre du bas avec micro (STT
   local : record → transcribe → tour LLM) + champ texte + envoyer ; réponses
   en streaming **rendues en Markdown** (titres, **gras**, *italique*, `code`,

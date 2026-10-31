@@ -57,8 +57,12 @@ def main() -> int:
                         "_fill_mic_devices", "_on_mic_permission",
                         "_ask_mic_permission_first_run", "_on_mic_perm_response",
                         "_on_bell_clicked", "_clear_notifs", "_refresh_notif_ui",
-                        "_toast", "_dispatch", "_on_server_status", "_on_turn_done",
-                        "_replay_history"):
+                        "_on_notif_activated", "_toast",
+                        "_set_mic_level", "_on_tool_test", "_test_tool",
+                        "_populate_tools_page", "_on_voice_server",
+                        "_on_voice_server_status", "_on_accent_changed",
+                        "_apply_accent", "_dispatch", "_on_server_status",
+                        "_on_turn_done", "_replay_history"):
             assert hasattr(gtk_app.JarvisWindow, handler), handler
 
         # rendu Markdown des réponses : MessageBox.set_markdown / append_text

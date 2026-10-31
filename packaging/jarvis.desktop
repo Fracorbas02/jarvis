@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Jarvis
+Comment=Assistant local — LLM auto-hébergé + outils MCP + voix
+Exec=jarvis-app
+Icon=io.github.Fracorbas02.Jarvis
+Type=Application
+Categories=Utility;Office;
+Terminal=false
+StartupWMClass=io.github.Fracorbas02.Jarvis

@@ -50,6 +50,14 @@ def _css() -> None:
         70%  { box-shadow: 0 0 0 14px alpha(@accent_bg_color, 0); }
         100% { box-shadow: 0 0 0 0 alpha(@accent_bg_color, 0); }
     }
+    .jarvis-home-bg {
+        background: linear-gradient(160deg,
+            alpha(@accent_bg_color, 0.10) 0%,
+            alpha(@window_bg_color, 0) 45%,
+            alpha(@accent_bg_color, 0.06) 100%);
+    }
+    .jarvis-mic-level { margin-top: 2px; }
+    .jarvis-ctx-bar { min-height: 6px; }
     """
     )
     display = Gdk.Display.get_default()

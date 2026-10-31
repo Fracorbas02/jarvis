@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
+import struct
 import os
 import sys
 import tempfile
@@ -150,6 +152,17 @@ async def amain() -> int:
         # flag de 1er lancement : le dialogue d'autorisation ne se montre qu'une fois
         gtk_backend.save_ui_settings({"mic_permission_asked": True})
         assert gtk_backend.load_ui_settings()["mic_permission_asked"] is True
+
+        # formule RMS du visualiseur micro (identique à backend._arecord_levels)
+        def rms_level(pcm: bytes) -> float:
+            n = len(pcm) // 2
+            vals = struct.unpack(f"<{n}h", pcm)
+            rms = math.sqrt(sum(v * v for v in vals) / n) / 32768.0
+            return min(1.0, rms * 3.0)
+        assert rms_level(struct.pack("<1600h", *([0] * 1600))) == 0.0
+        assert rms_level(struct.pack("<1600h", *([32767] * 1600))) == 1.0  # saturé à fond
+        half = struct.pack("<1600h", *([8192] * 1600))   # ~0,25 pleine échelle
+        assert 0.6 < rms_level(half) < 0.9, rms_level(half)
 
         # server_ctx_usage ne lève jamais, même serveur absent
         usage = await server_ctx_usage("http://127.0.0.1:1/v1")
