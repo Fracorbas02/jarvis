@@ -236,10 +236,6 @@ src/jarvis/
               #  reasoning repliable, outils), markdown (rendu Markdown -> markup
               #  Pango), backend (boucle asyncio + queue
               #  + sessions + statut serveur) -> `uv run jarvis-app`
-  gtk/        # interface GTK4 / libadwaita (refonte UI) : app (fen\u00eatre Adw :
-              #  accueil "Lancer", conversation, r\u00e9glages), widgets (bulles,
-              #  reasoning repliable, outils), backend (boucle asyncio + queue
-              #  + sessions + statut serveur) -> `uv run jarvis-app`
 mcp_servers/  # nettools (ping/dig/traceroute/whois/ss/ip/TLS/HTTP),
               #  sysinfo (disques/mémoire/GPU/processus/journalctl),
               #  files (grep/read/empreintes, lecture confinée),

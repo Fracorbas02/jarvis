@@ -69,16 +69,10 @@ def parse_markdown(text: str) -> list[Segment]:
         body = line.rstrip("\n")
         nl = line[len(body):]  # "\n" ou "" en fin de texte
         if body.strip().startswith("```"):
-            was_in_code = in_code
+            # toute ligne commençant par ``` est un délimiteur de bloc
+            # (ouvrant avec ou sans langue, ex. ```python ou ``` nu, et
+            # fermant) : jamais affichée comme contenu
             in_code = not in_code
-            # le délimiteur ouvrant (avec sa langue, ex. ```python) et le
-            # fermant ``` ne sont pas affichés ; seule une ligne ``` isolée
-            # dans un bloc ouvert est du contenu
-            if not was_in_code and body.strip() != "```":
-                continue
-            if was_in_code and not in_code and body.strip() == "```":
-                continue
-            segments.append(Segment(body + nl, frozenset({"mono", "code"})))
             continue
         if in_code:
             segments.append(Segment(line, frozenset({"mono", "code"})))

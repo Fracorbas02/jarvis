@@ -78,6 +78,17 @@ def test_streaming_marqueur_non_ferme_puis_ferme() -> None:
     assert by_text["bold"] == frozenset({"bold"})
 
 
+def test_code_block_delimiteur_nu() -> None:
+    # ``` sans langue (très courant côté LLM) : délimiteur caché aussi
+    src = "avant\n```\ncode\n```\naprès\n"
+    segs = parse_markdown(src)
+    assert texts(segs) == "avant\ncode\naprès\n"
+    assert "```" not in texts(segs)
+    p = to_pango(src)
+    assert "```" not in p and "code" in p and "après" in p
+    assert 'background="#0a0c10"' in p
+
+
 def test_streaming_code_block_non_ferme() -> None:
     s = parse_markdown("```py\npartial")
     assert texts(s) == "partial"
