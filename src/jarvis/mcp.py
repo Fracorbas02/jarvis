@@ -12,6 +12,7 @@ contrat ; les serveurs MCP (et plus tard le modèle fine-tuné cybersécurité)
 from __future__ import annotations
 
 import json
+import os
 from contextlib import AsyncExitStack
 
 from mcp import ClientSession, StdioServerParameters
@@ -30,7 +31,11 @@ class McpToolProvider:
     async def start(self) -> None:
         self._stack = AsyncExitStack()
         for name, argv in self._servers.items():
-            params = StdioServerParameters(command=argv[0], args=list(argv[1:]))
+            # env complet : sinon le SDK ne transmet que son env minimal par
+            # défaut et les variables des serveurs (NVD_API_KEY,
+            # JARVIS_FILES_ROOTS, JARVIS_MEMORY_FILE...) n'arrivent jamais.
+            params = StdioServerParameters(command=argv[0], args=list(argv[1:]),
+                                           env={**os.environ})
             read, write = await self._stack.enter_async_context(stdio_client(params))
             session = await self._stack.enter_async_context(ClientSession(read, write))
             await session.initialize()

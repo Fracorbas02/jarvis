@@ -57,5 +57,25 @@ command = ["uv", "run", "python", "mcp_servers/cve.py"]
 # API NVD 2.0. Sans clé : 5 req/30s (throttle géré dans le server).
 # Clé optionnelle (50 req/30s) : export NVD_API_KEY=... avant de lancer jarvis.
 
+[mcp.servers.sysinfo]
+command = ["uv", "run", "python", "mcp_servers/sysinfo.py"]
+
+[mcp.servers.files]
+command = ["uv", "run", "python", "mcp_servers/files.py"]
+# Lecture confinée aux répertoires de JARVIS_FILES_ROOTS (séparés par ':',
+# défaut: cwd + $HOME). Ex: export JARVIS_FILES_ROOTS="$HOME:/srv:/var/log"
+
+[mcp.servers.netutils]
+command = ["uv", "run", "python", "mcp_servers/netutils.py"]
+
+[mcp.servers.git]
+command = ["uv", "run", "python", "mcp_servers/git.py"]
+# Dépôt lu = cwd au lancement, ou JARVIS_GIT_REPO (chemin absolu).
+
+[mcp.servers.memory]
+command = ["uv", "run", "python", "mcp_servers/memory.py"]
+# Faits persistants dans ~/.cache/jarvis/memory.md
+# (surchargeable: export JARVIS_MEMORY_FILE=/chemin/memoire.md)
+
 [mcp.servers.echo]
 command = ["uv", "run", "python", "mcp_servers/echo.py"]

@@ -162,13 +162,24 @@ xvfb-run -a uv run python tests/test_desktop_app.py
 
 | Server   | Outils | Source |
 |----------|--------|--------|
-| nettools | ping, dig, traceroute | local (binaires système) |
+| nettools | ping, dig, traceroute, whois, listening_ports, connections, ip_addr, tls_info, http_get | local (binaires système) / urllib |
+| sysinfo  | disk_usage, memory, load, gpu_status, temperatures, processes, logs (journalctl), ports_listening, network_interfaces | local (/proc, binaires système) |
+| files    | grep_files (ripgrep), read_file (paginé), file_info (empreintes), list_dir | local, lecture confinée à `JARVIS_FILES_ROOTS` (défaut: cwd + `$HOME`) |
+| netutils | ip_calc, ip_convert, encode (b64/hex/url/rot13), hash_text, time_now, time_convert | stdlib uniquement, aucun appel externe |
+| git      | git_status, git_log, git_diff, git_branches, git_remotes, git_show | dépôt courant ou `JARVIS_GIT_REPO`, lecture seule |
+| memory   | remember, recall, forget | `~/.cache/jarvis/memory.md` (ou `JARVIS_MEMORY_FILE`) |
 | cve      | cve_info, search_cve (filtre `days` optionnel), latest_cve | API NVD 2.0 |
 | echo     | ping | test du harnais uniquement |
 
 `cve` : sans clé API NVD, limité à 5 requêtes/30 s (throttle intégré côté
 server). Clé gratuite : https://nvd.nist.gov/developers/request-key puis
 `export NVD_API_KEY=...` (50 req/30 s).
+
+`files` est **lecture seule et confiné** : un chemin hors de `JARVIS_FILES_ROOTS`
+renvoie une erreur. `git` n'expose aucune commande d'écriture (pas de
+commit/add/push). Les serveurs reçoivent l'environnement complet du processus
+jarvis (variables `NVD_API_KEY`, `JARVIS_FILES_ROOTS`, `JARVIS_MEMORY_FILE`,
+`JARVIS_GIT_REPO`...).
 
 ## Benchmark
 
@@ -229,8 +240,12 @@ src/jarvis/
   desktop/    # application desktop (customtkinter) : app, sidebar, chat_panel,
               #  voice_panel (TTS/STT fonctionnels), controller (boucle asyncio
               #  + queue vers Tk, appels voix inclus) -> `uv run jarvis-app`
-mcp_servers/  # nettools (ping/dig/traceroute), cve (NVD 2.0 : détail CVE,
-              #  recherche par mots-clés + fenêtre de jours, veille), echo (test)
+mcp_servers/  # nettools (ping/dig/traceroute/whois/ss/ip/TLS/HTTP),
+              #  sysinfo (disques/mémoire/GPU/processus/journalctl),
+              #  files (grep/read/empreintes, lecture confinée),
+              #  netutils (IP/encode/hash/heure, stdlib),
+              #  git (status/log/diff, lecture seule), memory (mémoire persistante),
+              #  cve (NVD 2.0), echo (test)
 bench/       # mesure tok/s / TTFT
 tests/       # mock LLM (stream SSE + tool_calls fragmentés), test end-to-end,
               #  test_tui.py : validation visuelle du rendu sans LLM
