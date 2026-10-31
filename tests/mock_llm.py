@@ -67,6 +67,15 @@ def _scenario(messages: list[dict]) -> list[dict]:
                                                 "arguments": "{}"}}]}),
             delta({}, finish="stop"),
         ]
+    if "markdown" in last_user.lower():
+        text = ("# Titre\n\nDu **texte en gras** et *italique* avec `du code`.\n\n"
+                "- item un\n- item deux\n\n```python\nprint('hi')\n```\n")
+        mid = len(text) // 2
+        return [
+            delta({"content": text[:mid]}),
+            delta({"content": text[mid:]}),
+            delta({}, finish="stop"),
+        ]
     return [
         delta({"content": "réponse directe "}),
         delta({"content": "sans outil"}),
@@ -111,6 +120,9 @@ class Handler(BaseHTTPRequestHandler):
             msg = {"role": "assistant", "content": None, "tool_calls": [{
                 "id": "call_compact", "type": "function",
                 "function": {"name": "jarvis__compact", "arguments": "{}"}}]}
+        elif "markdown" in last_user.lower():
+            msg = {"role": "assistant",
+                   "content": "# Titre\n\nDu **texte en gras** et `du code`.\n"}
         else:
             msg = {"role": "assistant",
                    "content": "réponse directe sans outil"}

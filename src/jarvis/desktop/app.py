@@ -332,6 +332,38 @@ def _debug_scale(root, scale: float, app=None) -> None:
         pass
 
 
+def _apply_cursor_scaling(root, scale: float) -> None:
+    """Curseur de la souris uniforme dans toute la fenêtre.
+
+    Deux écueils sous X11/XWayland HiDPI :
+    - les widgets tk bruts (tkinter.Text du chat, tkinter.Entry de la saisie)
+      ont un curseur nommé par défaut ("xterm") que libXcursor ne scale pas
+      quand XCURSOR_SIZE n'est pas fixé avant le chargement de la lib ;
+    - les canvas CTk laissés sur cursor="" rendent le curseur système brut
+      (souvent minuscule) au lieu d'hériter du curseur de la racine.
+    On force donc un curseur nommé sur la racine (puis propagé par héritage)
+    et on remplace les curseurs vides des widgets internes par "arrow".
+    """
+    import tkinter as tk
+
+    # default pour tous les widgets créés ensuite (pop-up, etc.) ; les
+    # widgets qui posent leur curseur explicitement (boutons "hand2") gardent
+    # leur valeur (config widget > base d'options)
+    root.option_add("*cursor", "arrow", 90)
+
+    def _walk(w) -> None:
+        try:
+            if str(w.cget("cursor")) == "":
+                w.configure(cursor="arrow")
+        except tk.TclError:
+            pass
+        for c in w.winfo_children():
+            _walk(c)
+
+    root.configure(cursor="arrow")
+    root.after(100, lambda: _walk(root))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="jarvis-app",
                                      description="Application desktop de Jarvis")
@@ -350,14 +382,17 @@ def main() -> None:
     ctk.set_appearance_mode("dark")
     ctk.set_default_color_theme("blue")
 
-    # Curseur souris AVANT toute création de fenêtre : libXcursor lit
-    # XCURSOR_SIZE une seule fois au chargement. Sous XWayland scale 2 sans
-    # cette variable, le curseur reste en 24px (minuscule sur écran HiDPI).
+    # Curseur souris proportionnel au scale de l'écran, AVANT la fenêtre
+    # principale : libXcursor lit XCURSOR_SIZE à la première utilisation de
+    # chaque connexion X (info display mise en cache par Display*). Une
+    # fenêtre sonde jetable calcule le scale (DPI) ; la vraie fenêtre
+    # lira ensuite XCURSOR_SIZE avec la bonne valeur. Sous XWayland scale 2
+    # sans cette variable, le curseur reste en 24px (minuscule sur HiDPI).
     if "XCURSOR_SIZE" not in os.environ:
         try:
             import tkinter as _tk
             _probe = _tk.Tk()
-            _s = detect_scale(_probe)
+            _s = detect_scale(_probe, args.scale)
             _probe.destroy()
             os.environ["XCURSOR_SIZE"] = str(int(24 * _s))
         except Exception:  # noqa: BLE001
@@ -372,6 +407,7 @@ def main() -> None:
     scale = detect_scale(root, args.scale)
     setup_window(root, scale)
     root.configure(fg_color=BG)
+    _apply_cursor_scaling(root, scale)
 
     app = DesktopApp(root, args.config, scale=scale)
     if os.environ.get("JARVIS_DEBUG_SCALE"):
