@@ -232,9 +232,19 @@ def _monitors_xml_layout(path=None):
         try:
             x = int(float(lm.findtext("x", "0")))
             y = int(float(lm.findtext("y", "0")))
-            w = int(float(lm.findtext("width", "0")))
-            h = int(float(lm.findtext("height", "0")))
             s = float(lm.findtext("scale", "1"))
+            # width/height ne sont PAS des enfants directs de <logicalmonitor> :
+            # ils sont dans <monitor><width> ou <monitor><mode><width>.
+            mon = lm.find("monitor")
+            w = h = 0
+            if mon is not None:
+                w = int(float(mon.findtext("width", "0")))
+                h = int(float(mon.findtext("height", "0")))
+                if not (w and h):
+                    mode = mon.find("mode")
+                    if mode is not None:
+                        w = int(float(mode.findtext("width", "0")))
+                        h = int(float(mode.findtext("height", "0")))
             if w and h:
                 out.append((x, y, w, h, s))
         except (TypeError, ValueError):

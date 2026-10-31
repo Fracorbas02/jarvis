@@ -107,14 +107,17 @@ def test_unit() -> None:
     assert scaling_mod._hypr_scale() == 0.0  # pas de conf dans ce sandbox
     # géométrie centrée sur le moniteur du pointeur (multi-écran)
     import tempfile
+    # format réel GNOME: width/height dans <monitor><mode><width/height>
     monitors2 = (
         '<monitors version="2">'
         '<monitor><spec><connector>eDP-1</connector></spec>'
-        '<logicalmonitor><x>0</x><y>0</y><width>1440</width><height>900</height>'
-        '<scale>2</scale></logicalmonitor></monitor>'
+        '<logicalmonitor><x>0</x><y>0</y><scale>2</scale>'
+        '<monitor><mode><width>1440</width><height>900</height></mode></monitor>'
+        '</logicalmonitor></monitor>'
         '<monitor><spec><connector>DP-1</connector></spec>'
-        '<logicalmonitor><x>1440</x><y>0</y><width>1920</width><height>1080</height>'
-        '<scale>1</scale></logicalmonitor></monitor>'
+        '<logicalmonitor><x>1440</x><y>0</y><scale>1</scale>'
+        '<monitor><mode><width>1920</width><height>1080</height></mode></monitor>'
+        '</logicalmonitor></monitor>'
         '</monitors>'
     )
     with tempfile.NamedTemporaryFile("w", suffix=".xml", delete=False) as f:
