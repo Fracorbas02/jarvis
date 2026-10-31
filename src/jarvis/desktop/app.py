@@ -36,8 +36,11 @@ class DesktopApp:
         self.ctrl = DesktopController(config_path)
 
         # Fenêtre redimensionnable ; la sidebar est sur un sash déplaçable.
+        # PanedWindow = Tk brut : ses dimensions (sashwidth, width, minsize) sont
+        # en unités LOGIQUES (sous Wayland scale 2, 1 unité = 2 px physiques),
+        # donc on ne multiplie PAS par scale ici (CTk le fait déjà pour ses widgets).
         root.resizable(True, True)
-        sash = max(3, round(6 * scale))
+        sash = max(3, round(6))
         self.pw = tk.PanedWindow(root, orient="horizontal", bg=BG, bd=0,
                                  sashwidth=sash, sashpad=0, opaqueresize=True,
                                  handlepad=0)
@@ -46,11 +49,10 @@ class DesktopApp:
         self.sidebar = Sidebar(self.pw, self.ctrl,
                                on_mode_change=self.show_mode,
                                on_reset=self.on_reset)
-        self.pw.add(self.sidebar, width=int(SIDEBAR_W * scale),
-                    minsize=int(SIDEBAR_MIN * scale))
+        self.pw.add(self.sidebar, width=SIDEBAR_W, minsize=SIDEBAR_MIN)
 
         self.main = ctk.CTkFrame(self.pw, fg_color=BG, corner_radius=0)
-        self.pw.add(self.main, minsize=int(MAIN_MIN * scale))
+        self.pw.add(self.main, minsize=MAIN_MIN)
         self.main.grid_rowconfigure(0, weight=1)
         self.main.grid_columnconfigure(0, weight=1)
 
@@ -95,8 +97,8 @@ class DesktopApp:
 
     def show_error(self, message: str) -> None:
         ctk.CTkLabel(self.main, text=f"Erreur de configuration : {message}",
-                     text_color="#f85149", wraplength=500).place(relx=0.5, rely=0.4,
-                                                                 anchor="center")
+                     text_color="#f85149").place(relx=0.5, rely=0.4,
+                                                  anchor="center")
 
     def _periodic_status(self) -> None:
         self.ctrl.refresh_status()

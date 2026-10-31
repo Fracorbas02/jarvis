@@ -162,6 +162,20 @@ def adaptive_minsize() -> tuple[int, int]:
     return 880, 560
 
 
+def _scaled_geometry(root: _Root, scale: float) -> str:
+    """Géométrie adaptative exprimée en unités LOGIQUES (Tk sous Wayland scale 2
+    prend des coordonnées en pixels logiques = physiques / scale) : la fenêtre
+    fera bien 62 % x 68 % de l'écran logique affiché."""
+    sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+    g = adaptive_geometry(root)
+    w, rest = g.split("x", 1)
+    hh, xy = rest.split("+", 1)
+    x, y = xy.split("+", 1)
+    return (f"{max(round(int(w) / scale), round(adaptive_minsize()[0] / scale))}x"
+            f"{max(round(int(hh) / scale), round(adaptive_minsize()[1] / scale))}+"
+            f"{round(int(x) / scale)}+{round(int(y) / scale)}")
+
+
 def setup_window(root, scale: float) -> None:
     """Applique le scaling puis configure la fenêtre (géométrie adaptative,
     redimensionnable).
@@ -171,23 +185,13 @@ def setup_window(root, scale: float) -> None:
     maxsize APRÈS les set_*_scaling et AVANT geometry/minsize, sinon la
     fenêtre reste coincée à 600x500 et non redimensionnable.
 
-    Sous Wayland (GNOME/mutter), une appli Tk/X11 non-DPI-aware est servie
-    par XWayland qui la rend en 1/scale de sa taille logique : avec un écran
-    à scale 2, Tk croit être à 192 DPI (tk scaling = 2.667, polices en pixels
-    négatifs déjà "scalées" par CTk) mais XWayland affiche la fenêtre en
-    moitié → rendu final à l'échelle 1x. On rend donc l'app DPI-aware via
-    Xft.dpi = 96*scale pour que XWayland la traite en fenêtre scale-1 (plein
-    écran logique) et que le rendu soit net à l'échelle de l'OS.
     """
     import customtkinter as ctk
 
     ctk.set_widget_scaling(scale)
     ctk.set_window_scaling(scale)
-    try:
-        root.tk.call("tk", "scaling", "-displayof", ".", round(96.0 * scale / 72.0, 4))
-    except Exception:  # noqa: BLE001 — best-effort
-        pass
     root.maxsize(root.winfo_screenwidth(), root.winfo_screenheight())
-    root.minsize(*adaptive_minsize())
-    root.geometry(adaptive_geometry(root))
+    root.minsize(round(adaptive_minsize()[0] / scale),
+                  round(adaptive_minsize()[1] / scale))
+    root.geometry(_scaled_geometry(root, scale))
     root.resizable(True, True)
