@@ -237,6 +237,21 @@ async def main() -> int:
     check("listening_ports non vide", at(r, "nettools__listening_ports").strip() != "")
     check("ip_addr non vide", at(r, "nettools__ip_addr").strip() != "")
 
+    # --- by_server / descriptions (regroupement UI réglages) ---
+    p = McpToolProvider({"echo": SERVERS["echo"], "netutils": SERVERS["netutils"],
+                         "memory": SERVERS["memory"]})
+    await p.start()
+    bs = p.by_server()
+    check("by_server regroupe par serveur",
+          set(bs) == {"echo", "netutils", "memory"}
+          and any(n.startswith("echo__") for n in bs["echo"])
+          and all(v == sorted(v) for v in bs.values()))
+    d = p.descriptions()
+    check("descriptions couvrent tous les outils",
+          set(d) == set(p.names()) and all(isinstance(v, str) for v in d.values()))
+    check("description echo__ping non vide", bool(d.get("echo__ping", "").strip()))
+    await p.stop()
+
     # --- echo toujours OK ---
     p = McpToolProvider({"echo": SERVERS["echo"]})
     await p.start()

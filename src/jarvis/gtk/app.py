@@ -297,23 +297,30 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.messages = MessagesColumn()
         outer.append(self.messages.widget)
 
-        # barre du bas : micro + champ texte + envoyer
+        # barre du bas moderne : conteneur arrondi (carte) avec micro, champ
+        # pill moderne et bouton d'envoi circulaire accentué
         bottom = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8,
                          halign=Gtk.Align.CENTER, margin_top=8, margin_bottom=12,
-                         margin_start=16, margin_end=16)
+                         margin_start=24, margin_end=24)
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6,
+                      hexpand=True, halign=Gtk.Align.CENTER)
+        bar.add_css_class("jarvis-entry-bar")
         self.chat_mic = Gtk.Button(icon_name="audio-input-microphone-symbolic",
                                    tooltip_text="Parler à Jarvis (enregistre puis transcrit)")
-        self.chat_mic.add_css_class("pill")
+        self.chat_mic.add_css_class("circular")
         self.chat_mic.connect("clicked", self._on_mic)
-        bottom.append(self.chat_mic)
-        self.chat_entry = Gtk.Entry(hexpand=True, placeholder_text="Message…")
-        self.chat_entry.add_css_class("pill")
+        bar.append(self.chat_mic)
+        self.chat_entry = Gtk.Entry(hexpand=True,
+                                    placeholder_text="Message à Jarvis…")
+        self.chat_entry.add_css_class("jarvis-entry-modern")
         self.chat_entry.connect("activate", self._on_entry_activate)
-        bottom.append(self.chat_entry)
+        bar.append(self.chat_entry)
         send_btn = Gtk.Button(icon_name="go-next-symbolic", tooltip_text="Envoyer")
-        send_btn.add_css_class("pill")
+        send_btn.add_css_class("circular")
+        send_btn.add_css_class("suggested-action")
         send_btn.connect("clicked", self._on_entry_activate)
-        bottom.append(send_btn)
+        bar.append(send_btn)
+        bottom.append(bar)
         outer.append(bottom)
         hint_row = Gtk.Box(halign=Gtk.Align.CENTER, margin_bottom=8)
         self.chat_hint = Gtk.Label(label="", halign=Gtk.Align.CENTER)
@@ -378,8 +385,12 @@ class JarvisWindow(Adw.ApplicationWindow):
         g_model.add(info)
         page.add(g_model)
 
-        # --- Outils MCP (peuplé quand backend_ready arrive) ---
-        self.tools_group = Adw.PreferencesGroup(title="Outils MCP disponibles")
+        # --- Outils MCP : résumé compact (compteur + serveurs repliables),
+        #     peuplé quand backend_ready arrive ---
+        self.tools_group = Adw.PreferencesGroup(
+            title="Outils MCP",
+            description="Regroupés par serveur MCP. Déplie un serveur pour voir "
+                        "ses outils (avec leur description).")
         page.add(self.tools_group)
 
         # --- Voix : micro + TTS ---
@@ -844,22 +855,33 @@ class JarvisWindow(Adw.ApplicationWindow):
     def _on_prompt(self, *_args) -> None:
         dialog = Adw.Dialog.new()
         dialog.set_title("Prompt")
-        dialog.set_content_width(560)
-        dialog.set_content_height(360)
+        dialog.set_content_width(640)
+        dialog.set_content_height(420)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10,
-                      margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
-        scroll = Gtk.ScrolledWindow(vexpand=True, hexpand=True, min_content_height=180)
+                      margin_top=14, margin_bottom=14, margin_start=14, margin_end=14)
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.add_css_class("jarvis-entry-bar")
+        scroll = Gtk.ScrolledWindow(vexpand=True, hexpand=True, min_content_height=220)
         self.prompt_view = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR)
-        self.prompt_view.set_top_margin(8)
-        self.prompt_view.set_bottom_margin(8)
-        self.prompt_view.set_left_margin(8)
-        self.prompt_view.set_right_margin(8)
+        self.prompt_view.add_css_class("jarvis-entry-modern")
+        self.prompt_view.set_top_margin(10)
+        self.prompt_view.set_bottom_margin(10)
+        self.prompt_view.set_left_margin(12)
+        self.prompt_view.set_right_margin(12)
         scroll.set_child(self.prompt_view)
-        box.append(scroll)
+        card.append(scroll)
+        box.append(card)
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8,
+                          halign=Gtk.Align.END)
+        cancel = Gtk.Button(label="Annuler")
+        cancel.connect("clicked", lambda b: dialog.close())
+        actions.append(cancel)
         send = Gtk.Button(label="Envoyer", halign=Gtk.Align.END)
         send.add_css_class("suggested-action")
+        send.add_css_class("pill")
         send.connect("clicked", lambda b: self._send_prompt(dialog))
-        box.append(send)
+        actions.append(send)
+        box.append(actions)
         dialog.set_child(box)
         dialog.present(self)
 
@@ -973,13 +995,37 @@ class JarvisWindow(Adw.ApplicationWindow):
             pass
         return GLib.SOURCE_CONTINUE
 
+    def _fill_tools_group(self, by_server: dict, descriptions: dict) -> None:
+        """Remplit le groupe 'Outils MCP' : une ligne résumé + un ExpanderRow
+        par serveur contenant ses outils (nom + description en sous-titre)."""
+        # vide l'ancien contenu
+        while (child := self.tools_group.get_first_child()) is not None:
+            self.tools_group.remove(child)
+        total = sum(len(v) for v in by_server.values())
+        if not total:
+            row = Adw.ActionRow(title="Aucun outil",
+                                subtitle="vérifie [mcp.servers] dans config.toml")
+            self.tools_group.add(row)
+            return
+        for server in sorted(by_server):
+            names = by_server[server]
+            exp = Adw.ExpanderRow(
+                title=f"{server}  ({len(names)})",
+                subtitle=", ".join(n.split("__", 1)[1] for n in names[:6])
+                          + ("…" if len(names) > 6 else ""))
+            for full in names:
+                desc = (descriptions.get(full) or "").strip().split("\n")[0]
+                row = Adw.ActionRow(title=full.split("__", 1)[1], subtitle=desc[:140])
+                exp.add_row(row)
+            self.tools_group.add(exp)
+
     def _dispatch(self, event: dict) -> bool:
         t = event["type"]
         if t == "backend_ready":
             tools = event.get("tools") or []
             self._toast(f"Prêt — {len(tools)} outils MCP")
-            for name in tools:
-                self.tools_group.add(Adw.ActionRow(title=name))
+            self._fill_tools_group(event.get("tools_by_server") or {},
+                                   event.get("tool_descriptions") or {})
             if event.get("session_id"):
                 self._replay_history()
             self.backend.list_sessions()

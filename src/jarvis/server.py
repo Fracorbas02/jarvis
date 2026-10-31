@@ -79,13 +79,13 @@ async def start_server(model_path: str | Path, base_url: str,
     _log_path.parent.mkdir(parents=True, exist_ok=True)
     # Choix GPU global (onglet Réglages / pop-up 1er lancement) : un mécanisme
     # par backend — env (CUDA_VISIBLE_DEVICES & co) pour cuda/hip/cpu,
-    # --device <index> pour vulkan (pas de variable d'env équivalente).
+    # --device <nom ggml> pour vulkan (pas de variable d'env équivalente).
     # Les args du choix vont avant extra_args pour que la config puisse
     # surcharger ; jamais de --device brut type "vulkan:0".
     env = None
     gpu_args: list[str] = []
     try:
-        from ..gpu import choice_args, choice_env
+        from .gpu import choice_args, choice_env
         gpu_env = choice_env()
         if gpu_env:
             env = {**os.environ, **gpu_env}
