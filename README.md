@@ -44,12 +44,14 @@ via **l'API Mistral** (`POST /v1/audio/speech`, modèles `voxtral-*-tts-2603`).
 - **Clé API stockée localement** : dans l'app GTK4, onglet **Réglages > Voix API
   Mistral**, champ masqué + « Enregistrer ». Elle est écrite dans
   `~/.config/jarvis/mistral.json` (**chmod 0600**, jamais dans `config.toml`,
-  jamais affichée/écrite en log). `export MISTRAL_API_KEY=...` fonctionne aussi
+  jamais affichée/écrite en log, et les messages d'erreur TTS ne contiennent jamais le corps des réponses HTTP). `export MISTRAL_API_KEY=...` fonctionne aussi
   et **prime** sur le fichier. Survit à l'arrêt de l'app.
 - **Lire les réponses à voix haute** : menu de l'app (ou Réglages > Voix). Si
   « Utiliser l'API Mistral pour le TTS » est coché **et** qu'une clé est
-  enregistrée, chaque réponse de Jarvis est synthétisée par l'API et jouée ;
-  sinon le serveur TTS local sert de secours. Réglable par défaut ou non
+  enregistrée, chaque réponse de Jarvis est synthétisée par l'API et jouée.
+  **Vrai secours** : si l'API échoue (réseau, 401, 403, 404…) ou si aucune clé
+  n'est définie, Jarvis retombe automatiquement sur le serveur TTS local
+  (toast « TTS local utilisé en secours » dans l'app, message au CLI). Réglable par défaut ou non
   (persistant dans `~/.config/jarvis/ui.json`, clé `tts`).
 - **Voix** : presets Mistral (FR : Marie `voice_592`, Manon, Lea, Camille ;
   EN-GB : `gb_jane_neutral` ; EN-US : `en_paul_neutral` ; DE/ES/IT/PT…) +

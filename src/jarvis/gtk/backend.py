@@ -373,26 +373,47 @@ class GtkBackend:
         self._run(self._atts(text))
 
     async def _atts(self, text: str) -> None:
-        """Lit `text` à voix haute : API Mistral si [voice.tts_api] enabled
-        et clé enregistrée, sinon serveur TTS local (fallback)."""
+        """Lit `text` à voix haute.
+
+        Source : API Mistral si [voice.tts_api] enabled ET clé enregistrée,
+        sinon serveur TTS local. Vrai fallback : si l'API est choisie mais
+        échoue (réseau, 401, 403, 404…), on retombe sur le TTS local au lieu
+        de ne rien lire."""
         import tempfile
         from pathlib import Path as _P
         from ..voice import play_wav
         vcfg = self.cfg.voice
         tts_api = getattr(self.cfg, "tts_api", None)
-        try:
-            if tts_api is not None and tts_api.enabled:
+        audio: bytes | None = None
+        ext = "wav"
+        api_error: str | None = None
+        if tts_api is not None and tts_api.enabled:
+            try:
                 audio, ext = await self._atts_api(text)
-            else:
-                from ..voice import synthesize
+            except Exception as exc:  # noqa: BLE001 — MistralTTSError + réseau
+                api_error = str(exc)
+                log.warning("TTS API Mistral en échec, fallback local : %s", exc)
+        if audio is None:
+            # pas d'API choisie, pas de clé, ou API en échec -> TTS local
+            from ..voice import synthesize
+            try:
                 audio = await synthesize(vcfg, text)
                 ext = "wav"
-            suffix = f".{ext}"
-            out = _P(tempfile.gettempdir()) / f"jarvis-tts-{os.getpid()}{suffix}"
+            except Exception as exc:  # noqa: BLE001 — VoiceError
+                detail = f" (API: {api_error})" if api_error else ""
+                self.events.put({"type": "voice_error",
+                                 "message": f"TTS local en échec aussi : {exc}{detail}"})
+                return
+            if api_error:
+                self.events.put({"type": "tts_fallback",
+                                 "message": f"API Mistral en échec ({api_error}) "
+                                            f"— lu par le TTS local"})
+        try:
+            out = _P(tempfile.gettempdir()) / f"jarvis-tts-{os.getpid()}.{ext}"
             out.write_bytes(audio)
             self.events.put({"type": "tts_ready", "path": str(out)})
             await play_wav(out, vcfg)
-        except Exception as exc:  # noqa: BLE001 — VoiceError + MistralTTSError
+        except Exception as exc:  # noqa: BLE001
             self.events.put({"type": "voice_error", "message": str(exc)})
 
     async def _atts_api(self, text: str) -> tuple[bytes, str]:

@@ -30,6 +30,9 @@ from .gpu import config_dir
 
 DEFAULT_BASE_URL = "https://api.mistral.ai"
 DEFAULT_MODEL = "voxtral-mini-tts-2603"
+# modeles TTS dispo (combo UI + validations) ; mini = rapide, 4B = qualite max
+TTS_MODELS = ["voxtral-mini-tts-2603", "voxtral-tts-2603",
+              "voxtral-mini-tts-latest", "voxtral-tts-latest"]
 # voix preset pratiques (doc Mistral "Voices") : nom -> (voice_id, langue)
 PRESET_VOICES: dict[str, tuple[str, str]] = {
     "Marie (FR, femme)": ("voice_592", "fr"),
@@ -139,18 +142,26 @@ class MistralTTSClient:
         if resp.status_code == 404:
             raise MistralTTSError(f"404 : mod\u00e8le {self.model!r} ou voix {voice_id!r} inconnu")
         if resp.status_code != 200:
-            raise MistralTTSError(f"API Mistral HTTP {resp.status_code}: "
-                                  f"{resp.text[:300]}")
+            # SECURITE : on ne met JAMAIS le corps de la reponse dans le message
+            # (un proxy/WAF en erreur peut echoer des en-tetes, dont Authorization).
+            # Status + Content-Type + longueur seulement.
+            ctype = resp.headers.get("Content-Type", "?")
+            raise MistralTTSError(
+                f"API Mistral HTTP {resp.status_code} ({ctype}, {len(resp.content)} o) "
+                f"sur /v1/audio/speech \u2014 corps non journalis\u00e9")
         # non-stream -> JSON {"audio_data": base64} ; stream -> SSE (non utilis\u00e9 ici)
         ctype = resp.headers.get("Content-Type", "")
         if "application/json" in ctype:
             try:
                 data = resp.json()
             except ValueError as exc:
-                raise MistralTTSError(f"r\u00e9ponse JSON illisible: {resp.text[:200]}") from exc
+                raise MistralTTSError("r\u00e9ponse 200 non-JSON de /v1/audio/speech "
+                                      f"({resp.headers.get('Content-Type', '?')})") from exc
             b64 = data.get("audio_data")
             if not b64:
-                raise MistralTTSError(f"r\u00e9ponse sans audio_data : {str(data)[:200]}")
+                # on ne cite que les cles, pas les valeurs (audio_data peut \u00eatre gros)
+                raise MistralTTSError("r\u00e9ponse sans audio_data "
+                                      f"(cles: {sorted(data)[:10]})")
             return base64.b64decode(b64)
         # r\u00e9ponse binaire directe (certains proxys) : on la prend telle quelle
         return resp.content
@@ -165,14 +176,18 @@ class MistralTTSClient:
                 params["cursor"] = cursor
             try:
                 resp = await self._http.get("/v1/audio/voices", params=params)
-            except httpx.HTTPError:
-                break
+            except httpx.HTTPError as exc:
+                raise MistralTTSError(f"GET /v1/audio/voices inaccessible : {exc}") from exc
+            if resp.status_code == 401:
+                raise MistralTTSError("cl\u00e9 API invalide ou expir\u00e9e (401) sur /v1/audio/voices")
             if resp.status_code != 200:
-                break
+                raise MistralTTSError(
+                    f"GET /v1/audio/voices -> HTTP {resp.status_code} "
+                    f"({resp.headers.get('Content-Type', '?')}, corps non journalis\u00e9)")
             try:
                 data = resp.json()
-            except ValueError:
-                break
+            except ValueError as exc:
+                raise MistralTTSError("GET /v1/audio/voices -> r\u00e9ponse non-JSON") from exc
             page = data.get("result", data) if isinstance(data, dict) else data
             items = page.get("data", []) if isinstance(page, dict) else []
             for v in items:

@@ -321,8 +321,8 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.api_model_row = Adw.ComboRow(
             title="Modèle TTS",
             subtitle="voxtral-mini-tts-2603 = rapide, voxtral-tts-2603 = qualité max")
-        api_models = ["voxtral-mini-tts-2603", "voxtral-tts-2603",
-                      "voxtral-mini-tts-latest", "voxtral-tts-latest"]
+        from ..mistral_tts import TTS_MODELS
+        api_models = TTS_MODELS
         self.api_model_row.set_model(Gtk.StringList.new(api_models))
         try:
             self.api_model_row.set_selected(api_models.index(tts_api.model))
@@ -551,11 +551,10 @@ class JarvisWindow(Adw.ApplicationWindow):
                     + " (le TTS local reste le secours)")
 
     def _on_tts_api_model(self, row, _pspec) -> None:
+        from ..mistral_tts import TTS_MODELS
         idx = row.get_selected()
-        models = ["voxtral-mini-tts-2603", "voxtral-tts-2603",
-                  "voxtral-mini-tts-latest", "voxtral-tts-latest"]
-        if 0 <= idx < len(models):
-            self.backend.set_tts_api(model=models[idx])
+        if 0 <= idx < len(TTS_MODELS):
+            self.backend.set_tts_api(model=TTS_MODELS[idx])
 
     def _fill_api_voices(self, voices: list[tuple[str, str]], current: str = "") -> None:
         """Remplit le ComboRow des voix. voices = [(label, voice_id)]."""
@@ -785,6 +784,8 @@ class JarvisWindow(Adw.ApplicationWindow):
                 self._toast(f"{len(voices)} voix récupérées depuis l'API")
             elif event.get("error"):
                 self._toast(f"Voix API : {event['error']}")
+        elif t == "tts_fallback":
+            self._toast(f"TTS local utilis\u00e9 en secours : {event.get('message', '')}")
         elif t == "mistral_tts_test":
             self._toast(("TTS API OK — " + event.get("message", ""))
                         if event.get("ok")

@@ -219,6 +219,54 @@ def test_list_voices():
         srv.server_close()
 
 
+def test_error_messages_never_contain_body():
+    """Securite : les messages d'erreur ne doivent contenir AUCUN extrait du
+    corps de la reponse HTTP (un proxy/WAF peut y echoer l'en-tete Authorization)."""
+    srv, t = _start_mock()
+    port = srv.server_address[1]
+    try:
+        async def go():
+            c = MistralTTSClient("test-key-123", base_url=f"http://127.0.0.1:{port}")
+            try:
+                await c.synthesize("x", voice_id="voice_inconnue")  # -> 404 avec corps JSON
+            except MistralTTSError as e:
+                msg = str(e)
+                assert "voice not found" not in msg, f"corps fuité dans: {msg}"
+                assert "404" in msg
+                return msg
+            finally:
+                await c.aclose()
+        msg = asyncio.run(go())
+        # le 404 voix inconnue a un message metier sans corps HTTP ; on verifie
+        # surtout qu'aucun extrait du corps n'y figure
+        assert msg and "voice not found" not in msg
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_list_voices_http_error_raises():
+    """list_voices ne doit plus avaler une erreur HTTP : elle leve MistralTTSError."""
+    srv, t = _start_mock()
+    port = srv.server_address[1]
+    try:
+        async def go():
+            # mauvaise cle -> 401 sur /v1/audio/voices
+            c = MistralTTSClient("mauvaise", base_url=f"http://127.0.0.1:{port}")
+            try:
+                await c.list_voices()
+                return None
+            except MistralTTSError as e:
+                return str(e)
+            finally:
+                await c.aclose()
+        msg = asyncio.run(go())
+        assert msg and "401" in msg, msg
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
 def test_config_tts_api_toml(tmp_path):
     from jarvis.config import load_config
     cfg_file = tmp_path / "config.toml"

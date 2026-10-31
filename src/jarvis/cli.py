@@ -353,34 +353,40 @@ async def _cmd_tts(cfg, console, args: str) -> None:
         console.print("[dim]usage: /tts <texte à synthétiser>[/]")
         return
     tts_api = getattr(cfg, "tts_api", None)
-    audio: bytes
+    audio: bytes | None = None
     ext = "wav"
-    try:
-        t0 = time.monotonic()
-        if tts_api is not None and tts_api.enabled:
-            from .mistral_tts import (MistralTTSClient, MistralTTSError,
-                                      load_api_key)
-            key = load_api_key()
-            if not key:
-                raise MistralTTSError("clé API Mistral absente (mistral.json ou "
-                                      "MISTRAL_API_KEY) — /tts retombe sur le local ? non : "
-                                      "désactive [voice.tts_api] ou définis la clé")
+    src = "serveur TTS local"
+    api_error: str | None = None
+    t0 = time.monotonic()
+    if tts_api is not None and tts_api.enabled:
+        # API choisie : on tente, et en cas d'échec on retombe sur le local
+        from .mistral_tts import MistralTTSClient, load_api_key
+        key = load_api_key()
+        if key:
             client = MistralTTSClient(key, base_url=tts_api.base_url,
                                       model=tts_api.model)
             try:
                 audio = await client.synthesize(
                     text, voice_id=tts_api.voice_id or None,
                     response_format=tts_api.response_format or "mp3")
+                ext = tts_api.response_format or "mp3"
+                src = f"API Mistral ({tts_api.model}, {tts_api.voice_id})"
+            except Exception as exc:  # noqa: BLE001 — réseau/401/403/404
+                api_error = str(exc)
+                console.print(f"[yellow]API Mistral en échec ({exc}) "
+                              f"— fallback sur le TTS local[/]")
             finally:
                 await client.aclose()
-            ext = tts_api.response_format or "mp3"
-            src = f"API Mistral ({tts_api.model}, {tts_api.voice_id})"
         else:
+            api_error = "clé API absente (mistral.json / MISTRAL_API_KEY)"
+            console.print(f"[yellow]{api_error} — fallback sur le TTS local[/]")
+    if audio is None:
+        try:
             audio = await synthesize(cfg.voice, text, auto_start=True)
-            src = "serveur TTS local"
-    except Exception as exc:  # noqa: BLE001 — VoiceError + MistralTTSError
-        console.print(f"[bold red]erreur TTS:[/] {exc}")
-        return
+        except Exception as exc:  # noqa: BLE001 — VoiceError
+            detail = f" (API aussi en échec: {api_error})" if api_error else ""
+            console.print(f"[bold red]erreur TTS:[/] {exc}{detail}")
+            return
     out = _state_dir() / f"tts-{datetime.now():%H%M%S}.{ext}"
     out.write_bytes(audio)
     console.print(f"[dim]{ext.upper()} écrit : {out} ({len(audio) / 1024:.0f} Ko, "
