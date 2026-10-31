@@ -44,7 +44,11 @@ cp config.example.toml config.toml   # ajuster base_url / modèle / MCP servers
 uv run jarvis
 ```
 
-Commandes REPL : `/tools` (liste), `/reset` (historique), `/quit`.
+Commandes REPL : `/help` (liste complète), `/tools` (table outil/description),
+`/thinking` (revoir le raisonnement du dernier tour), `/tool N` (résultat
+complet du N-ième outil du dernier tour), `/reset`, `/verbose` (logs console
+en DEBUG ; le log complet est toujours dans `~/.cache/jarvis/jarvis.log`),
+`/quit`.
 
 ## Outils MCP
 
@@ -72,9 +76,12 @@ vocale, le TTFT qui compte est celui du premier token de contenu.
 Qwen3.6 réfléchit avant de répondre : à ~24 tok/s, une réponse longue avec
 raisonnement peut prendre plus d'une minute (mesuré : ~76 s pour un résumé
 CVE détaillé). Le choix assumé est de garder le thinking et de le rendre
-visible : le CLI streame `delta.reasoning_content` en grisé pendant que le
-modèle réfléchit, puis la réponse, puis le statut des outils — l'équivalent du
-« je réfléchis… » de Le Chat, sauf que c'est la vraie pensée, en direct.
+visible : la TUI (rich) streame `delta.reasoning_content` dans un panneau
+grisé pendant que le modèle réfléchit, le replie en une ligne résumé
+(durée, tokens) à la fin, puis rend la réponse en Markdown dans un panneau
+en direct. Les appels d'outils s'affichent avec un spinner puis un statut
+`✓/✗ + durée` et un aperçu du résultat. L'équivalent du « je réfléchis… »
+de Le Chat, sauf que c'est la vraie pensée, en direct.
 
 Pour couper le thinking au profit de la latence pure (au cas par cas) :
 ```toml
@@ -100,12 +107,15 @@ src/jarvis/
   config.py   # chargement TOML
   llm.py      # client OpenAI-compatible (llama-server), streaming SSE + tools
   mcp.py      # agrégation d'MCP servers stdio -> schémas outils
-  agent.py    # boucle tool-calling (streaming activable)
-  cli.py      # REPL avec affichage streaming du raisonnement
+  agent.py    # boucle tool-calling (streaming activable, hooks d'affichage)
+  tui.py      # couche d'affichage rich : panneau thinking repliable, réponse
+              #  en Markdown (live), statut des outils, /thinking et /tool N
+  cli.py      # REPL (bannière, prompt, commandes /help /tools /verbose ...)
 mcp_servers/  # nettools (ping/dig/traceroute), cve (NVD 2.0 : détail CVE,
               #  recherche par mots-clés + fenêtre de jours, veille), echo (test)
 bench/       # mesure tok/s / TTFT
-tests/       # mock LLM + test end-to-end
+tests/       # mock LLM (stream SSE + tool_calls fragmentés), test end-to-end,
+              #  test_tui.py : validation visuelle du rendu sans LLM
 ```
 
 Le modèle est interchangeable : le harnais ne dépend que de l'API. Le futur
