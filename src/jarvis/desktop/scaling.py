@@ -162,6 +162,38 @@ def adaptive_minsize() -> tuple[int, int]:
     return 880, 560
 
 
+def ensure_fonts(root) -> None:
+    """S'assure que les polices embarquées de CTk (Roboto) sont connues de Tk.
+
+    Sous X11, CTk copie ses .ttf dans ~/.fonts/ mais ne lance pas fc-cache :
+    si le cache fontconfig de XWayland n'est pas rafraîchi, Tk ne voit que
+    'fixed' (tkfont.families() == ['fixed']) et ignore tout spec 'Roboto -44'
+    -> texte minuscule. On copie les .ttf CTk dans ~/.fonts/ (idempotent) et
+    on lance fc-cache -f si dispo. Best-effort."""
+    import shutil
+    import subprocess
+    from pathlib import Path as _P
+    try:
+        import customtkinter as ctk
+        assets = _P(ctk.__file__).parent / "assets" / "fonts"
+        dst_dir = _P(os.path.expanduser("~/.fonts"))
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        copied = False
+        if assets.is_dir():
+            for ttf in assets.glob("*.ttf"):
+                dst = dst_dir / ttf.name
+                if not dst.exists() or dst.stat().st_size != ttf.stat().st_size:
+                    shutil.copy2(ttf, dst)
+                    copied = True
+        if copied:
+            try:
+                subprocess.run(["fc-cache", "-f"], capture_output=True, timeout=10)
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception:  # noqa: BLE001 — best-effort
+        pass
+
+
 def setup_window(root, scale: float) -> None:
     """Applique le scaling puis configure la fenêtre (géométrie adaptative,
     redimensionnable).
@@ -177,6 +209,7 @@ def setup_window(root, scale: float) -> None:
     """
     import customtkinter as ctk
 
+    ensure_fonts(root)
     ctk.set_widget_scaling(scale)
     ctk.set_window_scaling(scale)
     root.maxsize(root.winfo_screenwidth(), root.winfo_screenheight())
