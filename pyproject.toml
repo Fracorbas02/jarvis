@@ -4,27 +4,20 @@ version = "0.1.0"
 description = "Jarvis — assistant local (LLM local + outils MCP, voix à venir)"
 requires-python = ">=3.11"
 dependencies = [
-    "customtkinter>=6.0.0",
     "httpx>=0.27",
     "mcp>=2.3,<3",
-    "nicegui>=3.18.0",
     "prompt-toolkit>=3.0.53",
     "rich>=15.0.0",
 ]
 
 [project.scripts]
 jarvis = "jarvis.cli:main"
-jarvis-gui = "jarvis.gui.app:main"
-jarvis-app = "jarvis.desktop.app:main"
+jarvis-app = "jarvis.gtk.app:main"
 
 [dependency-groups]
 dev = [
     "pytest>=9.2.0",
 ]
-
-[tool.pytest.ini_options]
-addopts = "-p no:cacheprovider -p nicegui.testing.general_fixtures -p nicegui.testing.user_plugin"
-main_file = "tests/gui_main.py"
 
 [build-system]
 requires = ["hatchling"]

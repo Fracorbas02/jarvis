@@ -5,7 +5,7 @@ Couvre en particulier la ligne AMD (CPU/GPU) et la robustesse multi-config :
 - jarvis.voice : --device avec index (pas 'hip:0'), record_wav qui s'arr\u00eatre
   proprement apr\u00e8s N s, host_port, transcribe_bytes (uuid + nettoyage) ;
 - jarvis.agent : arguments JSON invalides -> pas de NameError ;
-- jarvis.gui.server : parsing /v1/models au format OpenAI {"data": [...]} ;
+- jarvis.server : parsing /v1/models au format OpenAI {"data": [...]} ;
 - mcp_servers/sysinfo : _amdgpu_sysfs sur un faux /sys, gpu_status/temperatures
   ne l\u00e8vent jamais ;
 - mcp_servers/nettools : la regex du certificat TLS compile et matche.
@@ -227,7 +227,7 @@ def test_get_status_parse_openai_data():
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     port = srv.server_address[1]
     try:
-        from jarvis.gui import server as gui_server
+        from jarvis import server as gui_server
         gui_server._proc = None
         st = asyncio.run(gui_server.get_status(f"http://127.0.0.1:{port}/v1"))
         assert st.state == "online"
