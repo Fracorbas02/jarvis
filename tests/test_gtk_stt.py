@@ -149,5 +149,19 @@ def test_record_cfg_pulse_source():
     assert vcfg3.record_cmd == b.cfg.voice.record_cmd
 
 
+def test_wav_rms():
+    """_wav_rms : silence -> ~0, signal -> RMS > 0."""
+    import wave
+    from jarvis.gtk.backend import _wav_rms
+    from jarvis.voice import write_wav
+    tmp = Path(tempfile.mkdtemp())
+    silence = write_wav(tmp / "silence.wav", b"\x00\x00" * 16000)
+    assert _wav_rms(silence) == 0.0
+    sig = write_wav(tmp / "sig.wav", (b"\x00\x40" * 16000))  # amplitude 16384
+    rms = _wav_rms(sig)
+    assert rms is not None and rms > 10000, rms
+    assert _wav_rms(tmp / "inexistant.wav") is None
+
+
 if __name__ == "__main__":
     sys.exit(asyncio.run(_amain()))

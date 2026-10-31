@@ -374,10 +374,12 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.stt_test_mic.set_sensitive(True)
         text = (event.get("text") or "").strip()
         self.stt_result_label.set_text(text or "(aucune parole transcrite)")
-        self.stt_result_meta.set_text(
-            f"{event.get('elapsed', 0):.1f}s de transcription · "
-            f"{event.get('seconds', 0):.0f}s d'audio · protocole "
-            f"{event.get('protocol', '?')} · serveur {event.get('server', '?')}")
+        meta = (f"{event.get('elapsed', 0):.1f}s de transcription · "
+                f"{event.get('seconds', 0):.0f}s d'audio · protocole "
+                f"{event.get('protocol', '?')} · serveur {event.get('server', '?')}")
+        if event.get("audio_rms") is not None:
+            meta += f" · niveau audio RMS {event['audio_rms']:.1f}"
+        self.stt_result_meta.set_text(meta)
 
     def _build_settings(self) -> Gtk.Widget:
         scroll = Gtk.ScrolledWindow(vexpand=True, hexpand=True)

@@ -107,6 +107,26 @@ async def server_ctx_usage(base_url: str, timeout: float = 3.0) -> dict:
     return out
 
 
+def _wav_rms(path) -> float | None:
+    """Niveau RMS d'un WAV 16-bit mono (diagnostic : 0 = silence, micro muet)."""
+    import math
+    import wave
+    try:
+        with wave.open(str(path), "rb") as w:
+            if w.getsampwidth() != 2:
+                return None
+            frames = w.readframes(w.getnframes())
+        if not frames:
+            return 0.0
+        n = len(frames) // 2
+        total = 0
+        for i in range(0, min(len(frames), 16000 * 2 * 10), 2):
+            total += int.from_bytes(frames[i:i + 2], "little", signed=True) ** 2
+        return math.sqrt(total / max(1, min(n, 16000 * 10)))
+    except Exception:  # noqa: BLE001
+        return None
+
+
 class GtkBackend:
     """C\u0153ur async de l'UI GTK : config + LLM + MCP + Agent + sessions."""
 
@@ -397,6 +417,7 @@ class GtkBackend:
                 raise VoiceError(f"serveur STT indisponible : {st.detail}")
             self.events.put({"type": "stt_test_recording", "seconds": seconds})
             path = await record_wav(seconds, vcfg)
+            audio_rms = _wav_rms(path)
             t0 = time.monotonic()
             client = STTClient(self.cfg.voice.stt.base_url,
                                protocol=self.cfg.voice.stt.protocol)
@@ -408,7 +429,8 @@ class GtkBackend:
                              "seconds": seconds,
                              "elapsed": time.monotonic() - t0,
                              "protocol": self.cfg.voice.stt.protocol,
-                             "server": f"{st.host}:{st.port}"})
+                             "server": f"{st.host}:{st.port}",
+                             "audio_rms": audio_rms})
         except VoiceError as exc:
             self.events.put({"type": "voice_error", "message": str(exc)})
 

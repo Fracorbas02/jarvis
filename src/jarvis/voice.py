@@ -538,6 +538,7 @@ class STTClient:
         self.root = base_url.rstrip("/").removesuffix("/v1")
         self.protocol = (protocol or "whisper").lower()
         self.model = model
+        self._timeout = timeout
         self._http = httpx.AsyncClient(base_url=self.root,
                                        timeout=httpx.Timeout(timeout, connect=10.0))
 
@@ -628,17 +629,20 @@ class STTClient:
                         return text
                 last_err += f" ; chat multimodal -> HTTP {chat.status_code}"
         # Dernier recours (modèles ASR streaming type Voxtral Realtime, sans
-        # route batch ni chat multimodal) : websocket /v1/realtime.
+        # route batch ni chat multimodal) : websocket /v1/realtime. Toujours
+        # tenté en protocole voxtral, même si les endpoints HTTP ont répondu.
         if self.protocol == "voxtral" or last_err:
             try:
-                ws = RealtimeSTTClient(self.root, timeout=self._http.timeout.read or 300.0,
+                ws = RealtimeSTTClient(self.root, timeout=self._timeout,
                                        model=self.model)
                 text = await ws.transcribe_wav(path, language=language)
                 if text:
                     return text
-                last_err += " ; /v1/realtime: transcription vide"
+                last_err += " ; /v1/realtime: transcription vide (pas d'événement completed)"
             except VoiceError as exc:
                 last_err += f" ; /v1/realtime: {exc}"
+            except Exception as exc:  # noqa: BLE001 — remonter le détail brut
+                last_err += f" ; /v1/realtime: {type(exc).__name__}: {exc}"
         if last_err:
             raise VoiceError(f"serveur STT injoignable sur tous les endpoints : {last_err}")
         raise VoiceError("serveur STT HTTP 404 sur tous les endpoints connus "
