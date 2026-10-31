@@ -1011,6 +1011,8 @@ class JarvisApp(Adw.Application):
         if win is None:
             win = JarvisWindow(self, self.backend)
         win.present()
+        win.present_with_time(0) if hasattr(win, "present_with_time") else None
+        print("jarvis-app : fenêtre zap (instance active)", flush=True)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1024,6 +1026,8 @@ def main(argv: list[str] | None = None) -> int:
     # les requ\u00eates de statut (httpx) polluent le terminal toutes les 2 s
     logging.getLogger("httpx").setLevel(logging.WARNING)
     app = JarvisApp(config_path=args.config)
+    print("jarvis-app : démarrage (app-id %s) — si une fenêtre existe déjà, "
+          "c'est l'instance unique qui se présente" % APP_ID, flush=True)
     return app.run([])
 
 
