@@ -49,7 +49,9 @@ from ..gpu import detect_gpus, load_gpu_choice
 from .backend import APP_ID, GtkBackend, load_ui_settings, save_ui_settings
 
 ICONS_DIR = Path(__file__).resolve().parent / "icons"
-BELL_SVG = (ICONS_DIR / "scalable" / "actions" / "bell-symbolic.svg").read_bytes()
+def _bell_svg() -> bytes:
+    """Lit le SVG embarqué à la demande (l'import ne plante jamais si absent)."""
+    return (ICONS_DIR / "scalable" / "actions" / "bell-symbolic.svg").read_bytes()
 from .widgets import (MessagesColumn, assistant_message, error_message,
                       user_message, _css)
 
@@ -1192,39 +1194,6 @@ class JarvisWindow(Adw.ApplicationWindow):
                 box = assistant_message()
                 box.set_markdown(str(content))
                 self.messages.add(box)
-
-    def _show_sessions_dialog(self, sessions: list[dict]) -> None:
-        dialog = Adw.Dialog.new()
-        dialog.set_title("Conversations")
-        dialog.set_content_width(520)
-        dialog.set_content_height(420)
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8,
-                      margin_top=12, margin_bottom=12, margin_start=12, margin_end=12)
-        scroll = Gtk.ScrolledWindow(vexpand=True)
-        listbox = Gtk.ListBox()
-        listbox.add_css_class("boxed-list")
-        for s in sessions:
-            row = Gtk.ListBoxRow()
-            inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2,
-                            margin_top=8, margin_bottom=8, margin_start=10, margin_end=10)
-            inner.append(Gtk.Label(label=s.get("title", "?"), xalign=0))
-            sub = Gtk.Label(label=f"{s.get('updated', '')}  ·  {s.get('count', 0)} messages",
-                            xalign=0)
-            sub.add_css_class("dim-label")
-            sub.add_css_class("caption")
-            inner.append(sub)
-            row.set_child(inner)
-            row.sid = s.get("id")
-            listbox.append(row)
-        listbox.connect("row-activated", lambda lb, row: self._load_session_from(row, dialog))
-        scroll.set_child(listbox)
-        box.append(scroll)
-        dialog.set_child(box)
-        dialog.present(self)
-
-    def _load_session_from(self, row, dialog) -> None:
-        dialog.close()
-        self.backend.load_session(row.sid)
 
     # ---------- divers ----------
 

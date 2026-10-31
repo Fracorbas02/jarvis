@@ -151,6 +151,13 @@ async def amain() -> int:
         gtk_backend.save_ui_settings({"mic_permission_asked": True})
         assert gtk_backend.load_ui_settings()["mic_permission_asked"] is True
 
+        # server.last_managed_model : mémorisé au start_server géré, cleared au stop
+        from jarvis import server as _srv
+        assert _srv.last_managed_model() is None
+        _srv._last_model = "/models/test.gguf"  # simule un start_server géré
+        assert _srv.last_managed_model() == "/models/test.gguf"
+        _srv._last_model = None
+
         # reset_context sur serveur NON géré -> événement context_reset ok=False
         # (llama-server mock non lancé par server_mod : _proc est None)
         from jarvis import server as server_mod

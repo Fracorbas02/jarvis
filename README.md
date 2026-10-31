@@ -177,10 +177,9 @@ UI native GTK4, qui ne touche à rien d'autre que la partie graphique
   `Adw.OverlaySplitView`) listant les conversations passées (titre + date +
   nb messages, clic = reprise, conversation active surlignée, bouton + pour
   une nouvelle) ; barre d'actions en haut avec **Nouvelle** (Ctrl+N) et
-  **Reset contexte**
-  avec choix de la cible (LLM / STT / TTS) : redémarre le serveur **géré par
-  Jarvis** (jamais un serveur externe) pour repartir sur un contexte vierge.
-- **Conversation** : centrée sur l'échange — barre du bas avec micro (STT
+  **Reset contexte** (cible LLM / STT / TTS) : redémarre le serveur **géré par
+  Jarvis** avec le même GGUF (jamais un serveur externe) pour repartir sur un
+  contexte vierge. Zone d'échange centrée : barre du bas avec micro (STT
   local : record → transcribe → tour LLM) + champ texte + envoyer ; réponses
   en streaming **rendues en Markdown 100% (markdown-it-py + GFM, HTML dans
   WebKitGTK si installé, sinon widgets GTK natifs) : titres,
