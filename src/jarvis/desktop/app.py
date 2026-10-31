@@ -167,6 +167,15 @@ def _debug_scale(root, scale: float, app=None) -> None:
                 f"screenmm={root.winfo_screenmmwidth()}x{root.winfo_screenmmheight()}mm "
                 f"pw={app.pw.winfo_width()}x{app.pw.winfo_height()} "
                 f"sidebar_w={app.sidebar.winfo_width()} chat_w={app.chat.winfo_width()}")
+            try:
+                import tkinter.font as tkfont
+                for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont"):
+                    f = tkfont.nametofont(name)
+                    lines.append(
+                        f"[jarvis] debug: named font {name}: actual={f.actual()} "
+                        f"measure(JARVIS)={f.measure('JARVIS')}px")
+            except Exception:
+                pass
             # hauteur réelle d'un label JARVIS (titre sidebar)
             for c in app.sidebar.winfo_children():
                 if isinstance(c, _ctk.CTkLabel) and c.cget("text") == "JARVIS":
