@@ -10,10 +10,13 @@ import asyncio
 import logging
 import os
 import readline
+import shutil
 import signal
+import subprocess
 import sys
 import time
 import tomllib
+from datetime import datetime
 from pathlib import Path
 
 from rich import box
@@ -134,6 +137,41 @@ def _set_console_log_level(level: int) -> None:
             h.setLevel(level)
 
 
+def _last_assistant_reply(history: list[dict]) -> str | None:
+    for m in reversed(history):
+        if m.get("role") == "assistant" and m.get("content"):
+            return m["content"]
+    return None
+
+
+def _copy_to_clipboard(text: str) -> str | None:
+    """Copie via l'outil dispo (wayland/X11/macOS). Retourne le nom de l'outil."""
+    for tool, args in (("wl-copy", []), ("xclip", ["-selection", "clipboard"]),
+                       ("xsel", ["--clipboard", "--input"]), ("pbcopy", [])):
+        if shutil.which(tool):
+            subprocess.run([tool, *args], input=text.encode(), check=False)
+            return tool
+    return None
+
+
+def _export_markdown(history: list[dict], path: Path) -> int:
+    """Exporte la conversation en Markdown. Retourne le nombre de messages écrits."""
+    out: list[str] = [f"# Session jarvis — {datetime.now():%Y-%m-%d %H:%M}\n"]
+    n = 0
+    for m in history:
+        role, content = m.get("role"), m.get("content")
+        if role == "user" and content:
+            out.append(f"\n## [toi]\n\n{content}\n")
+            n += 1
+        elif role == "assistant" and content:
+            out.append(f"\n## [jarvis]\n\n{content}\n")
+            n += 1
+        elif role == "tool":
+            out.append(f"\n> outil `{m.get('tool_call_id', '')}` : {str(content)[:200]}\n")
+    path.write_text("\n".join(out), encoding="utf-8")
+    return n
+
+
 async def amain() -> int:
     _setup_logging()
     try:
@@ -211,6 +249,47 @@ async def amain() -> int:
                 continue
             if user == "/thinking":
                 display.show_reasoning()
+                continue
+            if user == "/undo":
+                # retire le dernier échange : tout depuis le dernier message user
+                while history and history[-1].get("role") not in ("user", "system"):
+                    history.pop()
+                if history and history[-1].get("role") == "user":
+                    history.pop()
+                    console.print("[dim]dernier échange retiré[/]")
+                else:
+                    console.print("[dim]rien à retirer[/]")
+                continue
+            if user == "/history":
+                users = [m["content"] for m in history
+                         if m.get("role") == "user" and m.get("content")]
+                if not users:
+                    console.print("[dim]aucun message pour l'instant[/]")
+                else:
+                    start = max(1, len(users) - 9)
+                    for i, u in enumerate(users[-10:], start=start):
+                        console.print(f"[dim]{i}.[/] {str(u)[:100]}")
+                continue
+            if user == "/copy":
+                reply = _last_assistant_reply(history)
+                if not reply:
+                    console.print("[dim]pas encore de réponse à copier[/]")
+                elif tool := _copy_to_clipboard(reply):
+                    console.print(f"[dim]réponse copiée via {tool} ({len(reply)} car.)[/]")
+                else:
+                    console.print("[bold red]erreur:[/] aucun outil de presse-papier "
+                                  "(wl-copy/xclip/xsel/pbcopy)")
+                continue
+            if user.startswith("/save"):
+                parts = user.split(maxsplit=1)
+                path = (Path(parts[1]) if len(parts) > 1
+                        else _state_dir() / f"session-{datetime.now():%Y%m%d-%H%M%S}.md")
+                try:
+                    n = _export_markdown(history, path)
+                except OSError as exc:
+                    console.print(f"[bold red]erreur:[/] {exc}")
+                else:
+                    console.print(f"[dim]{n} messages exportés dans {path}[/]")
                 continue
             if user.startswith("/tool"):
                 parts = user.split()
