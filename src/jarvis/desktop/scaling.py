@@ -195,6 +195,13 @@ def ensure_fonts(root) -> None:
         # sans ça, tkfont.families() ne voit que 'fixed' et Tk ignore 'Roboto'.
         if os.environ.get("DISPLAY"):
             try:
+                # mkfontscale génère fonts.dir/fonts.scale (obligatoire pour
+                # que le serveur X accepte le dossier), puis on l'ajoute au
+                # font path et on rehash.
+                subprocess.run(["mkfontscale", str(dst_dir)],
+                               capture_output=True, timeout=10)
+                subprocess.run(["mkfontdir", str(dst_dir)],
+                               capture_output=True, timeout=10)
                 subprocess.run(["xset", "fp+", str(dst_dir)],
                                capture_output=True, timeout=5)
                 subprocess.run(["xset", "fp", "rehash"],
