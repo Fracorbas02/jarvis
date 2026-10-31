@@ -153,6 +153,18 @@ async def amain() -> int:
         gtk_backend.save_ui_settings({"mic_permission_asked": True})
         assert gtk_backend.load_ui_settings()["mic_permission_asked"] is True
 
+        # le backend expose bien les méthodes appelées par l'UI (record_levels,
+        # call_tool, voice_status, start/stop_voice_server)
+        import re as _re
+        back_src = Path("src/jarvis/gtk/backend.py").read_text(encoding="utf-8")
+        app_src = Path("src/jarvis/gtk/app.py").read_text(encoding="utf-8")
+        methods = set(_re.findall(r"def (\w+)\(", back_src))
+        calls = set(_re.findall(r"self\.backend\.(\w+)\(", app_src))
+        missing = {c for c in calls if c not in methods and c not in
+                   {"events", "models_llm", "cfg", "session_id", "history",
+                    "start", "stop"}}
+        assert not missing, f"méthodes manquantes côté backend: {missing}"
+
         # formule RMS du visualiseur micro (identique à backend._arecord_levels)
         def rms_level(pcm: bytes) -> float:
             n = len(pcm) // 2

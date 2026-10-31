@@ -313,6 +313,129 @@ class GtkBackend:
         except VoiceError as exc:
             self.events.put({"type": "voice_error", "message": str(exc)})
 
+    def record_levels(self, seconds: float = 6.0, device: str | None = None) -> None:
+        """Enregistre `seconds` en streamant le niveau RMS (0..1) toutes les
+        ~100 ms : événements {"type": "mic_level", "level": float}. Le WAV
+        produit est ensuite transcrit (stt_done) comme un tour normal."""
+        self._run(self._arecord_levels(seconds, device))
+
+    async def _arecord_levels(self, seconds: float, device: str | None) -> None:
+        import asyncio
+        import math
+        import shutil
+        import struct
+        import tempfile
+        from ..voice import VoiceError, write_wav
+        vcfg = self._record_cfg(device)
+        cmd = list(vcfg.record_cmd)
+        if not cmd:
+            self.events.put({"type": "voice_error", "message": "record_cmd vide"})
+            return
+        binary = shutil.which(cmd[0])
+        if binary is None and cmd[0] == "arecord" and shutil.which("ffmpeg"):
+            cmd = ["ffmpeg", "-loglevel", "error", "-f", "alsa", "-i", "default",
+                   "-ar", "16000", "-ac", "1", "-f", "s16le", "-"]
+            binary = "ffmpeg"
+        if binary is None:
+            self.events.put({"type": "voice_error",
+                             "message": f"binaire d'enregistrement introuvable : {cmd[0]}"})
+            return
+        argv = [binary, *cmd[1:]]
+        if argv[-1] != "-":
+            self.events.put({"type": "voice_error",
+                             "message": "record_cmd doit finir par '-' (PCM stdout)"})
+            return
+        argv = argv[:-1]
+        out_path = Path(tempfile.gettempdir()) / f"jarvis-rec-{os.getpid()}.wav"
+        self.events.put({"type": "stt_recording", "seconds": seconds})
+        proc = await asyncio.create_subprocess_exec(
+            *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+        buf = b""
+        chunks: list[bytes] = []
+        CHUNK = 1600 * 2  # 100 ms de s16le 16 kHz mono
+        deadline = asyncio.get_running_loop().time() + seconds
+        try:
+            while asyncio.get_running_loop().time() < deadline:
+                data = await asyncio.wait_for(proc.stdout.read(CHUNK), timeout=0.5)
+                if not data:
+                    break
+                chunks.append(data)
+                buf += data
+                while len(buf) >= CHUNK:
+                    block, buf = buf[:CHUNK], buf[CHUNK:]
+                    n = len(block) // 2
+                    if n:
+                        vals = struct.unpack(f"<{n}h", block)
+                        rms = math.sqrt(sum(v * v for v in vals) / n) / 32768.0
+                        self.events.put({"type": "mic_level",
+                                         "level": min(1.0, rms * 3.0)})
+            write_wav(out_path, b"".join(chunks))
+        except asyncio.TimeoutExpired:
+            pass
+        finally:
+            if proc.returncode is None:
+                proc.terminate()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=2)
+                except asyncio.TimeoutExpired:
+                    proc.kill()
+        self.events.put({"type": "mic_level", "level": 0.0})
+        from ..voice import transcribe_file
+        try:
+            text = await transcribe_file(self.cfg.voice, out_path, language="fr")
+            self.events.put({"type": "stt_done", "text": text})
+        except VoiceError as exc:
+            self.events.put({"type": "voice_error", "message": str(exc)})
+
+    # ---------- outils MCP : test individuel ----------
+
+    def call_tool(self, name: str, arguments: dict | None = None) -> None:
+        self._run(self._acall_tool(name, arguments or {}))
+
+    async def _acall_tool(self, name: str, arguments: dict) -> None:
+        try:
+            result = await self.tools.call(name, arguments)
+            self.events.put({"type": "tool_test", "name": name, "ok": True,
+                             "result": result[:2000]})
+        except Exception as exc:  # noqa: BLE001
+            self.events.put({"type": "tool_test", "name": name, "ok": False,
+                             "result": f"{type(exc).__name__}: {exc}"})
+
+    # ---------- serveurs voix STT/TTS : statut + start/stop ----------
+
+    def voice_status(self, mode: str) -> None:
+        self._run(self._avoice_status(mode))
+
+    async def _avoice_status(self, mode: str) -> None:
+        from ..voice import voice_server_status
+        scfg = self.cfg.voice.stt if mode == "stt" else self.cfg.voice.tts
+        st = await voice_server_status(mode, scfg)
+        self.events.put({"type": "voice_server_status", "mode": mode,
+                         "state": st.state, "host": st.host, "port": st.port,
+                         "detail": st.detail})
+
+    def start_voice_server(self, mode: str) -> None:
+        self._run(self._astart_voice(mode))
+
+    async def _astart_voice(self, mode: str) -> None:
+        from ..voice import start_voice_server
+        scfg = self.cfg.voice.stt if mode == "stt" else self.cfg.voice.tts
+        st = await start_voice_server(mode, scfg)
+        self.events.put({"type": "voice_server_status", "mode": mode,
+                         "state": st.state, "host": st.host, "port": st.port,
+                         "detail": st.detail})
+
+    def stop_voice_server(self, mode: str) -> None:
+        self._run(self._astop_voice(mode))
+
+    async def _astop_voice(self, mode: str) -> None:
+        from ..voice import stop_voice_server
+        scfg = self.cfg.voice.stt if mode == "stt" else self.cfg.voice.tts
+        st = await stop_voice_server(mode, scfg)
+        self.events.put({"type": "voice_server_status", "mode": mode,
+                         "state": st.state, "host": st.host, "port": st.port,
+                         "detail": st.detail})
+
     def test_mic(self, device: str | None = None) -> None:
         """Enregistrement de test (0.5 s) pour v\u00e9rifier l'autorisation micro."""
         self._run(self._atest_mic(device))
