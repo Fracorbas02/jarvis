@@ -177,11 +177,16 @@ def _debug_scale(root, scale: float, app=None) -> None:
             except Exception:
                 pass
             # hauteur réelle d'un label JARVIS (titre sidebar)
+            import tkinter.font as _tkf
             for c in app.sidebar.winfo_children():
                 if isinstance(c, _ctk.CTkLabel) and c.cget("text") == "JARVIS":
+                    spec = c._label.cget("font")
+                    f = _tkf.Font(font=spec)
                     lines.append(
                         f"[jarvis] debug: label JARVIS winfo_h={c.winfo_height()} "
-                        f"reqh={c.winfo_reqheight()} font={c._label.cget('font')}")
+                        f"reqh={c.winfo_reqheight()} spec={spec} "
+                        f"font_actual={f.actual()} measure={f.measure('JARVIS')}px")
+                    f.destroy()
                     break
         except Exception:
             lines.append("[jarvis] debug: ERREUR scan widgets:")
