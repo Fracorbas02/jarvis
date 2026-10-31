@@ -497,7 +497,9 @@ class RealtimeSTTClient:
                 log.debug("ws /v1/realtime event: %s %s", etype, str(ev)[:200])
                 if etype in ("conversation.item.input_audio_transcription.completed",
                              "transcription.completed"):
-                    # champ réel du protocole : "transcript" au niveau de l'événement
+                    # champ réel du protocole : "transcript" au niveau de l'événement.
+                    # Le completed FINAL contient TOUT le texte : il REMPLACE les
+                    # deltas reçus avant lui (sinon affichage en double).
                     tr = ev.get("transcript")
                     if tr is None:
                         tr = ev.get("transcription")
@@ -513,6 +515,7 @@ class RealtimeSTTClient:
                             tr = item.get("transcription")
                     if isinstance(tr, dict):
                         tr = tr.get("text", "")
+                    texts.clear()
                     texts.append(str(tr or ""))
                 elif etype in ("transcript.text.delta", "transcription.text.delta",
                                "response.audio_transcript.delta",
