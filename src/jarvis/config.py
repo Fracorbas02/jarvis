@@ -48,8 +48,10 @@ class VoiceServerConfig:
     model: str = ""
     extra_args: list[str] = field(default_factory=list)
     ready_timeout: float = 180.0
-    device: str = ""        # index/nom de device llama.cpp (ex. "1") -> --device ; le choix
-                            # GPU global se fait dans l'onglet Réglages (gpu.json -> env)
+    device: str = ""        # nom ggml du device (ex. "Vulkan1", voir llama-server
+                            # --list-devices) -> --device ; permet de répartir les
+                            # modèles sur plusieurs GPU. Sinon choix global de
+                            # l'onglet Réglages (gpu.json)
     env: dict[str, str] = field(default_factory=dict)  # ex. {"CUDA_VISIBLE_DEVICES": "1"}
 
 

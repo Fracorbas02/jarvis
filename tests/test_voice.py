@@ -231,6 +231,12 @@ def test_argv_for_device_index() -> None:
     assert "--device" not in _argv_for("stt", vcfg2, Path("/tmp/m.gguf"))
     argv2 = _argv_for("stt", vcfg2, Path("/tmp/m.gguf"), ["--device", "Vulkan1"])
     assert argv2[argv2.index("--device") + 1] == "Vulkan1"
+    # device explicite au format nom ggml -> passé tel quel (pas l'index "1")
+    vcfg3 = VoiceServerConfig(binary="llama-server",
+                              base_url="http://127.0.0.1:9932",
+                              device="Vulkan1")
+    argv3 = _argv_for("tts", vcfg3, Path("/tmp/m.gguf"))
+    assert argv3[argv3.index("--device") + 1] == "Vulkan1"
     print("OK  argv_for device index")
 
 

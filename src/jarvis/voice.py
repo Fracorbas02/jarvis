@@ -83,9 +83,12 @@ def _argv_for(name: str, vcfg: VoiceServerConfig, model_path: Path,
     host, port = host_port(vcfg.base_url)
     extra = [*(gpu_args or []), *vcfg.extra_args]
     if vcfg.device and "--device" not in extra:
-        # --device attend un index/nom de device llama.cpp, pas "cuda:1"
+        # --device attend le NOM ggml ("Vulkan1") ou un index — jamais "cuda:1"
         from .gpu import device_index
-        extra += ["--device", device_index(vcfg.device)]
+        dev = vcfg.device
+        if not (dev[:-1].isalpha() and dev[-1:].isdigit()):  # pas un nom ggml
+            dev = device_index(dev)
+        extra += ["--device", dev]
     if name == "stt":
         return [vcfg.binary, "--host", host, "--port", str(port),
                 "-m", str(model_path), *extra]
