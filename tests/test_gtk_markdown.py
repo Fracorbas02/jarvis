@@ -1,175 +1,238 @@
-"""Tests unitaires du rendu Markdown de la GUI GTK4 (sans GTK installé).
+"""Tests unitaires du parseur Markdown GTK4 (sans GTK installé).
 
-Couvre jarvis.gtk.markdown : parse_markdown (segments stylés) et to_pango
-(markup Pango échappé), y compris les cas limites du streaming (marqueur ou
-bloc de code non fermé).
+Couvre jarvis.gtk.markdown : parse_blocks (CommonMark + GFM) et
+inline_to_pango / to_pango (markup Pango échappé, liens <a>), y compris
+les cas limites du streaming (fence non fermé, marqueur non fermé).
 
 Usage: uv run pytest tests/test_gtk_markdown.py -v
 """
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from jarvis.gtk.markdown import (Segment, parse_markdown, sanitize_pango,  # noqa: E402
-                             to_pango)
+from jarvis.gtk.markdown import (Block, _safe_href, collect_defs,  # noqa: E402
+                                 inline_to_pango, parse_blocks, sanitize_pango,
+                                 to_pango)
 
 
-def texts(segs: list[Segment]) -> str:
-    return "".join(s.text for s in segs)
+def kinds(text: str) -> list[str]:
+    return [b.kind for b in parse_blocks(text)]
 
 
-def test_plain_text_passthrough() -> None:
-    segs = parse_markdown("bonjour le monde\n")
-    assert texts(segs) == "bonjour le monde\n"
-    assert all(not s.style for s in segs)
+# ---------- blocs ----------
 
 
-def test_bold_italic_strike() -> None:
-    segs = parse_markdown("du **gras** et *italique* et ~~barré~~\n")
-    by_text = {s.text: s.style for s in segs}
-    assert by_text["gras"] == frozenset({"bold"})
-    assert by_text["italique"] == frozenset({"italic"})
-    assert by_text["barré"] == frozenset({"strike"})
-    assert texts(segs) == "du gras et italique et barré\n"
+def test_headings_atx_and_setext() -> None:
+    assert kinds("# H1\n") == ["heading"]
+    assert parse_blocks("###### H6\n")[0].level == 6
+    b = parse_blocks("Titre\n===\n")
+    assert b[0].kind == "heading" and b[0].level == 1
+    b = parse_blocks("Sous-titre\n---\n")
+    assert b[0].kind == "heading" and b[0].level == 2
 
 
-def test_inline_code() -> None:
-    segs = parse_markdown("appelle `echo__ping({})` maintenant\n")
-    by_text = {s.text: s.style for s in segs}
-    assert by_text["echo__ping({})"] == frozenset({"code"})
-    # pas de mise en forme imbriquée dans le code
-    segs = parse_markdown("`**pas gras**`\n")
-    code_segs = [s for s in segs if s.style == frozenset({"code"})]
-    assert code_segs and code_segs[0].text == "**pas gras**"
+def test_hr_vs_setext() -> None:
+    assert kinds("---\n")[0] == "hr"
+    assert kinds("***\n")[0] == "hr"
+    assert kinds("___\n")[0] == "hr"
+    # setext prioritaire sur hr quand une ligne précède
+    assert kinds("texte\n---\n")[0] == "heading"
 
 
-def test_heading_levels() -> None:
-    for level in range(1, 7):
-        segs = parse_markdown(f"{'#' * level} Titre\n")
-        assert segs[0].text == "Titre\n"
-        assert f"h{level}" in segs[0].style and "heading" in segs[0].style
+def test_paragraphs() -> None:
+    assert kinds("ligne 1\nligne 2\n\nligne 3\n") == ["paragraph", "paragraph"]
 
 
-def test_list_bullet() -> None:
-    segs = parse_markdown("- premier\n* second\n")
-    assert texts(segs) == "• premier\n• second\n"
+def test_code_fence_with_and_without_lang() -> None:
+    b = parse_blocks("```python\nx = 1\n```\n")
+    assert b[0].kind == "code" and b[0].lang == "python" and b[0].text == "x = 1"
+    b = parse_blocks("```\ncode\n```\naprès\n")
+    assert [x.kind for x in b] == ["code", "paragraph"]
+    assert "```" not in b[0].text
 
 
-def test_code_block() -> None:
-    src = "avant\n```python\nprint(1)\n```\nAprès\n"
-    segs = parse_markdown(src)
-    # les délimiteurs ``` eux-mêmes ne sont pas affichés
-    assert texts(segs) == "avant\nprint(1)\nAprès\n"
-    block = [s for s in segs if "print(1)" in s.text]
-    assert block and block[0].style == frozenset({"mono", "code"})
+def test_code_fence_unclosed_streaming() -> None:
+    b = parse_blocks("texte\n```py\npartial")
+    assert b[-1].kind == "code" and "partial" in b[-1].text
 
 
-def test_streaming_marqueur_non_ferme_puis_ferme() -> None:
-    # fragment 1 : "**bo" -> affiché tel quel ; fragment 2 : "ld**" -> gras
-    s1 = parse_markdown("voici **bo")
-    assert texts(s1) == "voici **bo"
-    assert all("bold" not in s.style for s in s1)
-    s2 = parse_markdown("voici **bold** fin\n")
-    by_text = {s.text: s.style for s in s2}
-    assert by_text["bold"] == frozenset({"bold"})
+def test_indented_code() -> None:
+    b = parse_blocks("para\n\n    code indenté\n")
+    assert b[-1].kind == "code" and "code indenté" in b[-1].text
 
 
-def test_code_block_delimiteur_nu() -> None:
-    # ``` sans langue (très courant côté LLM) : délimiteur caché aussi
-    src = "avant\n```\ncode\n```\naprès\n"
-    segs = parse_markdown(src)
-    assert texts(segs) == "avant\ncode\naprès\n"
-    assert "```" not in texts(segs)
-    p = to_pango(src)
-    assert "```" not in p and "code" in p and "après" in p
-    assert 'background="#0a0c10"' in p
+def test_unordered_list_and_tasks() -> None:
+    b = parse_blocks("- a\n- [ ] todo\n- [x] done\n")
+    assert b[0].kind == "list" and not b[0].ordered
+    assert b[0].items[1][0].kind == "task" and not b[0].items[1][0].checked
+    assert b[0].items[2][0].kind == "task" and b[0].items[2][0].checked
 
 
-def test_streaming_code_block_non_ferme() -> None:
-    s = parse_markdown("```py\npartial")
-    assert texts(s) == "partial"
-    assert all(s.style == frozenset({"mono", "code"}) for s in s)
+def test_ordered_list_separate_block() -> None:
+    # une vraie liste numérotée (2+ items) ne fusionne pas avec des puces
+    b = parse_blocks("1. un\n2. deux\n- puce\n")
+    assert [(x.kind, x.ordered, len(x.items)) for x in b] == [
+        ("list", True, 2), ("list", False, 1)]
 
 
-def test_texte_multiligne_conserve_les_sauts() -> None:
-    src = "ligne 1\nligne 2\n\nligne 3\n"
-    assert texts(parse_markdown(src)) == src
+def test_numbered_section_absorbed_by_bullets() -> None:
+    # cas fréquent des LLM : "1. Titre" suivi de puces -> une seule liste à puces
+    b = parse_blocks("1. Mise en forme\n- **Gras**\n- *Italique*\n\n2. Liens\n- [x](https://a.b)\n")
+    assert [(x.kind, x.ordered, len(x.items)) for x in b] == [
+        ("list", False, 3), ("list", False, 2)]
 
 
-# ---------- to_pango ----------
+def test_nested_list() -> None:
+    b = parse_blocks("- parent\n  - enfant\n  - enfant2\n- autre\n")
+    assert b[0].kind == "list" and len(b[0].items) == 2
+    subs = [s for s in b[0].items[0] if s.kind == "list"]
+    assert len(subs) == 1 and len(subs[0].items) == 2
 
 
-def test_pango_bold_italic_code() -> None:
-    p = to_pango("du **gras** et *ital* et `code` et ~~barré~~\n")
-    assert "<b>gras</b>" in p
-    assert "<i>ital</i>" in p
-    # <tt> n'accepte aucun attribut en Pango -> <span font-family="monospace">
-    assert "<tt" not in p and '<span font-family="monospace"' in p and "code" in p
-    assert "<s>barré</s>" in p
+def test_quote() -> None:
+    b = parse_blocks("> citation **gras**\n> ligne 2\n")
+    assert b[0].kind == "quote"
+    assert b[0].items[0].kind == "paragraph"
+    assert "gras" in b[0].items[0].text
+
+
+def test_table_gfm() -> None:
+    src = "| A | B | C |\n|:--|:-:|--:|\n| 1 | 2 | 3 |\n"
+    b = parse_blocks(src)
+    assert b[0].kind == "table"
+    assert b[0].aligns == ["l", "c", "r"]
+    assert len(b[0].rows) == 2 and b[0].rows[0] == ["A", "B", "C"]
+
+
+def test_image_block() -> None:
+    b = parse_blocks('![Alt text](https://x.y/img.png "Tip")\n')
+    assert b[0].kind == "image"
+    assert b[0].text == "Alt text" and b[0].url == "https://x.y/img.png"
+    assert b[0].title == "Tip"
+
+
+def test_link_and_footnote_defs() -> None:
+    ld, fn = collect_defs('[r1]: https://ref.example "T"\n[^n1]: contenu\n')
+    assert ld == {"r1": ("https://ref.example", "T")}
+    assert fn == {"n1": "contenu"}
+    b = parse_blocks("[^n1]: contenu\n")
+    assert b[0].kind == "footnote_def" and b[0].footnote_id == "n1"
+
+
+# ---------- inline -> Pango ----------
+
+
+def test_inline_styles() -> None:
+    p = inline_to_pango("**g** *i* ***b*** ~~s~~ `c`")
+    assert "<b>g</b>" in p and "<i>i</i>" in p and "<b><i>b</i></b>" in p
+    assert "<s>s</s>" in p and '<span font-family="monospace"' in p and ">c</span>" in p
     assert "**" not in p and "~~" not in p and "`" not in p
 
 
-def test_pango_heading() -> None:
-    p = to_pango("## Titre\n")
-    assert 'size="large"' in p and 'weight="bold"' in p and "Titre" in p
-    assert "#" not in p.replace("foreground=\"#4cc2ff\"", "")
+def test_inline_links() -> None:
+    ld, _ = collect_defs('[r1]: https://ref.example "T"\n')
+    p = inline_to_pango(
+        '[txt](https://a.b "T") [r][r1] [r1][] [r1] <https://auto.link> '
+        "https://bare.url/x?a=1&b=2 www.ex.com/z", ld)
+    assert '<a href="https://a.b" title="T">txt</a>' in p
+    assert p.count('<a href="https://ref.example" title="T">') == 3, p
+    assert '<a href="https://auto.link">https://auto.link</a>' in p
+    assert '<a href="https://bare.url/x?a=1&amp;b=2">' in p
+    assert '<a href="http://www.ex.com/z">www.ex.com/z</a>' in p
 
 
-def test_pango_code_block_fond_mono() -> None:
-    p = to_pango("```python\nprint('hi')\n```\n")
-    assert "```" not in p
-    assert 'background="#0a0c10"' in p and "monospace" in p
-    assert "print('hi')" in p
+def test_inline_image_is_link() -> None:
+    p = inline_to_pango('![alt](https://img.x/y.png)')
+    assert '<a href="https://img.x/y.png">alt</a>' in p
+    assert "![" not in p
 
 
-def test_pango_echappe_le_xml() -> None:
-    # le texte brut doit être échappé, jamais interprété comme du markup
-    p = to_pango("a < b & c > d <script>alert(1)</script>\n")
-    assert "<script>" not in p
-    assert "&lt;script&gt;" in p
-    assert "&lt;" in p and "&amp;" in p and "&gt;" in p
+def test_footnote_ref_superscript() -> None:
+    _, fn = collect_defs("[^n1]: contenu\n")
+    p = inline_to_pango("texte[^n1] fin", {}, fn)
+    assert '<a href="#fn-n1">' in p and 'rise="6000"' in p and "[1]" in p, p
+    # sans définition connue : l'id est affiché tel quel
+    p2 = inline_to_pango("texte[^zz] fin")
+    assert "[zz]" in p2
 
 
-def test_pango_dans_code_aussi_échappé() -> None:
-    p = to_pango("`x < y & z`\n")
-    assert "&lt;" in p and "&amp;" in p
-    assert "<tt" not in p and '<span font-family="monospace"' in p
+def test_escapes() -> None:
+    p = inline_to_pango(r"\*pas gras\* \_pas italique\_ \`pas code\`")
+    assert "*pas gras*" in p and "_pas italique_" in p and "`pas code`" in p
+    assert "<b>" not in p and "<i>" not in p
 
 
-def test_bold_italic_triple() -> None:
-    segs = parse_markdown("***gras italique*** et ___pareil___\n")
-    by_text = {s.text: s.style for s in segs}
-    assert by_text["gras italique"] == frozenset({"bold", "italic"})
-    assert by_text["pareil"] == frozenset({"bold", "italic"})
-    p = to_pango("***gras italique***\n")
-    assert "<b>" in p and "<i>" in p and "***" not in p
+def test_xml_escaped_everywhere() -> None:
+    p = inline_to_pango("a < b & c > d <script>alert(1)</script> `x<y&z`")
+    assert "<script>" not in p and "&lt;script&gt;" in p
+    assert "x&lt;y&amp;z" in p
 
 
-def test_pango_jamais_de_tt_avec_attributs() -> None:
-    # régression : <tt font-family=...> fait échouer Pango.parse_markup
-    # (warning Gtk + set_markup ignoré). Le code inline doit être un <span>.
-    for src in ("`code`\n", "texte `x < y` **gras**\n", "```\nbloc\n```\n"):
-        assert "<tt" not in to_pango(src)
+def test_streaming_partial_inline() -> None:
+    assert inline_to_pango("voici **bo") == "voici **bo"
+    assert "<b>bold</b>" in inline_to_pango("voici **bold** fin")
 
 
-def test_sanitize_pango_neutralise_les_balises_invalides() -> None:
+# ---------- to_pango / sanitize ----------
+
+
+def test_to_pango_full_document_tags_whitelisted() -> None:
+    doc = ("# T\n\n**g** *i* `c` [l](https://a.b) https://x.y\n\n- a\n- [x] t\n\n"
+           "> q\n\n```py\nx=1\n```\n\n| A |\n|---|\n| 1 |\n\n---\n\n![i](https://img)\n\n"
+           "note[^n]\n\n[^n]: def\n")
+    s = sanitize_pango(to_pango(doc))
+    tags = set(re.findall(r"</?([a-zA-Z]+)", s))
+    assert tags <= {"b", "i", "s", "span", "a"}, tags
+    assert "<tt" not in s and "```" not in s and "|" not in s
+
+
+def test_sanitize_neutralizes_invalid_tags() -> None:
     s = sanitize_pango('<script>x</script> <tt font-family="m">c</tt> <span size="large">ok</span>')
     assert "&lt;script&gt;" in s and "<script>" not in s
     assert "<tt" not in s and "&lt;tt" in s
     assert '<span size="large">' in s
 
 
-def test_sanitize_pango_garde_les_balises_autorisees() -> None:
-    s = sanitize_pango('<b>g</b><i>i</i><s>s</s><span weight="bold" foreground="#fff">t</span>')
-    assert s == '<b>g</b><i>i</i><s>s</s><span weight="bold" foreground="#fff">t</span>'
+def test_safe_href_schemas() -> None:
+    assert _safe_href("https://x") == "https://x"
+    assert _safe_href("HTTPS://X") == "HTTPS://X"
+    assert _safe_href("mailto:a@b.c") == "mailto:a@b.c"
+    assert _safe_href("#ancre") == "#ancre"
+    assert _safe_href("/relatif") == "/relatif"
+    assert _safe_href("page.html") == "page.html"
+    assert _safe_href("javascript:alert(1)") is None
+    assert _safe_href("data:text/html,x") is None
+    assert _safe_href("file:///etc/passwd") is None
+    assert _safe_href("vbscript:x") is None
 
 
-def test_pango_streaming_partiel() -> None:
-    # marqueur non fermé : rendu tel quel, re-rendu au fragment suivant
-    assert to_pango("voici **bo") == "voici **bo"
-    assert "<b>bold</b>" in to_pango("voici **bold** fin\n")
+def test_dangerous_schemes_rendered_as_text() -> None:
+    p = inline_to_pango("[c](javascript:alert(1)) [d](data:text/html;base64,XX) [ok](https://a.b)")
+    assert 'href="javascript:' not in p and 'href="data:' not in p
+    assert "javascript:alert(1)" in p  # texte brut
+    assert '<a href="https://a.b">ok</a>' in p
+    s = sanitize_pango(p)
+    assert 'href="javascript:' not in s and 'href="data:' not in s
+
+
+def test_sanitize_blocks_bad_href_and_unknown_tags() -> None:
+    assert sanitize_pango('<a href="javascript:alert(1)">c</a>').count("<a ") == 0
+    assert sanitize_pango('<script>x</script>').count("<script>") == 0
+    # attribut non whitelisté -> balise littérale échappée (guillemets inclus)
+    out = sanitize_pango('<span onclick="evil()">t</span>')
+    # la balise ouvrante est rendue littérale et échappée : plus de '<span' actif,
+    # l'attribut n'est plus dans une balise (guillemets échappés en &quot;)
+    assert "<span" not in out and "&lt;span onclick=&quot;" in out
+
+
+def test_sanitize_keeps_allowed() -> None:
+    s = sanitize_pango('<b>g</b><i>i</i><s>s</s><a href="https://x" title="t">l</a>'
+                       '<span weight="bold" foreground="#fff" font-family="monospace">t</span>')
+    assert "<b>g</b>" in s and '<a href="https://x" title="t">l</a>' in s
+    assert 'font-family="monospace"' in s
