@@ -176,6 +176,18 @@ def _scaled_geometry(root: _Root, scale: float) -> str:
             f"{round(int(x) / scale)}+{round(int(y) / scale)}")
 
 
+def set_font_scaling(scale: float) -> None:
+    """Scale UNIQUEMENT les polices CTk (pas les dimensions de widgets).
+
+    set_widget_scaling(scale) scale aussi les dimensions (pixels) des widgets,
+    ce qui double la taille de la fenêtre sous Wayland scale 2 (Tk travaille
+    en unités logiques, XWayland multiplie par 2 → fenêtre 2x trop grande).
+    set_font_scaling ne touche qu'aux CTkFont : les polices suivent l'échelle
+    de l'OS, la géométrie reste en unités logiques."""
+    import customtkinter as ctk
+    ctk.set_font_scaling(scale)
+
+
 def setup_window(root, scale: float) -> None:
     """Applique le scaling puis configure la fenêtre (géométrie adaptative,
     redimensionnable).
@@ -188,8 +200,10 @@ def setup_window(root, scale: float) -> None:
     """
     import customtkinter as ctk
 
-    ctk.set_widget_scaling(scale)
-    ctk.set_window_scaling(scale)
+    # Polices seules scalées (set_font_scaling) : set_widget_scaling(scale)
+    # doublerait aussi les dimensions sous Wayland (fenêtre 2x trop grande).
+    ctk.set_font_scaling(scale)
+    ctk.set_window_scaling(1.0)
     root.maxsize(root.winfo_screenwidth(), root.winfo_screenheight())
     root.minsize(round(adaptive_minsize()[0] / scale),
                   round(adaptive_minsize()[1] / scale))
