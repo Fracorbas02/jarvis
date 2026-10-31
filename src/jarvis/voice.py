@@ -130,6 +130,19 @@ async def start_voice_server(name: str, vcfg: VoiceServerConfig,
         return st  # déjà en ligne (externe ou déjà lancé)
 
     host, port = host_port(vcfg.base_url)
+    # Choix GPU global enregistré (pop-up 1er lancement / onglet Réglages) :
+    # appliqué si la config du serveur ne précise pas déjà device/env.
+    try:
+        from .gpu import env_for_device, load_gpu_choice
+        choice = load_gpu_choice()
+        if choice.get("device") and not vcfg.device:
+            vcfg.device = choice["device"]
+        if choice.get("env") and not vcfg.env:
+            vcfg.env = dict(choice["env"])
+        elif choice.get("device") and not vcfg.env:
+            vcfg.env = env_for_device(choice["device"])
+    except Exception:  # noqa: BLE001
+        pass
     argv = _argv_for(name, vcfg, model)
     log_path = _log_path(name)
     try:

@@ -63,15 +63,46 @@ class DesktopApp:
         self.panels["llm"] = self.chat
         for mode in ("tts", "stt"):
             self.panels[mode] = VoicePanel(self.main, self.ctrl, mode)
+        from .settings_panel import SettingsPanel
+        self.panels["settings"] = SettingsPanel(self.main, self.ctrl)
         for f in self.panels.values():
             f.grid(row=0, column=0, sticky="nsew")
         self.show_mode(self.ctrl.mode)
 
         self.ctrl.start()
         self.root.after(50, self.drain_events)
+        self.root.after(300, self._maybe_gpu_popup)
         self.root.after(800, self.ctrl.refresh_status)
         self.root.after(5000, self._periodic_status)
         self.root.protocol("WM_DELETE_WINDOW", self.on_quit)
+
+    def _maybe_gpu_popup(self) -> None:
+        """Premier lancement : si plusieurs GPU détectés et aucun choix
+        enregistré, pop-up demandant lequel utiliser (persisté en JSON)."""
+        try:
+            from ..gpu import detect_gpus, load_gpu_choice, save_gpu_choice, env_for_device
+            if load_gpu_choice().get("device"):
+                return
+            gpus = [g for g in detect_gpus() if g.backend != "cpu"]
+            if len(gpus) < 2:
+                return
+            top = ctk.CTkToplevel(self.root)
+            top.title("Choisir le GPU")
+            top.geometry("480x260")
+            ctk.CTkLabel(top, text="Plusieurs GPU détectés. Lequel utiliser ?",
+                         font=ctk.CTkFont(size=14, weight="bold")).pack(pady=(16, 8))
+            labels = [f"{g.name}  ({g.device})" for g in gpus]
+            combo = ctk.CTkComboBox(top, values=labels, width=420)
+            combo.set(labels[0])
+            combo.pack(pady=4)
+            def _ok():
+                dev = combo.get().rsplit("(", 1)[1].rstrip(")")
+                save_gpu_choice(dev, env_for_device(dev))
+                top.destroy()
+            ctk.CTkButton(top, text="Valider", fg_color=ACCENT, text_color="#06121a",
+                          command=_ok).pack(pady=10)
+        except Exception:  # noqa: BLE001
+            pass
 
     # ---------- événements ----------
 
