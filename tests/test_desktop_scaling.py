@@ -105,6 +105,52 @@ def test_unit() -> None:
         finally:
             del os.environ["XDG_CONFIG_HOME"]
     assert scaling_mod._hypr_scale() == 0.0  # pas de conf dans ce sandbox
+    # géométrie centrée sur le moniteur du pointeur (multi-écran)
+    import tempfile
+    monitors2 = (
+        '<monitors version="2">'
+        '<monitor><spec><connector>eDP-1</connector></spec>'
+        '<logicalmonitor><x>0</x><y>0</y><width>1440</width><height>900</height>'
+        '<scale>2</scale></logicalmonitor></monitor>'
+        '<monitor><spec><connector>DP-1</connector></spec>'
+        '<logicalmonitor><x>1440</x><y>0</y><width>1920</width><height>1080</height>'
+        '<scale>1</scale></logicalmonitor></monitor>'
+        '</monitors>'
+    )
+    with tempfile.NamedTemporaryFile("w", suffix=".xml", delete=False) as f:
+        f.write(monitors2)
+        mpath2 = f.name
+    try:
+        mons = scaling_mod._monitors_xml_layout(mpath2)
+        assert mons == [(0, 0, 1440, 900, 2.0), (1440, 0, 1920, 1080, 1.0)], mons
+
+        class PtrRoot(StubRoot):
+            def __init__(self, dpi, w, h, px, py):
+                super().__init__(dpi, w, h)
+                self._px, self._py = px, py
+            def winfo_pointerxy(self):
+                return self._px, self._py
+
+        orig_layout = scaling_mod._monitors_xml_layout
+        scaling_mod._monitors_xml_layout = lambda path=None: mons
+        try:
+            # pointeur sur l'écran DP-1 (logique x=1440..3360, scale 1 => physiques idem)
+            r = PtrRoot(96, 4800, 1080, 3000, 500)
+            mon = scaling_mod._pointer_monitor(r, 2.0)
+            assert mon == (1440, 0, 1920, 1080), mon
+            g = scaling_mod._center_geometry(r, 2.0)
+            w, rest = g.split("x", 1)
+            h, xy = rest.split("+", 1)
+            x, y = xy.split("+", 1)
+            assert (int(x), int(y)) == (1440 + (1920 - 1190) // 2, (1080 - 734) // 2), g
+            # pointeur sur eDP-1 (0..2880): fenêtre sur le premier écran
+            r2 = PtrRoot(192, 4800, 1080, 1000, 500)
+            mon2 = scaling_mod._pointer_monitor(r2, 2.0)
+            assert mon2 == (0, 0, 2880, 1800), mon2
+        finally:
+            scaling_mod._monitors_xml_layout = orig_layout
+    finally:
+        os.unlink(mpath2)
     # géométrie adaptative
     assert adaptive_geometry(StubRoot(96, 1920, 1080)) == "1190x734+365+173"
     # petit écran -> minimum, x centré à 0 (pas négatif)

@@ -212,6 +212,71 @@ def ensure_fonts(root) -> None:
         pass
 
 
+def _monitors_xml_layout(path=None):
+    """Liste des moniteurs logiques depuis monitors.xml (GNOME >= 46) :
+    [(x, y, w, h, scale), ...] en coordonnées LOGIQUES. Best-effort : [] si absent."""
+    import xml.etree.ElementTree as ET
+    if path is None:
+        cfg = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
+            os.path.expanduser("~"), ".config")
+        path = os.path.join(cfg, "monitors.xml")
+    try:
+        root = ET.parse(path).getroot()
+    except Exception:  # noqa: BLE001
+        return []
+    out = []
+    for lm in root.iter("logicalmonitor"):
+        try:
+            x = int(float(lm.findtext("x", "0")))
+            y = int(float(lm.findtext("y", "0")))
+            w = int(float(lm.findtext("width", "0")))
+            h = int(float(lm.findtext("height", "0")))
+            s = float(lm.findtext("scale", "1"))
+            if w and h:
+                out.append((x, y, w, h, s))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _pointer_monitor(root, scale: float) -> tuple[int, int, int, int] | None:
+    """Moniteur (x, y, w, h en pixels PHYSIQUES) contenant le pointeur souris,
+    déduit de monitors.xml (Wayland) ou de la géométrie écran X11 (fallback).
+    Retourne None si indéterminé."""
+    try:
+        px, py = root.winfo_pointerxy()
+    except Exception:  # noqa: BLE001
+        return None
+    mons = _monitors_xml_layout()
+    if mons:
+        for (x, y, w, h, s) in mons:
+            if x * s <= px < (x + w) * s and y * s <= py < (y + h) * s:
+                return (round(x * s), round(y * s), round(w * s), round(h * s))
+        return None
+    # fallback X11: un seul écran vu par Tk
+    sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+    if 0 <= px < sw and 0 <= py < sh:
+        return (0, 0, sw, sh)
+    return None
+
+
+def _center_geometry(root, scale: float) -> str:
+    """Géométrie centrée sur le moniteur du pointeur (pas sur l'écran virtuel
+    entier) : sinon la fenêtre s'ouvre sur tous les écrans en multi-monitor."""
+    mon = _pointer_monitor(root, scale)
+    if mon is None:
+        return adaptive_geometry(root)
+    mx, my, mw, mh = mon
+    sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+    w = max(int(mw * 0.62), adaptive_minsize()[0])
+    h = max(int(mh * 0.68), adaptive_minsize()[1])
+    w = min(w, mw)
+    h = min(h, mh)
+    x = mx + max((mw - w) // 2, 0)
+    y = my + max((mh - h) // 2, 0)
+    return f"{w}x{h}+{x}+{y}"
+
+
 def setup_window(root, scale: float) -> None:
     """Applique le scaling puis configure la fenêtre (géométrie adaptative,
     redimensionnable).
@@ -232,5 +297,5 @@ def setup_window(root, scale: float) -> None:
     ctk.set_window_scaling(scale)
     root.maxsize(root.winfo_screenwidth(), root.winfo_screenheight())
     root.minsize(*adaptive_minsize())
-    root.geometry(adaptive_geometry(root))
+    root.geometry(_center_geometry(root, scale))
     root.resizable(True, True)
