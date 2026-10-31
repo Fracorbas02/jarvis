@@ -62,7 +62,10 @@ via **l'API Mistral** (`POST /v1/audio/speech`, modèles `voxtral-*-tts-2603`).
 ```toml
 [voice.tts_api]
 enabled = true
-model = "voxtral-mini-tts-2603"   # ou voxtral-tts-2603 (qualité max)
+model = "voxtral-mini-tts-3-0"     # Voxtral TTS 3 (dernier, 20/10/2026) ; ou 2603/latest
+# La liste du combo "Modèle TTS" dans l'app est rafraîchie dynamiquement via
+# GET /v1/models (bouton Rafraîchir / auto après la clé) : les nouveaux modèles
+# TTS y apparaissent sans mise à jour du code.
 voice_id = "voice_592"            # Marie, FR
 response_format = "mp3"           # mp3 | wav | pcm | flac | opus
 ```

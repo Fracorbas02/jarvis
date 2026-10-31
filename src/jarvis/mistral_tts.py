@@ -29,10 +29,16 @@ import httpx
 from .gpu import config_dir
 
 DEFAULT_BASE_URL = "https://api.mistral.ai"
-DEFAULT_MODEL = "voxtral-mini-tts-2603"
-# modeles TTS dispo (combo UI + validations) ; mini = rapide, 4B = qualite max
-TTS_MODELS = ["voxtral-mini-tts-2603", "voxtral-tts-2603",
+DEFAULT_MODEL = "voxtral-mini-tts-3-0"  # Voxtral TTS 3 (20/10/2026)
+# Modeles TTS connus en fallback (combo UI si l'API est hors ligne).
+# La liste reelle est rafraichie via GET /v1/models (voir list_tts_models) :
+# voxtral-mini-tts-3-0 = Voxtral TTS 3 (20/10/2026, 35+ langues, public preview).
+TTS_MODELS = ["voxtral-mini-tts-3-0", "voxtral-mini-tts-2603", "voxtral-tts-2603",
               "voxtral-mini-tts-latest", "voxtral-tts-latest"]
+
+
+def is_tts_model(model_id: str) -> bool:
+    return "tts" in model_id.lower()
 # voix preset pratiques (doc Mistral "Voices") : nom -> (voice_id, langue)
 PRESET_VOICES: dict[str, tuple[str, str]] = {
     "Marie (FR, femme)": ("voice_592", "fr"),
@@ -165,6 +171,31 @@ class MistralTTSClient:
             return base64.b64decode(b64)
         # r\u00e9ponse binaire directe (certains proxys) : on la prend telle quelle
         return resp.content
+
+    async def list_tts_models(self) -> list[str]:
+        """GET /v1/models -> ids des modeles TTS du compte (filtre 'tts').
+
+        Permet de ne jamais rater un nouveau modele (ex. voxtral-mini-tts-3-0)
+        sans mettre a jour le code. Leve MistralTTSError sur erreur HTTP."""
+        try:
+            resp = await self._http.get("/v1/models")
+        except httpx.HTTPError as exc:
+            raise MistralTTSError(f"GET /v1/models inaccessible : {exc}") from exc
+        if resp.status_code == 401:
+            raise MistralTTSError("cle API invalide ou expiree (401) sur /v1/models")
+        if resp.status_code != 200:
+            raise MistralTTSError(
+                f"GET /v1/models -> HTTP {resp.status_code} "
+                f"({resp.headers.get('Content-Type', '?')}, corps non journalise)")
+        try:
+            data = resp.json()
+        except ValueError as exc:
+            raise MistralTTSError("GET /v1/models -> reponse non-JSON") from exc
+        items = data.get("data", data) if isinstance(data, dict) else data
+        models = sorted({m.get("id", "") for m in items
+                         if isinstance(m, dict) and m.get("id")
+                         and is_tts_model(str(m["id"]))})
+        return models
 
     async def list_voices(self, page_size: int = 100) -> list[MistralVoice]:
         """GET /v1/audio/voices (pagin\u00e9) -> voix preset + custom du workspace."""
