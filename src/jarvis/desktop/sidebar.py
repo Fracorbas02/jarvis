@@ -185,14 +185,19 @@ class Sidebar(ctk.CTkFrame):
                          text_color="#c9d1d9").pack(anchor="w", padx=4, pady=1)
 
     def set_server_status(self, state: str, host: str, port: int,
-                          models: list[str]) -> None:
+                          models: list[str], detail: str = "") -> None:
         self.status_dot.configure(text="●", text_color=_STATUS_COLOR.get(state, "#888888"))
         self.status_label.configure(text=_STATUS_TEXT.get(state, state))
         self.addr_label.configure(text=f"{host}:{port}")
         served = models[0] if models else ""
-        name = served.rsplit("/", 1)[-1] if served else "—"
-        self.served_label.configure(
-            text=f"modèle servi : {name}" if models else "aucun modèle servi")
+        if models:
+            self.served_label.configure(text=f"modèle servi : {served.rsplit('/', 1)[-1]}")
+        elif detail:
+            # ex. "llama-server mort (code 1), voir ~/.cache/jarvis/…" —
+            # sinon l'utilisateur clique sur Démarrer et ne voit « rien »
+            self.served_label.configure(text=detail[:140], text_color="#f85149")
+        else:
+            self.served_label.configure(text="aucun modèle servi", text_color=TEXT_DIM)
         offline = state == "offline"
         managed = state == "managed"
         if offline and self.ctrl.mode == "llm":

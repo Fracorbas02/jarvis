@@ -60,11 +60,11 @@ def test_start_server_passe_env_gpu(monkeypatch, tmp_path):
 
 
 def test_start_server_passe_device_vulkan(monkeypatch, tmp_path):
-    """Choix vulkan:N -> --device N dans l'argv (pas d'env, Vulkan n'en a pas),
-    jamais --device vulkan:N (invalide pour llama.cpp)."""
+    """Choix vulkan (nom ggml "Vulkan1") -> --device Vulkan1 dans l'argv
+    (llama.cpp refuse un index brut "0" : "invalid device"), pas d'env."""
     import jarvis.gpu as gpu
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    gpu.save_gpu_choice("vulkan:1", gpu.env_for_device("vulkan:1"))
+    gpu.save_gpu_choice("Vulkan1", {})
     captured = {}
 
     class FakeProc:
@@ -84,8 +84,7 @@ def test_start_server_passe_device_vulkan(monkeypatch, tmp_path):
     finally:
         server._proc = None
     assert st.state == "managed"
-    assert captured["argv"][captured["argv"].index("--device") + 1] == "1"
-    assert "vulkan:1" not in captured["argv"]
+    assert captured["argv"][captured["argv"].index("--device") + 1] == "Vulkan1"
     assert captured["env"] is None  # aucun env pour vulkan
 
 

@@ -158,7 +158,7 @@ class DesktopApp:
             self.show_error(ev["message"])
         elif kind in ("server_status", "server_started", "server_stopped"):
             self.sidebar.set_server_status(ev["state"], ev["host"], ev["port"],
-                                           ev["models"])
+                                           ev["models"], ev.get("detail", ""))
         elif kind == "voice_status":
             panel = self.panels.get(ev["mode"])
             if isinstance(panel, VoicePanel):

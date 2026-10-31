@@ -158,20 +158,62 @@ def test_gpu_choice_persistence(tmp_path, monkeypatch) -> None:
                                           "HIP_VISIBLE_DEVICES": "",
                                           "ROCR_VISIBLE_DEVICES": ""}
     assert gpu.env_for_device("vulkan:0") == {}  # pas d'env pour vulkan…
-    assert gpu.args_for_device("vulkan:0") == ["--device", "0"]  # …mais --device
+    assert gpu.env_for_device("Vulkan0") == {}
+    assert gpu.env_for_device("CUDA1") == {"CUDA_VISIBLE_DEVICES": "1"}
+    # nom ggml passé tel quel en --device (llama.cpp refuse un index brut)
+    assert gpu.args_for_device("Vulkan1") == ["--device", "Vulkan1"]
     assert gpu.args_for_device("cuda:1") == []   # cuda/hip : l'env suffit
-    assert gpu.args_for_device("hip:1") == []
+    assert gpu.args_for_device("CUDA1") == []
     assert gpu.args_for_device("cpu") == []
-    gpu.save_gpu_choice("vulkan:1", gpu.env_for_device("vulkan:1"))
-    assert gpu.choice_args() == ["--device", "1"]
+    gpu.save_gpu_choice("Vulkan1", {})
+    assert gpu.choice_args() == ["--device", "Vulkan1"]
+    assert gpu.choice_env() == {}
     gpu.save_gpu_choice("cuda:1", gpu.env_for_device("cuda:1"))
     assert gpu.choice_args() == []
     assert gpu.choice_env() == {"CUDA_VISIBLE_DEVICES": "1"}
-    # --device : llama.cpp/whisper.cpp veulent un index, pas "cuda:1"
+    # index numérique extrait du device
     assert gpu.device_index("cuda:1") == "1"
-    assert gpu.device_index("hip:0") == "0"
+    assert gpu.device_index("Vulkan0") == "0"
     assert gpu.device_index("cpu") == "cpu"
     print("OK  gpu choice persistence")
+
+
+def test_args_for_device_vulkan_legacy_index(monkeypatch) -> None:
+    """Ancien choix "vulkan:N" (index vulkaninfo) -> nom ggml par correspondance
+    de nom : l'ordre vulkaninfo diffère de celui de ggml (chez l'utilisateur,
+    GPU0=890M iGPU dans vulkaninfo mais Vulkan1 dans llama-server)."""
+    import jarvis.gpu as gpu
+    list_devices = ("  Vulkan0: AMD Radeon RX 9070 XT (RADV GFX1201) (16304 MiB, 16115 MiB free)\n"
+                    "  Vulkan1: AMD Radeon 890M Graphics (RADV STRIX1) (48701 MiB, 45878 MiB free)\n")
+    vkinfo = ("GPU0:\n\tdeviceName = AMD Radeon 890M Graphics (RADV STRIX1)\n"
+              "GPU1:\n\tdeviceName = AMD Radeon RX 9070 XT (RADV GFX1201)\n")
+
+    def fake_run(cmd):
+        if cmd[:2] == ["llama-server", "--list-devices"]:
+            return list_devices
+        if cmd[:1] == ["vulkaninfo"]:
+            return vkinfo
+        return ""
+
+    monkeypatch.setattr(gpu, "_run", fake_run)
+    assert gpu.args_for_device("vulkan:0") == ["--device", "Vulkan1"]  # 890M
+    assert gpu.args_for_device("vulkan:1") == ["--device", "Vulkan0"]  # 9070 XT
+    print("OK  args_for_device vulkan legacy")
+
+
+def test_detect_gpus_list_devices(monkeypatch) -> None:
+    """Source primaire = llama-server --list-devices : les devices proposés
+    ont directement le nom ggml utilisable en --device."""
+    import jarvis.gpu as gpu
+    list_devices = ("  Vulkan0: AMD Radeon RX 9070 XT (RADV GFX1201) (16304 MiB, 16115 MiB free)\n"
+                    "  Vulkan1: AMD Radeon 890M Graphics (RADV STRIX1) (48701 MiB, 45878 MiB free)\n")
+    monkeypatch.setattr(gpu, "_run",
+                        lambda cmd: list_devices if cmd[:2] == ["llama-server", "--list-devices"] else "")
+    gpus = gpu.detect_gpus()
+    assert [g.device for g in gpus] == ["Vulkan0", "Vulkan1", "cpu"]
+    assert all(g.backend == "vulkan" for g in gpus[:2])
+    assert "9070" in gpus[0].name and "890M" in gpus[1].name
+    print("OK  detect_gpus list-devices")
 
 
 def test_argv_for_device_index() -> None:
@@ -187,8 +229,8 @@ def test_argv_for_device_index() -> None:
     vcfg2 = VoiceServerConfig(binary="whisper-server",
                               base_url="http://127.0.0.1:8178")
     assert "--device" not in _argv_for("stt", vcfg2, Path("/tmp/m.gguf"))
-    argv2 = _argv_for("stt", vcfg2, Path("/tmp/m.gguf"), ["--device", "1"])
-    assert argv2[argv2.index("--device") + 1] == "1"
+    argv2 = _argv_for("stt", vcfg2, Path("/tmp/m.gguf"), ["--device", "Vulkan1"])
+    assert argv2[argv2.index("--device") + 1] == "Vulkan1"
     print("OK  argv_for device index")
 
 
