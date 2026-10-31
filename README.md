@@ -56,9 +56,10 @@ whisper-server --host 127.0.0.1 --port 8178 -m ~/models/stt/Q4_K_M.gguf -ngl 99
 # plus l'encodeur audio mmproj (arch voxtral_realtime) en --mmproj. Si le
 # mmproj*.gguf est dans le même dossier que le modèle, jarvis l'ajoute
 # automatiquement ; sinon : extra_args = ["--mmproj", "~/models/stt/mmproj-...-BF16.gguf"]
-# ex. : huggingface-cli download ggml-org/Voxtral-Mini-4B-Realtime-2602-GGUF \
+# ex. : hf download ggml-org/Voxtral-Mini-4B-Realtime-2602-GGUF \
 #         Voxtral-Mini-4B-Realtime-2602-Q4_K_M.gguf mmproj-Voxtral-Mini-4B-Realtime-2602-BF16.gguf \
 #         --local-dir ~/models/stt/
+# (CLI officielle depuis huggingface_hub v1.0 : `hf`, ex-huggingface-cli déprécié)
 llama-server -m ~/models/stt/Voxtral-Mini-4B-Realtime-2602-Q4_K_M.gguf \
   --mmproj ~/models/stt/mmproj-Voxtral-Mini-4B-Realtime-2602-BF16.gguf \
   --host 127.0.0.1 --port 8178 -ngl 99 --jinja --ctx-size 8192
