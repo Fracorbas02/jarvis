@@ -41,13 +41,16 @@ print("exemple de bloc de code")
 def main() -> None:
     console = Console(width=90, force_terminal=True)
     d = Display(console)
-    for chunk in ["Je cherche ", "les CVE récentes ", "pour Arista…"]:
+    for chunk in ["Je cherche ", "les CVE récentes ", "pour Arista ", "avec search_cve…"]:
         d.reasoning(chunk)
         time.sleep(0.05)
+    d.end_llm_stream()  # fin du stream LLM (panneau replié en ligne résumé)
     for chunk in ["Voici le résultat :\n\n", MD[: len(MD) // 2], MD[len(MD) // 2 :]]:
         d.content(chunk)
         time.sleep(0.05)
     d.end_turn()
+    print("\n--- /thinking ---")
+    d.show_reasoning()
 
 
 if __name__ == "__main__":

@@ -72,6 +72,7 @@ async def amain() -> int:
 
     console = Console()
     console.print(BANNER)
+    display = Display(console)
     history: list[dict] = []
     verbose = False
     try:
@@ -98,14 +99,17 @@ async def amain() -> int:
                 print(f"niveau de log console: {'DEBUG' if verbose else 'WARNING'} "
                       f"(log complet: ~/.cache/jarvis/jarvis.log)")
                 continue
+            if user == "/thinking":
+                display.show_reasoning()
+                continue
 
-            display = Display(console)
             try:
                 reply, history, trace = await agent.turn(
                     history, user,
                     on_tool_call=_tool_status,
                     on_reasoning=display.reasoning,
                     on_content=display.content,
+                    on_llm_end=display.end_llm_stream,
                 )
                 display.end_turn()
                 if reply and not display.content_started:

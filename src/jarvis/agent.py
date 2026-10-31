@@ -32,13 +32,16 @@ class Agent:
         self.stream = stream
 
     async def turn(self, history: list[dict], user_text: str,
-                   on_tool_call=None, on_reasoning=None, on_content=None
+                   on_tool_call=None, on_tool_result=None,
+                   on_reasoning=None, on_content=None, on_llm_end=None
                    ) -> tuple[str, list[dict], TurnTrace]:
         """Exécute un tour complet. Retourne (réponse_texte, historique_maj, trace).
 
         L'historique géré par l'appelant inclut ce tour ; il suffit de le passer
         au tour suivant tel quel. En streaming, on_reasoning/on_content sont
-        appelés fragment par fragment pendant la génération.
+        appelés fragment par fragment pendant la génération, et on_llm_end une
+        fois par réponse LLM terminée (utile pour replier l'affichage du
+        raisonnement même quand la réponse ne contient que des tool_calls).
         """
         if not any(m.get("role") == "system" for m in history):
             history = [{"role": "system", "content": self.system_prompt}, *history]
@@ -52,6 +55,8 @@ class Agent:
             msg = await self.llm.chat(history, tools=tools, stream=self.stream,
                                       on_reasoning=on_reasoning,
                                       on_content=on_content)
+            if on_llm_end:
+                on_llm_end()
 
             if not msg.get("tool_calls"):
                 return msg.get("content") or "", history, trace
