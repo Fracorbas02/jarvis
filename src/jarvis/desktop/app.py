@@ -179,7 +179,7 @@ def _debug_scale(root, scale: float, app=None) -> None:
                         f"measure(JARVIS)={f.measure('JARVIS')}px")
                 # tester un spec pixel -44 avec famille connue vs Roboto
                 for spec in (("Roboto", -44, "bold"), ("DejaVu Sans", -44, "bold"), ("fixed", -44)):
-                    ff = _tkf.Font(family=spec[0], size=spec[1], weight=spec[2] if len(spec) > 2 else "normal")
+                    ff = tkfont.Font(family=spec[0], size=spec[1], weight=spec[2] if len(spec) > 2 else "normal")
                     lines.append(f"[jarvis] debug: Font{spec} actual={ff.actual()} measure={ff.measure('JARVIS')}px")
                     ff.destroy()
             except Exception:
