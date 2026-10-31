@@ -147,10 +147,9 @@ class JarvisWindow(Adw.ApplicationWindow):
 
         # cloche de notifications (badge compteur) + popover
         self._notifs: list[str] = []
-        self._notif_badge = Gtk.Label(label="", halign=Gtk.Align.CENTER,
+        self._notif_badge = Gtk.Label(label="1", halign=Gtk.Align.CENTER,
                                       valign=Gtk.Align.CENTER)
         self._notif_badge.add_css_class("jarvis-notif-badge")
-        self._notif_badge.set_visible(False)
         bell_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
         try:
             from gi.repository import GdkPixbuf
