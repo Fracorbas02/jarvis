@@ -14,6 +14,7 @@ les événements remontent au thread GTK via GLib.idle_add.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import queue
 from pathlib import Path

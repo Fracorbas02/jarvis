@@ -177,8 +177,38 @@ class Agent:
         trace = TurnTrace()
         tools = self._tools_schemas()
 
+        # En streaming, le tag [emotion=..][pace=..] en tete de reponse ne doit
+        # JAMAIS etre affiche : on filtre a la source via un wrapper de on_content
+        # (le 1er fragment peut contenir le tag ; on l'extrait puis on le strippe).
+        from .tts_tags import extract_lead_tags
+        stream_tags: list[str] = []
+        content_started = False
+
+        def _on_content_filtered(chunk: str) -> None:
+            nonlocal content_started
+            if not content_started and on_content is not None:
+                content_started = True
+                buffered = getattr(self, "_tts_tag_buf", "") + chunk
+                tags, clean = extract_lead_tags(buffered)
+                if tags:
+                    stream_tags.extend(tags)
+                    self._tts_tag_buf = ""
+                    if clean:
+                        on_content(clean)
+                    return
+                # pas de tag en tete : on peut laisser passer tel quel
+                self._tts_tag_buf = ""
+                on_content(chunk)
+                return
+            if on_content is not None:
+                on_content(chunk)
+
+        self._tts_tag_buf = ""
+        on_content_cb = _on_content_filtered if (self.stream and on_content) else on_content
+
         for iteration in range(self.max_iterations):
             trace.iterations = iteration + 1
+            content_started = False
             if self.ctx_max is not None and self.ctx_usage is not None:
                 try:
                     used = await self.ctx_usage()
@@ -188,7 +218,7 @@ class Agent:
                     used = self._ctx_estimate(history)
                 history = self._with_ctx_note(history, used)
             msg, history = await self._chat(history, tools, on_reasoning,
-                                            on_content, user_text)
+                                            on_content_cb, user_text)
             if on_llm_end:
                 on_llm_end()
 
@@ -197,9 +227,16 @@ class Agent:
                 content = msg.get("content") or ""
                 # tag d'émotion/pace en tête de réponse (Voxtral TTS 3) : extrait pour
                 # le TTS, mais retiré du texte affiché/sauvegardé (jamais lu à l'écran)
-                from .tts_tags import extract_lead_tags
                 tags, clean = extract_lead_tags(content)
-                if tags:
+                if stream_tags:
+                    # tag deja extrait en streaming (et deja strippe de l'affichage) ;
+                    # en non-stream, stream_tags est vide et on retombe sur le strip final
+                    trace.tts_tags = stream_tags
+                    if not tags:
+                        tags, clean = extract_lead_tags(content)
+                    msg["content"] = clean
+                    content = clean
+                elif tags:
                     trace.tts_tags = tags
                     msg["content"] = clean
                     content = clean
@@ -207,6 +244,7 @@ class Agent:
                     # ton choisi via l'outil interne jarvis__voice_tone
                     trace.tts_tags = self._last_tts_tags
                 self._last_tts_tags = []
+                self._tts_tag_buf = ""
                 return content, history, trace
 
             history.append(msg)

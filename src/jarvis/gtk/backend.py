@@ -159,10 +159,9 @@ class GtkBackend:
 
         self.agent = Agent(self.llm, self.tools, self.cfg.agent.system_prompt,
                            self.cfg.agent.max_iterations, stream=True,
-                           internal_tools={"jarvis__compact": compact_tool},
-                           ctx_max=self.cfg.llm.ctx_size, ctx_usage=_ctx_used)
                            internal_tools={"jarvis__compact": compact_tool,
-                           "jarvis__voice_tone": voice_tone_tool})
+                                           "jarvis__voice_tone": voice_tone_tool},
+                           ctx_max=self.cfg.llm.ctx_size, ctx_usage=_ctx_used)
         self.history: list[dict] = []
         self.busy = False
         self._lock = asyncio.Lock()

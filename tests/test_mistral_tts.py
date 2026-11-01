@@ -426,6 +426,35 @@ def test_voice_tone_internal_tool():
     assert res.startswith("ERREUR"), res
 
 
+def test_streaming_tag_jamais_affiche():
+    """En streaming, le tag [emotion=..] du 1er fragment ne doit JAMAIS passer
+    par on_content (affichage), mais doit etre dans trace.tts_tags (TTS)."""
+    import asyncio as _a
+    from jarvis.agent import Agent
+
+    class FakeLLMStream:
+        async def chat(self, messages, tools=None, stream=False,
+                       on_reasoning=None, on_content=None):
+            assert stream
+            on_content("[emotion=calm] Voici ")
+            on_content("le resultat.")
+            return {"role": "assistant",
+                    "content": "[emotion=calm] Voici le resultat."}
+
+    class FakeTools:
+        def schemas(self): return []
+        async def call(self, n, a): return ""
+
+    shown = []
+    agent = Agent(FakeLLMStream(), FakeTools(), "sys", stream=True)
+    reply, hist, trace = _a.run(agent.turn([], "test",
+                                           on_content=lambda c: shown.append(c)))
+    assert shown == ["Voici ", "le resultat."], shown      # jamais le tag a l'ecran
+    assert reply == "Voici le resultat."
+    assert hist[-1]["content"] == "Voici le resultat."      # historique propre
+    assert trace.tts_tags == ["[emotion=calm]"]             # mais present pour le TTS
+
+
 def test_config_tts_api_toml(tmp_path):
     from jarvis.config import load_config
     cfg_file = tmp_path / "config.toml"
