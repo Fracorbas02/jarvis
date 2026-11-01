@@ -194,6 +194,38 @@ async def amain() -> int:
         usage = await server_ctx_usage("http://127.0.0.1:18091/v1")
         assert usage["n_ctx"] is None  # le mock ne sert pas /props ni /slots
 
+        # /slots multi-slots : used = MAX de n_prompt_tokens (pas data[0], qui peut
+        # être un slot libre à 0 pendant qu'un autre est en cours d'usage)
+        import threading as _th
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        class _SlotsHandler(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                if self.path.rstrip("/").endswith("/slots"):
+                    body = json.dumps([
+                        {"id": 0, "n_ctx": 16384, "n_prompt_tokens": 0},
+                        {"id": 1, "n_ctx": 16384, "n_prompt_tokens": 11174},
+                    ]).encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                else:
+                    self.send_error(404)
+
+        slots_srv = ThreadingHTTPServer(("127.0.0.1", 18092), _SlotsHandler)
+        _th.Thread(target=slots_srv.serve_forever, daemon=True).start()
+        try:
+            usage = await server_ctx_usage("http://127.0.0.1:18092/v1")
+            assert usage["used"] == 11174 and usage["n_ctx"] == 16384, usage
+            assert usage["free"] == 16384 - 11174, usage
+        finally:
+            slots_srv.shutdown()
+
         # stop() rapide : sauvegarde synchrone + tâche de fond, join <= 0.5 s.
         # (ici la boucle n'est pas lancée -> run_coroutine_threadsafe échoue,
         #  ce qui est le chemin "boucle déjà arrêtée" ; on vérifie juste que

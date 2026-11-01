@@ -97,10 +97,14 @@ async def server_ctx_usage(base_url: str, timeout: float = 3.0) -> dict:
             if slots.status_code == 200:
                 data = slots.json()
                 if isinstance(data, list) and data:
-                    s = data[0]
-                    n_ctx = s.get("n_ctx") or out["n_ctx"]
+                    # max sur TOUS les slots : data[0] peut être un slot libre
+                    # (n_prompt_tokens=0) alors qu'un autre est en cours d'usage
+                    used_vals = [int(s.get("n_prompt_tokens") or 0)
+                                 for s in data if isinstance(s, dict)]
+                    n_ctx_vals = [s.get("n_ctx") for s in data if isinstance(s, dict)]
+                    n_ctx = next((v for v in n_ctx_vals if v), out["n_ctx"])
                     out["n_ctx"] = n_ctx
-                    out["used"] = int(s.get("n_prompt_tokens") or 0)
+                    out["used"] = max(used_vals) if used_vals else 0
                     out["free"] = max(0, int(n_ctx or 0) - out["used"])
     except Exception as exc:  # noqa: BLE001 — indicateur best-effort
         log.debug("ctx usage indisponible: %s", exc)
