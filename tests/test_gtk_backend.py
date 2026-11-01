@@ -164,6 +164,36 @@ async def amain() -> int:
         assert parse_lookup("(<{'io.github.Fracorbas02.JarvisX': <['yes']>},)") == "unknown"
         assert parse_lookup('(<{"io.github.Fracorbas02.Jarvis": <["yes"]>},)') == "yes"
 
+        # métriques /metrics (parse Prometheus llama_perf_sampling_*)
+        METRICS = ("# TYPE llama_perf_sampling_prompt_tokens_per_second gauge\n"
+                   "llama_perf_sampling_prompt_tokens_per_second 812.34\n"
+                   "llama_perf_sampling_tokens_per_second 45.67\n")
+        import re as _re2
+        m = _re2.search(r'llama_perf_sampling_prompt_tokens_per_second\s+([\d.]+)', METRICS)
+        assert m and float(m.group(1)) == 812.34
+        m = _re2.search(r'llama_perf_sampling_tokens_per_second\s+([\d.]+)', METRICS)
+        assert m and float(m.group(1)) == 45.67
+        # la fonction server_metrics parse pareil
+        from jarvis.gtk.backend import server_metrics
+        import httpx as _httpx
+        class _FakeResp:
+            status_code = 200
+            text = METRICS
+        async def _fake_get(url, **k):
+            return _FakeResp()
+        class _FakeClient:
+            def __init__(self, **k): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            get = _fake_get
+        orig = _httpx.AsyncClient
+        _httpx.AsyncClient = _FakeClient
+        try:
+            mm = await server_metrics("http://127.0.0.1:9999/v1")
+        finally:
+            _httpx.AsyncClient = orig
+        assert mm["pp_tps"] == 812.34 and mm["tg_tps"] == 45.67, mm
+
         # flag de 1er lancement : le dialogue d'autorisation ne se montre qu'une fois
         gtk_backend.save_ui_settings({"mic_permission_asked": True})
         assert gtk_backend.load_ui_settings()["mic_permission_asked"] is True

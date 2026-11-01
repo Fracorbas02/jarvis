@@ -296,6 +296,12 @@ class JarvisWindow(Adw.ApplicationWindow):
             self.reset_target.append(key, label)
         self.reset_target.set_active(0)
         conv_bar.append(self.reset_target)
+        # bouton info : popover avec les stats de génération (tokens/s du dernier
+        # tour + perfs globales llama-server /metrics)
+        self.btn_info = Gtk.Button(icon_name="info-symbolic", tooltip_text="Infos modèle & perf")
+        self.btn_info.connect("clicked", self._on_info_clicked)
+        conv_bar.append(self.btn_info)
+        self._build_info_popover()
         outer.append(conv_bar)
 
         self.messages = MessagesColumn()
@@ -954,6 +960,46 @@ class JarvisWindow(Adw.ApplicationWindow):
         dialog.close()
         self._send_turn(text)
 
+    def _build_info_popover(self) -> None:
+        """Popover du bouton info : perfs du dernier tour + métriques globales."""
+        self.info_popover = Gtk.Popover()
+        self.info_popover.set_parent(self.btn_info)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
+                      margin_top=12, margin_bottom=12, margin_start=14, margin_end=14)
+        box.set_size_request(300, -1)
+        title = Gtk.Label(label="Perf du modèle", xalign=0)
+        title.add_css_class("heading")
+        box.append(title)
+        self.info_last = Gtk.Label(xalign=0, wrap=True, selectable=True)
+        self.info_last.add_css_class("dim-label")
+        box.append(self.info_last)
+        self.info_server = Gtk.Label(xalign=0, wrap=True, selectable=True)
+        self.info_server.add_css_class("dim-label")
+        box.append(self.info_server)
+        self.info_ctx = Gtk.Label(xalign=0, wrap=True)
+        box.append(self.info_ctx)
+        btn_refresh = Gtk.Button(label="Rafraîchir", valign=Gtk.Align.CENTER)
+        btn_refresh.connect("clicked", lambda b: self.backend.refresh_metrics())
+        box.append(btn_refresh)
+        self.info_popover.set_child(box)
+        self._info_last_txt = "(aucun tour pour l'instant)"
+        self._info_server_txt = "(serveur hors ligne ou métriques indisponibles)"
+        self._render_info()
+
+    def _render_info(self) -> None:
+        if hasattr(self, "info_last"):
+            self.info_last.set_text("Dernier tour : " + self._info_last_txt)
+            self.info_server.set_text("Serveur : " + self._info_server_txt)
+            ctx = getattr(self, "_last_ctx", None) or {}
+            if ctx.get("n_ctx"):
+                self.info_ctx.set_text(f"Contexte : {ctx['used']}/{ctx['n_ctx']} tok")
+            else:
+                self.info_ctx.set_text("Contexte : ?")
+
+    def _on_info_clicked(self, _btn) -> None:
+        self.backend.refresh_metrics()  # récupère /metrics à l'ouverture
+        self.info_popover.popup()
+
     def _on_new_session(self, *_args) -> None:
         self.backend.new_session()
 
@@ -1116,6 +1162,16 @@ class JarvisWindow(Adw.ApplicationWindow):
             self._toast(f"Erreur : {event['message']}")
         elif t == "server_status":
             self._on_server_status(event)
+        elif t == "server_metrics":
+            m = event.get("metrics") or {}
+            parts = []
+            if m.get("pp_tps") is not None:
+                parts.append(f"prompt {m['pp_tps']:.1f} tok/s")
+            if m.get("tg_tps") is not None:
+                parts.append(f"génération {m['tg_tps']:.1f} tok/s")
+            self._info_server_txt = (" · ".join(parts) + " (moy. serveur, /metrics)"
+                                    if parts else "(métriques /metrics indisponibles)")
+            self._render_info()
         elif t == "stt_status":
             self._on_stt_status(event)
         elif t in ("server_started", "server_stopped"):
@@ -1245,6 +1301,14 @@ class JarvisWindow(Adw.ApplicationWindow):
         self._tool_lines.clear()
         self._busy = False
         self._set_busy_ui(False)
+        # stats du tour pour le popover info
+        dur = event.get("duration")
+        tok = event.get("gen_tokens")
+        tps = event.get("gen_tps")
+        if dur is not None and tok is not None:
+            self._info_last_txt = (f"{tok} tok générés en {dur:.1f} s"
+                                  + (f" → {tps} tok/s" if tps else ""))
+            self._render_info()
         if self.tts_enabled and event.get("reply"):
             self.backend.tts_speak(event["reply"])
 
@@ -1269,6 +1333,18 @@ class JarvisWindow(Adw.ApplicationWindow):
         else:
             self.ctx_bar.set_value(0)
             self.ctx_label.set_text("ctx ?")
+        self._last_ctx = ctx
+        m = event.get("metrics") or {}
+        if m.get("tg_tps") is not None or m.get("pp_tps") is not None:
+            parts = []
+            if m.get("pp_tps") is not None:
+                parts.append(f"prompt {m['pp_tps']:.1f} tok/s")
+            if m.get("tg_tps") is not None:
+                parts.append(f"génération {m['tg_tps']:.1f} tok/s")
+            self._info_server_txt = " · ".join(parts) + " (moy. serveur, /metrics)"
+        else:
+            self._info_server_txt = "(métriques /metrics indisponibles)"
+        self._render_info()
         txt = f"{state_txt} — {host}:{port} — {models}{ctx_txt}"
         self.home_status.set_text(txt)
         self.pop_status_label.set_text(txt + (f"\n{event.get('detail') or ''}"
