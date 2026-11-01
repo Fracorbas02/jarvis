@@ -1,14 +1,14 @@
 """Application GTK4 / libadwaita de Jarvis (`uv run jarvis-app`).
 
-Refonte compl\u00e8te de l'UI, sans toucher au reste du projet :
-- page d'accueil : un seul bouton \u00ab Lancer \u00bb (d\u00e9marre le llama-server si
+Refonte complète de l'UI, sans toucher au reste du projet :
+- page d'accueil : un seul bouton « Lancer » (démarre le llama-server si
   besoin, puis ouvre la conversation) ;
-- page conversation : on parle au mod\u00e8le (bouton micro -> STT -> tour LLM),
+- page conversation : on parle au modèle (bouton micro -> STT -> tour LLM),
   le prompt texte vit dans le menu (Ctrl+P) ;
-- onglet r\u00e9glages : th\u00e8me, GPU, taille de contexte, outils MCP.
+- onglet réglages : thème, GPU, taille de contexte, outils MCP.
 
 Toute la logique async est dans backend.GtkBackend (thread asyncio + queue) ;
-les \u00e9v\u00e9nements remontent au thread GTK via GLib.idle_add.
+les événements remontent au thread GTK via GLib.idle_add.
 """
 
 from __future__ import annotations
@@ -118,16 +118,16 @@ class JarvisWindow(Adw.ApplicationWindow):
         header = Adw.HeaderBar()
         toolbar.add_top_bar(header)
 
-        # menu principal (prompt, sessions, tts, \u00e0 propos)
+        # menu principal (prompt, sessions, tts, à propos)
         menu = Gio.Menu()
-        menu.append("Prompt\u2026", "app.prompt")
+        menu.append("Prompt…", "app.prompt")
         menu.append("Nouvelle conversation", "app.new-session")
-        menu.append("Conversations\u2026", "app.sessions")
+        menu.append("Conversations…", "app.sessions")
         section = Gio.Menu()
-        section.append("Lire les r\u00e9ponses \u00e0 voix haute", "app.tts")
+        section.append("Lire les réponses à voix haute", "app.tts")
         menu.append_section(None, section)
         section2 = Gio.Menu()
-        section2.append("\u00c0 propos", "app.about")
+        section2.append("À propos", "app.about")
         menu.append_section(None, section2)
         menu_button = Gtk.MenuButton(menu_model=menu, icon_name="open-menu-symbolic",
                                      tooltip_text="Menu")
@@ -145,7 +145,7 @@ class JarvisWindow(Adw.ApplicationWindow):
         self._build_status_popover()
 
         self.mic_button = Gtk.Button(icon_name="audio-input-microphone-symbolic",
-                                     tooltip_text="Parler \u00e0 Jarvis (micro)")
+                                     tooltip_text="Parler à Jarvis (micro)")
         self.mic_button.connect("clicked", self._on_mic)
         header.pack_end(self.mic_button)
 
@@ -182,7 +182,7 @@ class JarvisWindow(Adw.ApplicationWindow):
                                         "go-home-symbolic")
         self.stack.add_titled_with_icon(self._build_chat(), "chat", "Conversation",
                                         "user-available-symbolic")
-        self.stack.add_titled_with_icon(self._build_settings(), "settings", "R\u00e9glages",
+        self.stack.add_titled_with_icon(self._build_settings(), "settings", "Réglages",
                                         "preferences-system-symbolic")
         toolbar.set_content(self.stack)
         self.set_content(toolbar)
@@ -1084,7 +1084,7 @@ class JarvisWindow(Adw.ApplicationWindow):
                 args_txt = _json.dumps(event["args"], ensure_ascii=False)
                 if len(args_txt) > 120:
                     args_txt = args_txt[:117] + "..."
-                mark = "\u2713" if event["ok"] else "\u2717"
+                mark = "✓" if event["ok"] else "✗"
                 lbl.set_text(f"{mark} {event['name']}({args_txt}) "
                              f"{event['duration']:.2f}s")
                 if not event["ok"]:
@@ -1143,7 +1143,7 @@ class JarvisWindow(Adw.ApplicationWindow):
             elif event.get("error"):
                 self._toast(f"Voix API : {event['error']}")
         elif t == "tts_fallback":
-            self._toast(f"TTS local utilis\u00e9 en secours : {event.get('message', '')}")
+            self._toast(f"TTS local utilisé en secours : {event.get('message', '')}")
         elif t == "mistral_tts_test":
             self._toast(("TTS API OK — " + event.get("message", ""))
                         if event.get("ok")
@@ -1323,7 +1323,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(name)s %(levelname)s %(message)s")
-    # les requ\u00eates de statut (httpx) polluent le terminal toutes les 2 s
+    # les requêtes de statut (httpx) polluent le terminal toutes les 2 s
     logging.getLogger("httpx").setLevel(logging.WARNING)
     if args.debug_stt:
         logging.getLogger("jarvis.voice").setLevel(logging.DEBUG)

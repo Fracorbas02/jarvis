@@ -589,8 +589,8 @@ class STTClient:
 
     async def _post_chat_audio(self, path: Path, language: str | None) -> "httpx.Response":
         """Fallback chat multimodal : POST /v1/chat/completions avec le WAV en
-        base64 dans un bloc input_audio (chemin des mod\u00e8les audio llama.cpp
-        quand la route /v1/audio/transcriptions n'est pas enregistr\u00e9e)."""
+        base64 dans un bloc input_audio (chemin des modèles audio llama.cpp
+        quand la route /v1/audio/transcriptions n'est pas enregistrée)."""
         import base64
         b64 = base64.b64encode(path.read_bytes()).decode("ascii")
         lang_hint = f" in {language}" if language else ""
@@ -630,12 +630,12 @@ class STTClient:
         path = Path(wav_path)
         if not path.is_file():
             raise VoiceError(f"fichier audio introuvable : {path}")
-        # Strat\u00e9gies selon le protocole, en cascade :
+        # Stratégies selon le protocole, en cascade :
         #  voxtral : /v1/audio/transcriptions -> chat multimodal -> /inference
         #  whisper : /inference -> /v1/audio/transcriptions -> chat multimodal
-        # Le chat multimodal ne sert que si le serveur a une capacit\u00e9 audio
-        # (mmproj charg\u00e9) mais pas la route batch ; /inference couvre un
-        # whisper-server lanc\u00e9 \u00e0 la main.
+        # Le chat multimodal ne sert que si le serveur a une capacité audio
+        # (mmproj chargé) mais pas la route batch ; /inference couvre un
+        # whisper-server lancé à la main.
         if self.protocol == "voxtral":
             endpoints = [("/v1/audio/transcriptions", {"model": self.model}),
                          ("/inference", {})]
@@ -658,7 +658,7 @@ class STTClient:
                 text = payload.get("text") if isinstance(payload, dict) else None
                 if text is None:
                     raise VoiceError(
-                        f"r\u00e9ponse inattendue du serveur STT : {str(payload)[:500]}")
+                        f"réponse inattendue du serveur STT : {str(payload)[:500]}")
                 return text.strip()
             if resp.status_code == 404:
                 continue  # endpoint absent -> on essaie le suivant

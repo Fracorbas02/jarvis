@@ -1,7 +1,7 @@
-"""Mock websocket /v1/realtime?intent=transcription (stdlib asyncio, thread d\u00e9di\u00e9).
+"""Mock websocket /v1/realtime?intent=transcription (stdlib asyncio, thread dédié).
 
-Pour tester RealtimeSTTClient sans mod\u00e8le : handshake RFC 6455 (101),
-puis lit les trames masqu\u00e9es du client, r\u00e9pond session.updated, et apr\u00e8s
+Pour tester RealtimeSTTClient sans modèle : handshake RFC 6455 (101),
+puis lit les trames masquées du client, répond session.updated, et après
 input_audio_buffer.commit envoie conversation.item.input_audio_transcription.completed
 avec un texte bidon + response.done.
 
@@ -30,7 +30,7 @@ def _free_port() -> int:
 
 
 def start_ws_realtime(text: str = "bonjour jarvis"):
-    """D\u00e9marre le mock WS dans un thread. Retourne (port, ready_event, stop_fn)."""
+    """Démarre le mock WS dans un thread. Retourne (port, ready_event, stop_fn)."""
     port = _free_port()
     ready = threading.Event()
     state = {"loop": None, "server": None}
