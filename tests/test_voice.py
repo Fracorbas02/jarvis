@@ -430,7 +430,7 @@ def test_record_wav_vad_fin_de_parole() -> None:
         import tempfile
         out = Path(tempfile.mkdtemp()) / "vad.wav"
         p = _run(voice.record_wav_vad(cfg, out_path=out, max_seconds=60.0,
-                                      silence_seconds=0.25, silence_rms=300.0,
+                                      silence_seconds=0.25, silence_rms=800.0,
                                       min_seconds=0.5))
         import wave
         with wave.open(str(p)) as w:
@@ -457,6 +457,70 @@ def test_wav_rms_via_pcm() -> None:
     sig = write_wav(tmp / "g.wav", b"\x00\x40" * 16000)
     with wave.open(str(sig)) as w:
         assert _pcm_rms(w.readframes(w.getnframes())) > 10000
+
+
+def test_record_wav_vad_seuil_adaptatif() -> None:
+    """Seuil adaptatif + garde heard_speech : avec floor=1000 (seuil 2500),
+    un bloc fort (16384 >= 2*2500) est de la parole, un bloc faible (512) est
+    du silence -> le VAD s'arrête. Sans parole entendue, il ne coupe pas."""
+    import asyncio
+    import jarvis.voice as voice
+    loud = b"\x00\x40" * 1600      # RMS ~16384 (parole forte)
+    mid = b"\x00\x02" * 1600       # RMS ~512 (silence sous seuil 2500)
+    chunks = [loud] * 10 + [mid] * 30
+
+    class FakeStdout:
+        def __init__(self): self.i = 0
+        async def read(self, n):
+            await asyncio.sleep(0)
+            if self.i < len(chunks):
+                c = chunks[self.i]; self.i += 1; return c
+            return b""
+    class FakeProc:
+        def __init__(self): self.stdout = FakeStdout(); self.returncode = 0
+        def terminate(self): self.returncode = -15
+        async def wait(self): return self.returncode
+        async def communicate(self): return b"", b""
+    async def fake_exec(*a, **k): return FakeProc()
+    orig_exec, orig_which = voice.asyncio.create_subprocess_exec, voice.shutil.which
+    voice.asyncio.create_subprocess_exec = fake_exec
+    voice.shutil.which = lambda c: "/usr/bin/" + c
+    try:
+        import tempfile, wave
+        from jarvis.config import VoiceConfig
+        cfg = VoiceConfig(record_cmd=["ffmpeg", "-loglevel", "error", "-f", "pulse",
+                                      "-i", "default", "-ar", "16000", "-ac", "1",
+                                      "-f", "s16le", "-"])
+        out = Path(tempfile.mkdtemp()) / "vad2.wav"
+        p = _run(voice.record_wav_vad(cfg, out_path=out, max_seconds=60.0,
+                                      silence_seconds=0.25, silence_rms=300.0,
+                                      min_seconds=0.5, noise_floor=1000.0))
+        with wave.open(str(p)) as w:
+            secs = w.getnframes() / w.getframerate()
+        assert 1.0 <= secs <= 2.0, secs  # 1 s parole + 0.25 s silence -> coupe
+    finally:
+        voice.asyncio.create_subprocess_exec = orig_exec
+        voice.shutil.which = orig_which
+
+
+def test_cleanup_recordings_garde_le_dernier(tmp_path, monkeypatch) -> None:
+    """cleanup_recordings(keep=1) supprime les vieux rec-*.wav, garde le plus récent."""
+    import os, time
+    from jarvis.voice import cleanup_recordings
+    monkeypatch.setenv("JARVIS_LOG_DIR", str(tmp_path))
+    files = []
+    for i in range(5):
+        f = tmp_path / f"rec-1-{i}.wav"
+        f.write_bytes(b"RIFF" + bytes([i]))
+        os.utime(f, (1000 + i, 1000 + i))  # mtime croissant
+        files.append(f)
+    (tmp_path / "voice-stt.log").write_text("log")  # pas un rec-*.wav -> intact
+    n = cleanup_recordings(keep=1)
+    assert n == 4, n
+    assert files[-1].is_file()          # le plus récent est gardé
+    assert not files[0].exists()
+    assert (tmp_path / "voice-stt.log").is_file()
+    assert cleanup_recordings(keep=1) == 0  # idempotent
 
 
 def test_pcm_rms():
