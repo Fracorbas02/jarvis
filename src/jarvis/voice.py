@@ -645,7 +645,13 @@ class STTClient:
             on_status("transcription en cours…")
         last_err = ""
         for endpoint, extra in endpoints:
-            resp = await self._post_transcription(path, language, endpoint, extra)
+            try:
+                resp = await self._post_transcription(path, language, endpoint, extra)
+            except (httpx.TransportError, httpx.HTTPError) as exc:
+                # serveur mort / connexion coupée (ReadError) : on essaie le
+                # endpoint suivant (puis le websocket) au lieu de tout planter
+                last_err = f"{endpoint} -> {type(exc).__name__}: {exc}"
+                continue
             if resp.status_code == 200:
                 payload = resp.json()
                 text = payload.get("text") if isinstance(payload, dict) else None
@@ -1065,6 +1071,8 @@ async def record_wav_vad(voice_cfg: VoiceConfig, out_path: Path | None = None,
                     pass
             rms = _pcm_rms(chunk)
             total += len(chunk) / 2 / SAMPLE_RATE
+            if total <= 3.0:
+                log.debug("vad bloc t=%.2f rms=%.0f seuil=%.0f heard=%s", total, rms, threshold, heard_speech)
             if floor is None and total <= calib_until:
                 calib_min = rms if calib_min is None else min(calib_min, rms)
                 if total >= calib_until:
