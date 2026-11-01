@@ -140,7 +140,6 @@ def _css() -> None:
     .jarvis-entry-bar { background-color: alpha(@window_fg_color, 0.05);
                         border: 1px solid alpha(@window_fg_color, 0.1);
                         border-radius: 24px; padding: 6px 8px; }
-    .jarvis-chat-bar { max-width: 70%; }   /* carte de saisie = 70% de la largeur page */
     .jarvis-entry-modern textview, .jarvis-entry-modern {
         background: transparent; border: none;
     }
