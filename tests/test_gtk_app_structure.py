@@ -93,9 +93,15 @@ def main() -> int:
         # régression #37 : la webview ne doit PAS prendre toute la hauteur (vexpand)
         wv_src = inspect.getsource(gtk_widgets.MessageBox._make_webview)
         assert "set_vexpand(False)" in wv_src and "set_vexpand(True)" not in wv_src
+        assert "set_size_request(300, 60)" in wv_src  # viewport WebKit non nul
+        # webkit opt-in : pas actif sans JARVIS_WEBKIT=1
+        mod_src = inspect.getsource(gtk_widgets)
+        assert 'JARVIS_WEBKIT' in mod_src
         # la branche webview vit dans _render_webview (appelée par _render_md avec
         # try/except -> repli natif si WebKit KO)
         wv_render = inspect.getsource(gtk_widgets.MessageBox._render_webview)
+        # _render_webview ne doit resetter que la hauteur, pas la largeur
+        assert "set_size_request(300, -1)" in wv_render
         assert "set_vexpand(True)" not in wv_render  # hauteur auto = contenu HTML
         assert "self.webview.set_visible(True)" in wv_render
         assert "self.webview.set_visible(False)" not in wv_render
