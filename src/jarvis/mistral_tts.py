@@ -131,13 +131,17 @@ class MistralTTSClient:
         )
 
     async def synthesize(self, text: str, voice_id: str | None = None,
-                         response_format: str = "mp3") -> bytes:
-        """Synthétise `text` -> octets audio (mp3 par défaut).
+                         response_format: str = "mp3",
+                         tts_tags: list[str] | None = None) -> bytes:
+        """Synth\u00e9tise `text` -> octets audio (mp3 par d\u00e9faut).
 
         L'API renvoie {"audio_data": "<base64>"} en non-stream ; on décode.
         """
         if not text.strip():
             raise MistralTTSError("texte vide")
+        if tts_tags:
+            from .tts_tags import apply_tags
+            text = apply_tags(text, tts_tags)
         payload: dict = {"model": self.model, "input": text,
                          "response_format": response_format}
         if voice_id:

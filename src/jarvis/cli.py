@@ -35,13 +35,14 @@ from rich.text import Text
 
 from .agent import Agent
 from .compact import compact_history, compact_tool
+from .voice_tone import voice_tone_tool
 from .config import load_config
 from .llm import LLMClient
 from .mcp import McpToolProvider
 from .sessions import SessionStore
 from .tui import Display
 from .ttyguard import install as install_tty_guard, restore_stdin
-from .voice import (VoiceError, play_wav, record_wav, record_wav_vad,
+from .voice import (VoiceError, play_wav, record_wav_vad,
                     stop_all_voice_servers, synthesize, transcribe_file,
                     voice_server_status)
 
@@ -381,11 +382,22 @@ async def _cmd_tts(cfg, console, args: str) -> None:
             client = MistralTTSClient(key, base_url=tts_api.base_url,
                                       model=tts_api.model)
             try:
+                from .tts_tags import extract_lead_tags
+                tags, clean = extract_lead_tags(text)
+                if tags and getattr(tts_api, "emotion_tags", True):
+                    text = clean  # le tag n'est jamais lu tel quel
+                    payload_tags = tags
+                else:
+                    payload_tags = None
                 audio = await client.synthesize(
                     text, voice_id=tts_api.voice_id or None,
-                    response_format=tts_api.response_format or "mp3")
+                    response_format=tts_api.response_format or "mp3",
+                    tts_tags=payload_tags)
                 ext = tts_api.response_format or "mp3"
-                src = f"API Mistral ({tts_api.model}, {tts_api.voice_id})"
+                src = f"API Mistral ({tts_api.model}, {tts_api.voice_id}"
+                if payload_tags:
+                    src += ", tags " + " ".join(payload_tags)
+                src += ")"
             except Exception as exc:  # noqa: BLE001 — réseau/401/403/404
                 api_error = str(exc)
                 console.print(f"[yellow]API Mistral en échec ({exc}) "
@@ -552,6 +564,10 @@ async def amain() -> int:
     tools = McpToolProvider(cfg.mcp_servers)
     if cfg.mcp_servers:
         await tools.start()
+    agent = Agent(llm, tools, cfg.agent.system_prompt, cfg.agent.max_iterations,
+                  stream=True, internal_tools={"jarvis__compact": compact_tool,
+                           "jarvis__voice_tone": voice_tone_tool})
+
     console = _make_console()
     display = Display(console)
     server = await _server_info(cfg.llm.base_url, cfg.llm.ctx_size)

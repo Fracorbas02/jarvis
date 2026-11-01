@@ -332,6 +332,129 @@ def test_default_model_est_la_v3():
     assert DEFAULT_MODEL == "voxtral-mini-tts-3-0"
 
 
+def test_tts_tags_prefixes_dans_input():
+    """synthesize(..., tts_tags=['[emotion=calm]']) -> input commence par le tag."""
+    srv, t = _start_mock()
+    port = srv.server_address[1]
+    try:
+        async def go():
+            c = MistralTTSClient("test-key-123", base_url=f"http://127.0.0.1:{port}")
+            try:
+                audio = await c.synthesize("Bonjour !", voice_id="voice_592",
+                                           tts_tags=["[emotion=calm]", "[pace=slow]"])
+                return audio
+            finally:
+                await c.aclose()
+        audio = asyncio.run(go())
+        assert audio == FAKE_AUDIO
+        inp = Handler.last_payload["input"]
+        assert inp.startswith("[emotion=calm][pace=slow] "), inp
+        assert inp.endswith("Bonjour !"), inp
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_tts_tags_module():
+    """extract_lead_tags / strip_all_tags / apply_tags."""
+    from jarvis.tts_tags import extract_lead_tags, strip_all_tags, apply_tags
+    tags, clean = extract_lead_tags("[emotion=happy] Salut !")
+    assert tags == ["[emotion=happy]"] and clean == "Salut !"
+    tags2, clean2 = extract_lead_tags("Salut [emotion=happy] !")
+    assert tags2 == [] and clean2 == "Salut [emotion=happy] !"
+    assert strip_all_tags("a [emotion=sad] b") == "a  b"
+    assert apply_tags("Yo", ["[pace=fast]"]) == "[pace=fast] Yo"
+
+
+def test_agent_extrait_tag_et_nettoie():
+    """Tour dont la reponse commence par [emotion=..] : tag dans trace.tts_tags,
+    content retourne/historique nettoye."""
+    import asyncio as _a
+    from jarvis.agent import Agent
+
+    class FakeLLM:
+        async def chat(self, messages, tools=None, stream=False, **kw):
+            return {"role": "assistant",
+                    "content": "[emotion=calm] Voici la réponse."}
+
+    class FakeTools:
+        def schemas(self):
+            return []
+        async def call(self, name, args):
+            return ""
+
+    agent = Agent(FakeLLM(), FakeTools(), "sys", stream=False)
+    reply, history, trace = _a.run(agent.turn([], "test"))
+    assert reply == "Voici la réponse.", repr(reply)
+    assert trace.tts_tags == ["[emotion=calm]"], trace.tts_tags
+    assert history[-1]["content"] == "Voici la réponse."
+
+
+def test_voice_tone_internal_tool():
+    """L'outil interne jarvis__voice_tone fixe trace.tts_tags via un appel d'outil."""
+    import asyncio as _a
+    from jarvis.agent import Agent
+    from jarvis.voice_tone import voice_tone_tool
+
+    class FakeLLM:
+        def __init__(self): self.calls = 0
+        async def chat(self, messages, tools=None, stream=False, **kw):
+            self.calls += 1
+            if self.calls == 1:
+                return {"role": "assistant", "content": None, "tool_calls": [{
+                    "id": "c1", "type": "function",
+                    "function": {"name": "jarvis__voice_tone",
+                                 "arguments": '{"emotion": "excited", "pace": "fast"}'}}]}
+            return {"role": "assistant", "content": "Bonne nouvelle !"}
+
+    class FakeTools:
+        def schemas(self): return []
+        async def call(self, n, a): return ""
+
+    agent = Agent(FakeLLM(), FakeTools(), "sys", stream=False,
+                  internal_tools={"jarvis__voice_tone": voice_tone_tool})
+    reply, _hist, trace = _a.run(agent.turn([], "test"))
+    assert reply == "Bonne nouvelle !"
+    assert trace.tts_tags == ["[emotion=excited]", "[pace=fast]"], trace.tts_tags
+
+    # emotion invalide -> ERREUR remontee au modele, pas de tag
+    agent2 = Agent(FakeLLM(), FakeTools(), "sys", stream=False,
+                   internal_tools={"jarvis__voice_tone": voice_tone_tool})
+    async def bad():
+        return await voice_tone_tool.fn(agent2, [], {"emotion": " rage"})
+    res, _ = _a.run(bad())
+    assert res.startswith("ERREUR"), res
+
+
+def test_streaming_tag_jamais_affiche():
+    """En streaming, le tag [emotion=..] du 1er fragment ne doit JAMAIS passer
+    par on_content (affichage), mais doit etre dans trace.tts_tags (TTS)."""
+    import asyncio as _a
+    from jarvis.agent import Agent
+
+    class FakeLLMStream:
+        async def chat(self, messages, tools=None, stream=False,
+                       on_reasoning=None, on_content=None):
+            assert stream
+            on_content("[emotion=calm] Voici ")
+            on_content("le resultat.")
+            return {"role": "assistant",
+                    "content": "[emotion=calm] Voici le resultat."}
+
+    class FakeTools:
+        def schemas(self): return []
+        async def call(self, n, a): return ""
+
+    shown = []
+    agent = Agent(FakeLLMStream(), FakeTools(), "sys", stream=True)
+    reply, hist, trace = _a.run(agent.turn([], "test",
+                                           on_content=lambda c: shown.append(c)))
+    assert shown == ["Voici ", "le resultat."], shown      # jamais le tag a l'ecran
+    assert reply == "Voici le resultat."
+    assert hist[-1]["content"] == "Voici le resultat."      # historique propre
+    assert trace.tts_tags == ["[emotion=calm]"]             # mais present pour le TTS
+
+
 def test_config_tts_api_toml(tmp_path):
     from jarvis.config import load_config
     cfg_file = tmp_path / "config.toml"

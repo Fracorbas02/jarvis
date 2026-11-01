@@ -72,6 +72,20 @@ response_format = "mp3"           # mp3 | wav | pcm | flac | opus
 
 Au CLI, `/tts <texte>` utilise l'API si `[voice.tts_api] enabled=true`.
 
+### Émotions dans la voix (tags Voxtral TTS 3)
+
+Quand le TTS API Mistral est actif, le LLM peut poser un **tag inline en tête de
+réponse** (1re ligne) : `[emotion=calm]`, `[emotion=happy]`, `[emotion=curious]`,
+`[pace=slow]`… (34 émotions + 2 pace, Voxtral TTS 3). Jarvis extrait le tag,
+**l'envoie uniquement au TTS** (il rend la voix plus expressive) et le **retire du
+texte affiché et de l'historique** (jamais lu à l'écran). Réglable :
+`[voice.tts_api] emotion_tags = false` pour désactiver. Le `system_prompt` de
+`config.example.toml` contient l'instruction pour le LLM.
+
+**Outil interne `jarvis__voice_tone`** (plus fiable qu'un tag oublié) : le LLM
+appelle explicitement `jarvis__voice_tone({"emotion": "excited", "pace": "fast"})` ;
+Jarvis enregistre le ton dans `trace.tts_tags` et l'envoie au TTS uniquement.
+
 ## Voix locale (STT + TTS)
 
 Deux serveurs indépendants du llama-server principal, configurés dans

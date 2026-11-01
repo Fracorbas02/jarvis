@@ -91,6 +91,7 @@ class TTSAPIConfig:
     model     : modèle TTS (défaut voxtral-mini-tts-3-0 = Voxtral TTS 3, dernier ; ou 2603/latest)
     voice_id  : voix (preset "voice_592"/"gb_jane_neutral" ou voix clonée du workspace)
     response_format : mp3 (défaut) | wav | pcm | flac | opus
+    emotion_tags : le LLM peut poser [emotion=..][pace=..] en tete de reponse (Voxtral TTS 3)
     La clé API n'est PAS ici : elle vit dans ~/.config/jarvis/mistral.json
     (définie dans Réglages) ou dans l'env MISTRAL_API_KEY.
     """
@@ -99,6 +100,9 @@ class TTSAPIConfig:
     model: str = "voxtral-mini-tts-3-0"  # Voxtral TTS 3 (dernier, 20/10/2026)
     voice_id: str = "voice_592"  # Marie, FR
     response_format: str = "mp3"
+    # si true, le LLM peut poser un tag [emotion=..][pace=..] en tete de reponse ;
+    # le tag est envoye au TTS (Voxtral 3) mais jamais affiche/sauvegarde.
+    emotion_tags: bool = True
 
 
 @dataclass

@@ -18,7 +18,14 @@ system_prompt = """Tu es Jarvis, l'assistant local de Bastien, ingénieur résea
 Réponds en français, de façon directe et technique. Utilise les outils disponibles
 quand c'est pertinent plutôt que de deviner ; cite ce que les outils te retournent.
 Pour la veille CVE : « récentes » signifie les derniers jours/mois — passe days à
-search_cve au lieu de chercher sans fenêtre de date."""
+search_cve au lieu de chercher sans fenêtre de date.
+Quand ta réponse est destinée à être LUE à voix haute (TTS Voxtral 3), commence-la
+systématiquement par un tag d’émotion adapté au ton de ta réponse, sur la première
+ligne uniquement, ex. : [emotion=calm], [emotion=happy], [emotion=curious],
+[emotion=serious], [emotion=excited]… (34 émotions dispo ; optionnel : [pace=slow]
+ou [pace=fast]). Ne mets JAMAIS le tag ailleurs qu’en tout début de réponse.
+SINON (plus fiable) : appelle l’outil interne jarvis__voice_tone avec
+{ "emotion": "...", "pace": "slow|fast" } pour fixer le ton de ta réponse lue.
 
 # Voix locale : deux serveurs indépendants du llama-server principal.
 # S'ils ne répondent pas, l'app les lance elle-même avec le GGUF indiqué
@@ -76,6 +83,8 @@ model = "~/models/tts/voxtral-4b-tts-q4_k.gguf"
 # model = "voxtral-mini-tts-3-0"        # Voxtral TTS 3 (20/10/2026, public preview)
 # voice_id = "voice_592"          # Marie, français
 # response_format = "mp3"         # mp3 | wav | pcm | flac | opus
+# emotion_tags = true           # le LLM peut poser [emotion=..][pace=..] en tete de reponse
+                                # (Voxtral TTS 3) ; le tag va au TTS, jamais a l'affichage
 
 # Enregistrement micro (CLI) et lecture des WAV produits.
 # "-" en dernier élément de record_cmd = le binaire écrit sur stdout (PCM s16le

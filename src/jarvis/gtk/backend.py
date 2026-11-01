@@ -36,6 +36,7 @@ import httpx
 
 from ..agent import Agent
 from ..compact import compact_tool
+from ..voice_tone import voice_tone_tool
 from ..config import Config, load_config
 from ..gpu import args_for_device, config_dir, env_for_device, load_gpu_choice, save_gpu_choice
 from ..models import discover_models
@@ -158,7 +159,8 @@ class GtkBackend:
 
         self.agent = Agent(self.llm, self.tools, self.cfg.agent.system_prompt,
                            self.cfg.agent.max_iterations, stream=True,
-                           internal_tools={"jarvis__compact": compact_tool},
+                           internal_tools={"jarvis__compact": compact_tool,
+                                           "jarvis__voice_tone": voice_tone_tool},
                            ctx_max=self.cfg.llm.ctx_size, ctx_usage=_ctx_used)
         self.history: list[dict] = []
         self.busy = False
@@ -294,7 +296,8 @@ class GtkBackend:
                   "gen_tps": round(n_tok / duration, 1) if duration > 0 else None,
                   "trace": {"tool_calls": trace.tool_calls,
                             "iterations": trace.iterations,
-                            "error": trace.error}})
+                            "error": trace.error,
+                            "tts_tags": trace.tts_tags}})
             self._save_session()
         except Exception as exc:  # noqa: BLE001 — remonter à l'UI
             log.exception("tour en erreur")
@@ -610,10 +613,10 @@ class GtkBackend:
             log.debug("portail permission indisponible: %s", exc)
         self.events.put({"type": "mic_permission", "state": state})
 
-    def tts_speak(self, text: str) -> None:
-        self._run(self._atts(text))
+    def tts_speak(self, text: str, tags: list[str] | None = None) -> None:
+        self._run(self._atts(text, tags))
 
-    async def _atts(self, text: str) -> None:
+    async def _atts(self, text: str, tags: list[str] | None = None) -> None:
         """Lit `text` à voix haute.
 
         Source : API Mistral si [voice.tts_api] enabled ET clé enregistrée,
@@ -630,7 +633,7 @@ class GtkBackend:
         api_error: str | None = None
         if tts_api is not None and tts_api.enabled:
             try:
-                audio, ext = await self._atts_api(text)
+                audio, ext = await self._atts_api(text, tags)
             except Exception as exc:  # noqa: BLE001 — MistralTTSError + réseau
                 api_error = str(exc)
                 log.warning("TTS API Mistral en échec, fallback local : %s", exc)
@@ -657,8 +660,9 @@ class GtkBackend:
         except Exception as exc:  # noqa: BLE001
             self.events.put({"type": "voice_error", "message": str(exc)})
 
-    async def _atts_api(self, text: str) -> tuple[bytes, str]:
-        """TTS via l'API Mistral. Retourne (octets audio, extension)."""
+    async def _atts_api(self, text: str, tags: list[str] | None = None) -> tuple[bytes, str]:
+        """TTS via l'API Mistral. Retourne (octets audio, extension).
+        tags : [emotion=..][pace=..] inline (Voxtral 3) si emotion_tags actif."""
         from ..mistral_tts import (MistralTTSClient, MistralTTSError,
                                     load_api_key)
         tts_api = self.cfg.tts_api
@@ -667,12 +671,14 @@ class GtkBackend:
             raise MistralTTSError(
                 "clé API Mistral absente — Réglages > Voix API Mistral, "
                 "ou export MISTRAL_API_KEY")
+        use_tags = tags if getattr(tts_api, "emotion_tags", True) else None
         client = MistralTTSClient(key, base_url=tts_api.base_url,
                                   model=tts_api.model)
         try:
             audio = await client.synthesize(
                 text, voice_id=tts_api.voice_id or None,
-                response_format=tts_api.response_format or "mp3")
+                response_format=tts_api.response_format or "mp3",
+                tts_tags=use_tags)
             return audio, (tts_api.response_format or "mp3")
         finally:
             await client.aclose()
