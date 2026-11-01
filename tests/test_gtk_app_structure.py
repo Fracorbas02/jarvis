@@ -133,6 +133,10 @@ def main() -> int:
         # zone de saisie multi-lignes : TextView + Maj+Entrée
         chat_src = inspect.getsource(gtk_app.JarvisWindow._build_chat_content)
         assert "Gtk.TextView" in chat_src and "EventControllerKey" in chat_src
+        # raisonnement en Markdown (reasoning_box + _flush_reasoning) + outils dépliables
+        mb_src = inspect.getsource(gtk_widgets.MessageBox)
+        assert "reasoning_box" in mb_src and "_flush_reasoning" in mb_src
+        assert "set_tool_result" in mb_src and "Adw.ExpanderRow" in mb_src
         assert "max-width: 70%" in open(ROOT / "src/jarvis/gtk/widgets.py", encoding="utf-8").read()
         print("OK  gtk app structure (main/JarvisApp/JarvisWindow handlers + markdown)")
         return 0

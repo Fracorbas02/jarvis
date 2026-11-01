@@ -76,6 +76,10 @@ def _css() -> None:
     .jarvis-msg-assistant .jarvis-bubble { background-color: alpha(@window_fg_color, 0.06); }
     .jarvis-reasoning { color: alpha(@window_fg_color, 0.55); font-style: italic; }
     .jarvis-tool { color: @purple_3; }
+    .jarvis-tool-result { font-family: monospace; font-size: 0.85em;
+                          background-color: alpha(@window_fg_color, 0.05);
+                          border-radius: 6px; padding: 6px 8px;
+                          margin-top: 2px; margin-bottom: 4px; }
     .jarvis-error { color: @error_color; }
     .jarvis-msg-user .jarvis-bubble { border-radius: 14px 14px 4px 14px; }
     .jarvis-msg-assistant .jarvis-bubble { border-radius: 14px 14px 14px 4px; }
@@ -509,17 +513,18 @@ class MessageBox(Gtk.Box):
         self._bubble = bubble
 
         self.reasoning_row: Adw.ExpanderRow | None = None
-        self.reasoning_label: Gtk.Label | None = None
+        self.reasoning_box: Gtk.Box | None = None
+        self._reasoning_buf = ""
         if role == "assistant":
             self.reasoning_row = Adw.ExpanderRow(title="Raisonnement")
             self.reasoning_row.add_css_class("jarvis-reasoning")
-            self.reasoning_label = Gtk.Label(xalign=0, wrap=True, selectable=True,
-                                             use_markup=False)
-            self.reasoning_label.add_css_class("jarvis-reasoning")
-            self.reasoning_label.set_margin_start(8)
-            self.reasoning_label.set_margin_end(8)
-            self.reasoning_label.set_margin_bottom(6)
-            self.reasoning_row.add_row(self.reasoning_label)
+            # le raisonnement est rendu en Markdown comme la réponse (content_box dédié)
+            self.reasoning_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            self.reasoning_box.add_css_class("jarvis-reasoning")
+            self.reasoning_box.set_margin_start(8)
+            self.reasoning_box.set_margin_end(8)
+            self.reasoning_box.set_margin_bottom(6)
+            self.reasoning_row.add_row(self.reasoning_box)
             self.reasoning_row.set_visible(False)
             bubble.append(self.reasoning_row)
 
@@ -732,10 +737,33 @@ class MessageBox(Gtk.Box):
     def append_reasoning(self, fragment: str) -> None:
         if self.reasoning_row is None:
             return
-        assert self.reasoning_label is not None
         self.reasoning_row.set_visible(True)
-        cur = self.reasoning_label.get_text()
-        self.reasoning_label.set_text(cur + fragment)
+        self._reasoning_buf += fragment
+        # re-rendu Markdown du raisonnement (comme la réponse), throttlé comme append_text
+        now = GLib.get_monotonic_time()
+        if self._last_render and now - self._last_render < self._RENDER_MIN_MS * 1000:
+            if self._render_timer is None:
+                self._render_timer = GLib.timeout_add(
+                    self._RENDER_MIN_MS,
+                    lambda: (self._flush_reasoning(), GLib.SOURCE_REMOVE)[1])
+            return
+        self._flush_reasoning()
+
+    def _flush_reasoning(self) -> None:
+        self._render_timer = None
+        self._last_render = GLib.get_monotonic_time()
+        assert self.reasoning_box is not None
+        while (c := self.reasoning_box.get_first_child()) is not None:
+            self.reasoning_box.remove(c)
+        link_defs, footnotes = collect_defs(self._reasoning_buf)
+        for b in parse_blocks(self._reasoning_buf):
+            _render_block(self.reasoning_box, b, link_defs, footnotes)
+
+    def flush_reasoning(self) -> None:
+        if self._render_timer is not None:
+            GLib.source_remove(self._render_timer)
+            self._render_timer = None
+        self._flush_reasoning()
 
     def collapse_reasoning(self, summary: str) -> None:
         if self.reasoning_row is None:
@@ -745,23 +773,52 @@ class MessageBox(Gtk.Box):
 
     def add_tool_line(self, name: str, args: dict, ok: bool | None = None,
                       duration: float | None = None, result_preview: str = "") -> Gtk.Label:
+        """Ligne d'outil dépliable (ExpanderRow) : le titre montre ⚡/✓/✗ + nom + args,
+        le corps (déplié) montre le RÉSULTAT complet de l'outil."""
         import json as _json
         args_txt = _json.dumps(args, ensure_ascii=False)
         if len(args_txt) > 120:
             args_txt = args_txt[:117] + "..."
         if ok is None:
-            line = f"⚡ {name}({args_txt})"
+            title = f"⚡ {name}({args_txt})"
         else:
             mark = "✓" if ok else "✗"
             dur = f" {duration:.2f}s" if duration is not None else ""
-            line = f"{mark} {name}({args_txt}){dur}"
-        if result_preview and ok is False:
-            line += f"  — {result_preview[:80]}"
+            title = f"{mark} {name}({args_txt}){dur}"
         lbl = Gtk.Label(xalign=0, wrap=True, selectable=True)
         lbl.add_css_class("jarvis-tool")
-        lbl.set_text(line)
-        self.tools_box.append(lbl)
+        lbl.set_text(title)
+        # ExpanderRow : le clic sur la ligne déplie le résultat
+        exp = Adw.ExpanderRow(title="")
+        exp.set_show_enable_switch(False)
+        exp.add_row(lbl)
+        # corps : le résultat (mis à jour par set_tool_result)
+        result_lbl = Gtk.Label(xalign=0, wrap=True, selectable=True)
+        result_lbl.add_css_class("jarvis-tool-result")
+        result_lbl.add_css_class("dim-label")
+        result_lbl.set_text(result_preview or "(en cours…)")
+        exp.add_row(result_lbl)
+        exp._jarvis_result = result_lbl  # pour set_tool_result
+        self.tools_box.append(exp)
         return lbl
+
+    def set_tool_result(self, lbl: Gtk.Label, ok: bool, duration: float,
+                        result: str, args: dict) -> None:
+        """Met à jour la ligne d'outil avec le statut final + le résultat complet."""
+        import json as _json
+        args_txt = _json.dumps(args, ensure_ascii=False)
+        if len(args_txt) > 120:
+            args_txt = args_txt[:117] + "..."
+        name = lbl.get_text().split("(")[0].strip("⚡✓✗ ")
+        mark = "✓" if ok else "✗"
+        lbl.set_text(f"{mark} {name}({args_txt}) {duration:.2f}s")
+        # trouver l'expander parent et remplir le résultat
+        parent = lbl.get_parent()
+        while parent is not None and not hasattr(parent, "_jarvis_result"):
+            parent = parent.get_parent()
+        if parent is not None:
+            parent._jarvis_result.set_text(result[:2000] or "(vide)")
+            parent.set_expanded(True)  # déplie automatiquement pour voir le résultat
 
     def set_meta(self, text: str) -> None:
         self.meta_label.set_text(text)

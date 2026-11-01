@@ -1199,15 +1199,9 @@ class JarvisWindow(Adw.ApplicationWindow):
                 lbl = self._tool_lines.pop(key)
                 break
             if lbl is not None and self._assistant_box is not None:
-                import json as _json
-                args_txt = _json.dumps(event["args"], ensure_ascii=False)
-                if len(args_txt) > 120:
-                    args_txt = args_txt[:117] + "..."
-                mark = "✓" if event["ok"] else "✗"
-                lbl.set_text(f"{mark} {event['name']}({args_txt}) "
-                             f"{event['duration']:.2f}s")
-                if not event["ok"]:
-                    lbl.set_tooltip_text(event["result"][:400])
+                # met à jour la ligne + remplit le résultat complet dans l'expander
+                self._assistant_box.set_tool_result(
+                    lbl, event["ok"], event["duration"], event["result"], event["args"])
         elif t == "done":
             self._on_turn_done(event)
         elif t == "error":
@@ -1291,7 +1285,8 @@ class JarvisWindow(Adw.ApplicationWindow):
         return GLib.SOURCE_REMOVE
     def _on_turn_done(self, event: dict) -> None:
         if self._assistant_box is not None:
-            self._assistant_box.flush_render()  # re-rendu final immédiat (hors throttle)
+            self._assistant_box.flush_render()      # re-rendu final immédiat (hors throttle)
+            self._assistant_box.flush_reasoning()   # idem pour le raisonnement
         box = self._assistant_box
         trace = event.get("trace") or {}
         if box is not None:
