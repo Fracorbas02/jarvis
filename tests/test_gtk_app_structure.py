@@ -60,7 +60,7 @@ def main() -> int:
                         "_toast", "_on_reset_context", "_do_reset", "_on_toggle_sidebar",
                         "_on_split_sidebar_changed", "_fill_conv_list", "_on_conv_row_activated",
                         "_dispatch", "_on_server_status", "_on_turn_done",
-                        "_replay_history", "_fill_tools_group", "_on_delete_conv"):
+                        "_replay_history", "_fill_tools_group", "_on_delete_conv", "_on_entry_key"):
             assert hasattr(gtk_app.JarvisWindow, handler), handler
         import inspect
         src = inspect.getsource(gtk_app.JarvisWindow._fill_tools_group)
@@ -130,6 +130,10 @@ def main() -> int:
             rc = gtk_app.main(["--config", "/tmp/x.toml"])
         assert rc == 0
         assert captured["config_path"] == "/tmp/x.toml", captured
+        # zone de saisie multi-lignes : TextView + Maj+Entrée
+        chat_src = inspect.getsource(gtk_app.JarvisWindow._build_chat_content)
+        assert "Gtk.TextView" in chat_src and "EventControllerKey" in chat_src
+        assert "max-width: 70%" in open(ROOT / "src/jarvis/gtk/widgets.py", encoding="utf-8").read()
         print("OK  gtk app structure (main/JarvisApp/JarvisWindow handlers + markdown)")
         return 0
 

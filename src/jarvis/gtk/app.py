@@ -301,31 +301,54 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.messages = MessagesColumn()
         outer.append(self.messages.widget)
 
-        # barre du bas moderne : conteneur arrondi (carte) avec micro, champ
-        # pill moderne et bouton d'envoi circulaire accentué
+        # barre du bas : carte centrée à 70% de la largeur de la page, avec micro,
+        # zone de saisie MULTI-LIGNES (TextView dans un ScrolledWindow, max ~6 lignes)
+        # et bouton d'envoi. Entrée = envoyer, Maj+Entrée = retour à la ligne.
         bottom = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8,
                          halign=Gtk.Align.CENTER, margin_top=8, margin_bottom=12,
                          margin_start=24, margin_end=24)
+        width_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, hexpand=True,
+                            halign=Gtk.Align.CENTER)
+        width_box.set_size_request(-1, -1)
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6,
                       hexpand=True, halign=Gtk.Align.CENTER)
         bar.add_css_class("jarvis-entry-bar")
+        # largeur de la carte = 70% de la page : on utilise un Gtk.AspectFrame? non,
+        # plus simple : un conteneur avec une contrainte de largeur via CSS max-width
+        bar.set_hexpand(True)
+        bar.get_style_context().add_class("jarvis-chat-bar")  # max-width: 70% en CSS
         self.chat_mic = Gtk.Button(icon_name="audio-input-microphone-symbolic",
                                    tooltip_text="Parler à Jarvis (enregistre puis transcrit)")
         self.chat_mic.add_css_class("circular")
+        self.chat_mic.set_valign(Gtk.Align.END)
         self.chat_mic.connect("clicked", self._on_mic)
         bar.append(self.chat_mic)
-        self.chat_entry = Gtk.Entry(hexpand=True,
-                                    placeholder_text="Message à Jarvis…")
+        # TextView multi-lignes dans un ScrolledWindow (hauteur ~1-6 lignes, scroll au-delà)
+        self.chat_entry = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR)
         self.chat_entry.add_css_class("jarvis-entry-modern")
-        self.chat_entry.connect("activate", self._on_entry_activate)
-        bar.append(self.chat_entry)
-        send_btn = Gtk.Button(icon_name="go-next-symbolic", tooltip_text="Envoyer")
+        self.chat_entry.set_top_margin(8)
+        self.chat_entry.set_bottom_margin(8)
+        self.chat_entry.set_left_margin(12)
+        self.chat_entry.set_right_margin(12)
+        self.chat_entry.set_accepts_tab(False)
+        entry_scroll = Gtk.ScrolledWindow(hexpand=True, min_content_height=34,
+                                          max_content_height=140)
+        entry_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        entry_scroll.set_child(self.chat_entry)
+        bar.append(entry_scroll)
+        send_btn = Gtk.Button(icon_name="go-next-symbolic", tooltip_text="Envoyer (Entrée)")
         send_btn.add_css_class("circular")
         send_btn.add_css_class("suggested-action")
+        send_btn.set_valign(Gtk.Align.END)
         send_btn.connect("clicked", self._on_entry_activate)
         bar.append(send_btn)
-        bottom.append(bar)
+        width_box.append(bar)
+        bottom.append(width_box)
         outer.append(bottom)
+        # raccourcis clavier sur le TextView : Entrée = envoyer, Maj+Entrée = newline
+        key_ctrl = Gtk.EventControllerKey()
+        key_ctrl.connect("key-pressed", self._on_entry_key)
+        self.chat_entry.add_controller(key_ctrl)
         hint_row = Gtk.Box(halign=Gtk.Align.CENTER, margin_bottom=8)
         self.chat_hint = Gtk.Label(label="", halign=Gtk.Align.CENTER)
         self.chat_hint.add_css_class("dim-label")
@@ -872,11 +895,22 @@ class JarvisWindow(Adw.ApplicationWindow):
         self._set_chat_hint("Parle… (fin de parole détectée automatiquement)")
         self.backend.stt_record_and_transcribe(0.0, device=getattr(self, "mic_device", "default"))
 
+    def _on_entry_key(self, _ctrl, keyval, _keycode, state) -> bool:
+        """Entrée seule = envoyer ; Maj+Entrée = retour à la ligne (laisser passer)."""
+        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+            if state & Gdk.ModifierType.SHIFT_MASK:
+                return False  # Maj+Entrée : laisse le TextView insérer un 
+
+            self._on_entry_activate(None)
+            return True  # on a consommé
+        return False
+
     def _on_entry_activate(self, _widget) -> None:
-        text = self.chat_entry.get_text().strip()
+        buf = self.chat_entry.get_buffer()
+        text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True).strip()
         if not text:
             return
-        self.chat_entry.set_text("")
+        buf.set_text("")
         self._send_turn(text)
 
     def _on_prompt(self, *_args) -> None:
