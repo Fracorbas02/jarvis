@@ -127,3 +127,13 @@ def test_math_inline_block_renders_img() -> None:
     h = markdown_to_html("voici $$x^2$$ inline")
     b = body(h)
     assert 'data:image/png;base64,' in b
+
+
+def test_dollar_dollar_no_false_positive() -> None:
+    # "5$$ et 3$$" (prix) ne doit pas être pris pour une équation
+    h = markdown_to_html("prix 5$$ et 3$$ ici")
+    assert "JARVISMATH" not in h and "data:image/png" not in h
+    assert "5$$ et 3$$" in body(h)
+    # le bloc $$ multi-lignes est toujours rendu en image
+    h2 = markdown_to_html("$$\nx^2\n$$")
+    assert "data:image/png;base64," in body(h2)

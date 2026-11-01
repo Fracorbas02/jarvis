@@ -1433,7 +1433,8 @@ class JarvisWindow(Adw.ApplicationWindow):
                         args = json.loads(fn.get("arguments") or "{}")
                     except json.JSONDecodeError:
                         args = {}
-                    box.add_tool_line(str(fn.get("name", "?")), args, ok=True, duration=0.0)
+                    box.add_tool_line(str(fn.get("name", "?")), args, ok=True, duration=0.0,
+                                      result_preview="(résultat non rejoué)")
                 if content or m.get("tool_calls"):
                     self.messages.add(box)
 

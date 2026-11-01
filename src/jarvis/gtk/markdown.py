@@ -88,7 +88,9 @@ class Block:
     checked: bool = False     # task
 
 
-_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
+# la séquence de fermeture #... n'est valide que si précédée d'un espace
+# (sinon "## C#" perdrait son # final)
+_HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$")
 _SETEXT_RE = re.compile(r"^(=+|-+)\s*$")
 _HR_RE = re.compile(r"^\s{0,3}((?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$")
 _FENCE_RE = re.compile(r"^(\s{0,3})(`{3,}|~{3,})(.*)$")
@@ -257,9 +259,37 @@ def parse_blocks(text: str) -> list[Block]:
                         break
                     ind = len(cur) - len(cur.lstrip(" "))
                     if items and ind >= marker_indent + 2:
-                        # dé-indente de marker_indent+2 (garde la structure interne)
-                        items[-1].extend(parse_blocks(cur[marker_indent + 2:]))
-                        i += 1
+                        # Rassemble TOUTES les lignes de continuation indentées
+                        # (fence, tableau, citation...) avant de parser, sinon un
+                        # bloc multi-lignes (ex. ``` dans un item) est découpé
+                        # ligne par ligne et casserait.
+                        cont: list[str] = []
+                        while i < n:
+                            c2 = lines[i]
+                            if not c2.strip():
+                                # ligne vide : avalée seulement si une ligne indentée
+                                # (non marqueur de liste) suit
+                                j = i + 1
+                                while j < n and not lines[j].strip():
+                                    j += 1
+                                nxt_ind = (len(lines[j]) - len(lines[j].lstrip(" "))) if j < n else -1
+                                if (j < n and nxt_ind >= marker_indent + 2
+                                        and not (_ULIST_RE.match(lines[j]) or _OLIST_RE.match(lines[j]))):
+                                    cont.append("")
+                                    i += 1
+                                    continue
+                                break
+                            if _ULIST_RE.match(c2) or _OLIST_RE.match(c2):
+                                break  # marqueur de liste : géré par la boucle externe
+                            ind2 = len(c2) - len(c2.lstrip(" "))
+                            if ind2 >= marker_indent + 2:
+                                # dé-indente de marker_indent+2 (garde la structure interne)
+                                cont.append(c2[marker_indent + 2:])
+                                i += 1
+                                continue
+                            break
+                        if cont:
+                            items[-1].extend(parse_blocks("\n".join(cont)))
                         continue
                     break
                 indent2 = len((mu2 or mo2).group(1))
@@ -392,8 +422,10 @@ _INLINE_RE = re.compile(
     r"|<br\s*/?>|</?sub>|</?sup>|</?kbd>"                            # 0: mini-HTML sûr (sans groupe)
     r"|<((?:https?://|mailto:)[^>\s]+)>"                            # 1: <url> autolink
     r"|(\\[\\`*_{}\[\]()#+\-.!>~|$])"                              # 2: échappement (incl. \$)
-    r"|\$\$([^$]+)\$\$"                                            # 3: $$...$$ bloc maths
-    r"|\$([^$\n]+)\$"                                               # 4: $...$ inline maths
+    r"|\$\$([^ \t$][^$\n]*[^ \t$]|[^ \t$])\$\$(?!\d)"                # 3: $$...$$ maths (pas d'espace juste après/avant)
+    r"|\$([^ \t$][^$\n]*[^ \t$]|[^ \t$])\$(?!\d)"                    # 4: $...$ inline maths — règles pandoc : pas d'espace après le
+                                                                     #     $ ouvrant ni avant le $ fermant, et $ fermant non suivi
+                                                                     #     d'un chiffre (sinon "5$ et 3$" ou "$HOME et $PATH" matchent)
     r"|(`+)([^\n]*?)\5"                                             # 5-6: `code` à N backticks (contenu peut contenir des ` < N)
     r"|!\[([^\]]*)\]\(((?:[^\s()]|\([^)]*\))+)(?:\s+\"([^\"]*)\")?\)"   # 7-9: ![alt](url) parens équi.
     r"|\[\^([^\]]+)\]"                                              # 10: [^id] footnote
@@ -401,11 +433,13 @@ _INLINE_RE = re.compile(
     r"|\[([^\]]+)\]\[([^\]]*)\]"                                    # 14-15: [txt][id]
     r"|\[([^\]]+)\]"                                                # 16: [txt] ref courte
     r"|(?<![\w<])((?:https?://|www\.)[^\s<>()]+[^\s<>().,;:!?\'\"\]<])"   # 17: url nue
-    r"|(\*\*\*|___)(.+?)\18"                                        # 18-19: ***...***
-    r"|(\*\*|__)(.+?)\20"                                           # 20-21: **...**
-    r"|(\*)([^*\n]+)\22"                                            # 22-23: *...*
-    r"|(?<![\w])_([^_\n]+)_(?![\w])"                                 # 24: _..._ pas intra-mot
-    r"|(~~)(.+?)\25"                                                # 24-25: ~~...~~
+    r"|(\*\*\*)(.+?)\18"                                            # 18-19: ***...***
+    r"|(?<![\w])(___)(.+?)\20(?![\w])"                              # 20-21: ___...___ (pas intra-mot)
+    r"|(\*\*)(.+?)\22"                                              # 22-23: **...**
+    r"|(?<![\w])(__)(.+?)\24(?![\w])"                               # 24-25: __...__ (pas intra-mot, comme _)
+    r"|(\*)([^*\n]+)\26"                                            # 26-27: *...*
+    r"|(?<![\w])_([^_\n]+)_(?![\w])"                                 # 28: _..._ pas intra-mot
+    r"|(~~)(.+?)\29"                                                # 29-30: ~~...~~
 )
 
 
@@ -509,17 +543,23 @@ def inline_to_pango(text: str, link_defs: dict | None = None,
         elif m.group(18):                    # ***...***
             inner = inline_to_pango(m.group(19), link_defs, footnotes)
             out.append(f"<b><i>{inner}</i></b>")
-        elif m.group(20):                    # **...**
+        elif m.group(20):                    # ___...___ (pas intra-mot)
             inner = inline_to_pango(m.group(21), link_defs, footnotes)
-            out.append(f"<b>{inner}</b>")
-        elif m.group(22):                    # *...*
+            out.append(f"<b><i>{inner}</i></b>")
+        elif m.group(22):                    # **...**
             inner = inline_to_pango(m.group(23), link_defs, footnotes)
+            out.append(f"<b>{inner}</b>")
+        elif m.group(24):                    # __...__ (pas intra-mot)
+            inner = inline_to_pango(m.group(25), link_defs, footnotes)
+            out.append(f"<b>{inner}</b>")
+        elif m.group(26):                    # *...*
+            inner = inline_to_pango(m.group(27), link_defs, footnotes)
             out.append(f"<i>{inner}</i>")
-        elif m.group(24):                    # _..._ pas intra-mot
-            inner = inline_to_pango(m.group(24), link_defs, footnotes)
+        elif m.group(28):                    # _..._ pas intra-mot
+            inner = inline_to_pango(m.group(28), link_defs, footnotes)
             out.append(f"<i>{inner}</i>")
-        elif m.group(25):                    # ~~...~~
-            inner = inline_to_pango(m.group(26), link_defs, footnotes)
+        elif m.group(29):                    # ~~...~~
+            inner = inline_to_pango(m.group(30), link_defs, footnotes)
             out.append(f"<s>{inner}</s>")
         pos = m.end()
     if pos < len(text):

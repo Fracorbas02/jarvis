@@ -190,7 +190,10 @@ def markdown_to_html(text: str) -> str:
         return f"JARVISMATH{len(math_htmls) - 1}"
 
     # 1) stash équations bloc (placeholder neutre, markdown-it ne l'échappe pas)
-    protected = re.sub(r"\$\$([^$]+)\$\$", _stash, text, flags=re.S)
+    #    Pas d'espace/tab juste après le $$ ouvrant ni avant le $$ fermant, et
+    #    $$ fermant non suivi d'un chiffre : sinon "5$$ et 3$$" serait pris pour
+    #    une équation. Les sauts de ligne restent autorisés (bloc multi-lignes).
+    protected = re.sub(r"\$\$([^ \t$][^$]*[^ \t$]|[^ \t$])\$\$(?!\d)", _stash, text, flags=re.S)
 
     # 2) rendu markdown-it complet
     body = _md.render(protected)

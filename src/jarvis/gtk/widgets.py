@@ -112,23 +112,29 @@ def _css() -> None:
     .jarvis-md-code-lang { font-size: 0.75em; color: alpha(@window_fg_color, 0.5);
                            text-transform: uppercase; font-weight: 600; }
     .jarvis-md-code-copy { border-radius: 6px; }
-    .jarvis-md-table { }
+    /* tableau : bordure sur le conteneur, cellules en right/bottom seulement
+       (évite les bordures doublées entre cellules, GTK n'a pas border-collapse) */
+    .jarvis-md-table {
+        border: 1px solid alpha(@window_fg_color, 0.25);
+        border-radius: 10px;
+    }
     .jarvis-md-th {
         font-weight: 700; color: @accent_color;
         background-color: alpha(@accent_bg_color, 0.25);
-        border: 1px solid alpha(@window_fg_color, 0.25);
         border-bottom: 2px solid alpha(@accent_bg_color, 0.8);
+        border-right: 1px solid alpha(@window_fg_color, 0.15);
         padding: 4px 10px;
     }
     .jarvis-md-td {
-        border: 1px solid alpha(@window_fg_color, 0.18);
+        border-bottom: 1px solid alpha(@window_fg_color, 0.12);
+        border-right: 1px solid alpha(@window_fg_color, 0.12);
         padding: 3px 10px;
     }
-    .jarvis-md-table-wrap { border-radius: 10px; }
-    /* sélection souris possible sur tout le contenu des bulles (WebView exclue) */
-    .jarvis-msg-assistant .jarvis-bubble, .jarvis-msg-user .jarvis-bubble {
-        -gtk-user-select: text;
-    }
+    .jarvis-tool-arrow { color: alpha(@window_fg_color, 0.5); }
+    .jarvis-flat-list, .jarvis-flat-list row { background-color: transparent; }
+    /* sélection souris dans les bulles : les labels ont set_selectable(True) ;
+       en GTK4 il n'existe pas de propriété CSS "user-select" (propriété GTK3,
+       ignorée avec une erreur "Theme parser error" au chargement du CSS) */
     .jarvis-msg-copy { opacity: 0.55; }
     .jarvis-msg-copy:hover { opacity: 1; }
     .jarvis-md-fn-flash { background-color: alpha(@accent_bg_color, 0.35);
@@ -439,29 +445,26 @@ def _render_block(parent: Gtk.Box, b, link_defs: dict, footnotes: dict,
         grid.set_margin_bottom(6)
         grid.set_column_spacing(0)
         grid.set_row_spacing(0)
-        grid.set_margin_start(2)
-        grid.set_margin_end(2)
-        aligns = b.aligns or [None] * max(len(r) for r in b.rows)
+        grid.set_hexpand(True)
+        ncols = max((len(r) for r in b.rows), default=0)
+        aligns = b.aligns or [None] * ncols
         for r, row in enumerate(b.rows):
             for c, cell in enumerate(row):
                 markup = inline_to_pango(cell, link_defs, footnotes)
                 lbl = _label(markup, cell)
                 a = aligns[c] if c < len(aligns) else None
-                lbl.set_halign({"l": Gtk.Align.START, "c": Gtk.Align.CENTER,
-                                "r": Gtk.Align.END}.get(a or "l", Gtk.Align.START))
-                lbl.set_hexpand(True)
-                lbl.set_max_width_chars(60)
-                lbl.set_ellipsize(Pango.EllipsizeMode.NONE)
+                # alignement du TEXTE dans la cellule (xalign) — halign sur le
+                # label serait sans effet puisque hexpand remplit toute la colonne
+                lbl.set_xalign({"l": 0.0, "c": 0.5, "r": 1.0}.get(a or "l", 0.0))
+                lbl.set_hexpand(True)  # la cellule remplit sa colonne, le texte wrappe
                 lbl.add_css_class("jarvis-md-th" if r == 0 else "jarvis-md-td")
                 grid.attach(lbl, c, r, 1, 1)
-        # wrapper arrondi + scroll horizontal si le tableau dépasse
-        wrap = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        wrap.add_css_class("jarvis-md-table-wrap")
-        scroll = Gtk.ScrolledWindow(hexpand=True, min_content_width=0)
-        scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+        # jamais de scrollbar horizontale : le tableau tient dans la bulle,
+        # les cellules longues wrappent (largeur mini d'une colonne = plus long mot)
+        scroll = Gtk.ScrolledWindow(hexpand=True)
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.NEVER)
         scroll.set_child(grid)
-        wrap.append(scroll)
-        parent.append(wrap)
+        parent.append(scroll)
     elif b.kind == "hr":
         sep = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
         sep.add_css_class("jarvis-md-hr")
@@ -533,7 +536,13 @@ class MessageBox(Gtk.Box):
             self.reasoning_box.set_margin_bottom(6)
             self.reasoning_row.add_row(self.reasoning_box)
             self.reasoning_row.set_visible(False)
-            bubble.append(self.reasoning_row)
+            # Adw.ExpanderRow ne peut être placé que dans un Gtk.ListBox
+            # (dans un Gtk.Box, GTK logue "can only be placed into GtkListBox")
+            reasoning_list = Gtk.ListBox()
+            reasoning_list.set_selection_mode(Gtk.SelectionMode.NONE)
+            reasoning_list.add_css_class("jarvis-flat-list")
+            reasoning_list.append(self.reasoning_row)
+            bubble.append(reasoning_list)
 
         # contenu markdown : WebView WebKit si dispo (HTML complet), sinon un
         # Box rempli de widgets natifs (repli)
@@ -807,52 +816,72 @@ class MessageBox(Gtk.Box):
 
     def add_tool_line(self, name: str, args: dict, ok: bool | None = None,
                       duration: float | None = None, result_preview: str = "") -> Gtk.Label:
-        """Ligne d'outil dépliable (ExpanderRow) : le titre montre ⚡/✓/✗ + nom + args,
-        le corps (déplié) montre le RÉSULTAT complet de l'outil."""
+        """Ligne d'outil dépliable au clic : la ligne (⚡/✓/✗ + nom + args) reste
+        TOUJOURS visible ; un clic sur la ligne montre/cache le RÉSULTAT complet.
+        (pas d'ExpanderRow : dans un Gtk.Box il est mal placé, et son titre vide
+        cacherait la ligne d'outil tant que l'expander est replié)"""
         import json as _json
         args_txt = _json.dumps(args, ensure_ascii=False)
         if len(args_txt) > 120:
-            args_txt = args_txt[:117] + "..."
+            args_txt = args_txt[:117] + "…"
         if ok is None:
-            title = f"⚡ {name}({args_txt})"
+            text = f"⚡ {name}({args_txt})"
         else:
             mark = "✓" if ok else "✗"
             dur = f" {duration:.2f}s" if duration is not None else ""
-            title = f"{mark} {name}({args_txt}){dur}"
-        lbl = Gtk.Label(xalign=0, wrap=True, selectable=True)
-        lbl.add_css_class("jarvis-tool")
-        lbl.set_text(title)
-        # ExpanderRow : le clic sur la ligne déplie le résultat
-        exp = Adw.ExpanderRow(title="")
-        exp.set_show_enable_switch(False)
-        exp.add_row(lbl)
-        # corps : le résultat (mis à jour par set_tool_result)
+            text = f"{mark} {name}({args_txt}){dur}"
+        entry = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        header.add_css_class("jarvis-tool")
+        header.set_cursor_from_name("pointer")
+        arrow = Gtk.Label(label="▸", xalign=0)
+        arrow.add_css_class("jarvis-tool-arrow")
+        lbl = Gtk.Label(xalign=0, wrap=True, selectable=True, hexpand=True)
+        lbl.set_text(text)
+        header.append(arrow)
+        header.append(lbl)
         result_lbl = Gtk.Label(xalign=0, wrap=True, selectable=True)
         result_lbl.add_css_class("jarvis-tool-result")
         result_lbl.add_css_class("dim-label")
-        result_lbl.set_text(result_preview or "(en cours…)")
-        exp.add_row(result_lbl)
-        exp._jarvis_result = result_lbl  # pour set_tool_result
-        self.tools_box.append(exp)
+        result_lbl.set_text(result_preview or "…")
+        result_lbl.set_visible(False)
+        entry.append(header)
+        entry.append(result_lbl)
+
+        def _toggle(*_a) -> None:
+            show = not result_lbl.get_visible()
+            result_lbl.set_visible(show)
+            arrow.set_text("▾" if show else "▸")
+
+        click = Gtk.GestureClick()
+        click.connect("pressed", _toggle)
+        header.add_controller(click)
+        entry._jarvis_result = result_lbl  # pour set_tool_result
+        entry._jarvis_arrow = arrow
+        entry._jarvis_name = name
+        self.tools_box.append(entry)
         return lbl
 
     def set_tool_result(self, lbl: Gtk.Label, ok: bool, duration: float,
                         result: str, args: dict) -> None:
-        """Met à jour la ligne d'outil avec le statut final + le résultat complet."""
+        """Met à jour la ligne d'outil avec le statut final + le résultat complet,
+        et déplie le résultat."""
         import json as _json
         args_txt = _json.dumps(args, ensure_ascii=False)
         if len(args_txt) > 120:
-            args_txt = args_txt[:117] + "..."
-        name = lbl.get_text().split("(")[0].strip("⚡✓✗ ")
+            args_txt = args_txt[:117] + "…"
+        # retrouve l'entry parent (lbl -> header -> entry)
+        entry = lbl.get_parent()
+        while entry is not None and not hasattr(entry, "_jarvis_result"):
+            entry = entry.get_parent()
+        name = getattr(entry, "_jarvis_name", "?") if entry is not None else "?"
         mark = "✓" if ok else "✗"
         lbl.set_text(f"{mark} {name}({args_txt}) {duration:.2f}s")
-        # trouver l'expander parent et remplir le résultat
-        parent = lbl.get_parent()
-        while parent is not None and not hasattr(parent, "_jarvis_result"):
-            parent = parent.get_parent()
-        if parent is not None:
-            parent._jarvis_result.set_text(result[:2000] or "(vide)")
-            parent.set_expanded(True)  # déplie automatiquement pour voir le résultat
+        if entry is not None:
+            entry._jarvis_result.set_text(result[:2000] or "(vide)")
+            # déplie automatiquement pour voir le résultat
+            entry._jarvis_result.set_visible(True)
+            entry._jarvis_arrow.set_text("▾")
 
     def set_meta(self, text: str) -> None:
         self.meta_label.set_text(text)

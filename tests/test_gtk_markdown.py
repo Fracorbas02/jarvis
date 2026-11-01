@@ -357,3 +357,53 @@ def test_bug_principal_code_indente_avec_tirets() -> None:
     b = parse_blocks("para\n\n    x = 1\n    ---\n    y = 2\n")
     assert [x.kind for x in b] == ["paragraph", "code"]
     assert "---" in b[1].text
+
+
+# ---------- régressions affichage (audit markdown) ----------
+
+
+def test_dollar_not_math_when_spaces_or_shell_vars() -> None:
+    # prix, variables shell, "5$$ et 3$$" : PAS de maths (règles pandoc)
+    for t in ["ça coûte 5$ et 3$ au total", "variable $HOME et $PATH",
+              "prix: 10$ - 20$", "5$$ et 3$$", "a $ b $ c"]:
+        p = inline_to_pango(t)
+        assert 'style="italic"' not in p, (t, p)
+        assert "$" in p
+    # vraies maths toujours reconnues
+    assert 'style="italic"' in inline_to_pango("math $x^2$ fin")
+    assert 'size="large"' in inline_to_pango("$$E=mc^2$$ bloc")
+    # $ fermant suivi d'un chiffre : pas de maths
+    assert 'style="italic"' not in inline_to_pango("$x$2 degrés")
+
+
+def test_heading_closing_hash_needs_space() -> None:
+    # "## C#" ne doit pas perdre son # final (fermeture = espace + #)
+    assert parse_blocks("## C# et F#\n")[0].text == "C# et F#"
+    assert parse_blocks("# Titre #\n")[0].text == "Titre"
+    assert parse_blocks("# Titre##\n")[0].text == "Titre##"  # pas d'espace -> contenu
+
+
+def test_double_underscore_intraword_literal() -> None:
+    p = inline_to_pango("a__b__c et foo__bar__baz")
+    assert "<b>" not in p and "__b__" in p
+    # __gras__ isolé fonctionne toujours
+    assert "<b>gras</b>" in inline_to_pango("__gras__")
+    # *** et ** intra-mot restent autorisés (CommonMark)
+    assert "<b><i>x</i></b>" in inline_to_pango("a***x***b")
+
+
+def test_code_fence_inside_list_item() -> None:
+    b = parse_blocks("- voici :\n  ```python\n  def f():\n      return 1\n  ```\n- suite\n")
+    assert b[0].kind == "list" and len(b[0].items) == 2
+    codes = [s for s in b[0].items[0] if s.kind == "code"]
+    assert len(codes) == 1, [s.kind for s in b[0].items[0]]
+    assert codes[0].lang == "python"
+    assert "def f():" in codes[0].text and "return 1" in codes[0].text
+    assert "```" not in codes[0].text
+    assert b[0].items[1][0].kind == "paragraph" and b[0].items[1][0].text == "suite"
+
+
+def test_list_continuation_paragraph_still_works() -> None:
+    b = parse_blocks("- item\n  texte continu\n- item2\n")
+    assert [s.kind for s in b[0].items[0]] == ["paragraph", "paragraph"]
+    assert b[0].items[0][1].text == "texte continu"
