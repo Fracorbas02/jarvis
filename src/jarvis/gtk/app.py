@@ -569,9 +569,11 @@ class JarvisWindow(Adw.ApplicationWindow):
         for uri in ("settings://privacy", "gnome-control-center privacy"):
             try:
                 if uri.startswith("settings://"):
-                    subprocess.Popen(["gio", "open", uri])
+                    subprocess.Popen(["gio", "open", uri], stdin=subprocess.DEVNULL,
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 else:
-                    subprocess.Popen(uri.split())
+                    subprocess.Popen(uri.split(), stdin=subprocess.DEVNULL,
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 return
             except Exception:  # noqa: BLE001
                 continue
@@ -1262,6 +1264,10 @@ def _register_icons() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # snapshot termios : si un sous-processus (ffmpeg/arecord/serveur voix)
+    # laisse le tty en mode brut en mourant, on le restaure à la fermeture
+    from ..ttyguard import install as install_tty_guard, restore_stdin
+    install_tty_guard()
     parser = argparse.ArgumentParser(prog="jarvis-app",
                                      description="Interface GTK4 de Jarvis")
     parser.add_argument("--config", default=None,
@@ -1277,7 +1283,10 @@ def main(argv: list[str] | None = None) -> int:
         logging.getLogger("jarvis.voice").setLevel(logging.DEBUG)
     _register_icons()
     app = JarvisApp(config_path=args.config)
-    return app.run([])
+    try:
+        return app.run([])
+    finally:
+        restore_stdin()
 
 
 if __name__ == "__main__":

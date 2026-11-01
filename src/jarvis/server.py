@@ -111,7 +111,8 @@ async def start_server(model_path: str | Path, base_url: str,
         if env:
             log.write(f"--- env: {env} ---\n".encode())
         _last_model = str(model_path)
-        _proc = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT,
+        _proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL,
+                                 stdout=log, stderr=subprocess.STDOUT,
                                  start_new_session=True, env=env)
     finally:
         log.close()

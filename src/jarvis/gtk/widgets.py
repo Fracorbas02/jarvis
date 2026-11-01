@@ -153,7 +153,8 @@ def _open_uri(uri: str) -> None:
         pass
     for cmd in (["xdg-open", uri], ["gio", "open", uri]):
         try:
-            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.Popen(cmd, stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return
         except Exception:  # noqa: BLE001
             continue

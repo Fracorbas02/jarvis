@@ -483,6 +483,7 @@ class GtkBackend:
                  "--object-path", "/org/freedesktop/portal/permission_store",
                  "--method", "org.freedesktop.portal.PermissionStore.Lookup",
                  "microphone", "microphone"],
+                stdin=subprocess.DEVNULL,
                 capture_output=True, text=True, timeout=5).stdout
             # (<{'autre.app': <['yes']>, 'io.github.Fracorbas02.Jarvis': <['no']>},)
             # -> on ancre sur NOTRE app-id, pas sur le 1er 'yes'/'no' venu
@@ -690,6 +691,7 @@ class GtkBackend:
         if not shutil.which("pactl"):
             return []
         out = subprocess.run(["pactl", "list", "short", "sources"],
+                             stdin=subprocess.DEVNULL,
                              capture_output=True, text=True, timeout=10).stdout
         devs: list[tuple[str, str]] = []
         for line in out.splitlines():
@@ -711,7 +713,8 @@ class GtkBackend:
         error = ""
         if shutil.which("arecord"):
             try:
-                out = subprocess.run(["arecord", "-L"], capture_output=True, text=True,
+                out = subprocess.run(["arecord", "-L"], stdin=subprocess.DEVNULL,
+                                     capture_output=True, text=True,
                                      timeout=10).stdout
                 cur = None
                 for line in out.splitlines():
