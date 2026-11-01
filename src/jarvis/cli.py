@@ -552,13 +552,14 @@ async def amain() -> int:
     tools = McpToolProvider(cfg.mcp_servers)
     if cfg.mcp_servers:
         await tools.start()
-    agent = Agent(llm, tools, cfg.agent.system_prompt, cfg.agent.max_iterations,
-                  stream=True, internal_tools={"jarvis__compact": compact_tool})
-
     console = _make_console()
     display = Display(console)
     server = await _server_info(cfg.llm.base_url, cfg.llm.ctx_size)
     ctx_max = server[2]
+    agent = Agent(llm, tools, cfg.agent.system_prompt, cfg.agent.max_iterations,
+                  stream=True, internal_tools={"jarvis__compact": compact_tool},
+                  ctx_max=ctx_max,
+                  ctx_usage=lambda: _ctx_usage(cfg.llm.base_url))
     display.set_header(_banner(cfg, tools, (server[0], server[1]), ctx_max))
     hist_file = _hist_file()
     # prompt_toolkit négocie lui-même le protocole clavier kitty (CSI u) avec
