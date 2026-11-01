@@ -138,6 +138,10 @@ def main() -> int:
         assert "reasoning_box" in mb_src and "_flush_reasoning" in mb_src
         assert "set_tool_result" in mb_src and "Adw.ExpanderRow" in mb_src
         assert "max-width: 70%" in open(ROOT / "src/jarvis/gtk/widgets.py", encoding="utf-8").read()
+        # barre d'actions (avec bouton info) dans le header, pas une barre séparée
+        chat_src2 = inspect.getsource(gtk_app.JarvisWindow._build_chat_content)
+        assert "self._header.pack_end(conv_bar)" in chat_src2
+        assert "min_content_height=56" in chat_src2 and "max_content_height=220" in chat_src2
         print("OK  gtk app structure (main/JarvisApp/JarvisWindow handlers + markdown)")
         return 0
 

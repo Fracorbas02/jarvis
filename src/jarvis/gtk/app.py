@@ -116,6 +116,7 @@ class JarvisWindow(Adw.ApplicationWindow):
         toolbar = Adw.ToolbarView()
 
         header = Adw.HeaderBar()
+        self._header = header  # pour y packer la barre d'actions Conversation
         toolbar.add_top_bar(header)
 
         # menu principal (prompt, sessions, tts, à propos)
@@ -270,9 +271,11 @@ class JarvisWindow(Adw.ApplicationWindow):
     def _build_chat_content(self) -> Gtk.Widget:
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, vexpand=True)
 
-        # barre d'actions de la conversation : toggle sidebar / nouvelle / reset
-        conv_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8,
-                           halign=Gtk.Align.CENTER, margin_top=8)
+        # actions de la conversation (sidebar / nouvelle / reset / info) : dans le
+        # HEADER de la fenêtre (pack_end), pas dans une barre séparée au-dessus
+        conv_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self._conv_bar = conv_bar
+        header = self._header  # set dans _build_ui
         self.btn_toggle_sidebar = Gtk.ToggleButton(icon_name="sidebar-show-symbolic",
                                                    tooltip_text="Afficher/masquer les conversations")
         self.btn_toggle_sidebar.connect("toggled", self._on_toggle_sidebar)
@@ -302,7 +305,7 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.btn_info.connect("clicked", self._on_info_clicked)
         conv_bar.append(self.btn_info)
         self._build_info_popover()
-        outer.append(conv_bar)
+        self._header.pack_end(conv_bar)  # barre d'actions dans le header
 
         self.messages = MessagesColumn()
         outer.append(self.messages.widget)
@@ -337,8 +340,8 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.chat_entry.set_left_margin(12)
         self.chat_entry.set_right_margin(12)
         self.chat_entry.set_accepts_tab(False)
-        entry_scroll = Gtk.ScrolledWindow(hexpand=True, min_content_height=34,
-                                          max_content_height=140)
+        entry_scroll = Gtk.ScrolledWindow(hexpand=True, min_content_height=56,
+                                          max_content_height=220)  # ~2 à 10 lignes visibles
         entry_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         entry_scroll.set_child(self.chat_entry)
         bar.append(entry_scroll)
