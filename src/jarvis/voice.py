@@ -1040,12 +1040,17 @@ async def record_wav_vad(voice_cfg: VoiceConfig, out_path: Path | None = None,
     buf = bytearray()
     silent = 0.0
     total = 0.0
-    # Seuil adaptatif : si on fournit noise_floor (RMS du bruit de fond mesuré
-    # en amont), le seuil de silence = max(silence_rms, noise_floor * 2.5).
-    # Sinon seuil fixe. Un micro réglé fort ne doit pas bloquer le VAD.
+    heard_speech = False
+    # Auto-calibration IN-FLUX (pas de mesure séparée qui mangerait le début de
+    # parole) : pendant la 1re seconde, on estime le bruit de fond (RMS min des
+    # blocs) et le seuil devient max(silence_rms, floor*2.5). Avant calibration,
+    # seuil fixe. noise_floor fourni de l'extérieur a priorité.
+    floor = noise_floor
     threshold = silence_rms
-    if noise_floor is not None:
-        threshold = max(silence_rms, noise_floor * 2.5)
+    if floor is not None:
+        threshold = max(silence_rms, floor * 2.5)
+    calib_until = 1.0  # s
+    calib_min = None
     try:
         deadline = asyncio.get_running_loop().time() + max_seconds
         while asyncio.get_running_loop().time() < deadline:
@@ -1060,11 +1065,20 @@ async def record_wav_vad(voice_cfg: VoiceConfig, out_path: Path | None = None,
                     pass
             rms = _pcm_rms(chunk)
             total += len(chunk) / 2 / SAMPLE_RATE
-            if rms < threshold:
-                silent += len(chunk) / 2 / SAMPLE_RATE
-            else:
+            if floor is None and total <= calib_until:
+                calib_min = rms if calib_min is None else min(calib_min, rms)
+                if total >= calib_until:
+                    floor = calib_min
+                    threshold = max(silence_rms, (floor or 0) * 2.5)
+                    log.debug("vad auto-calib: floor=%.0f seuil=%.0f", floor, threshold)
+            if rms >= threshold:
                 silent = 0.0
-            if total >= min_seconds and silent >= silence_seconds:
+                if rms >= threshold * 2:
+                    heard_speech = True
+            else:
+                silent += len(chunk) / 2 / SAMPLE_RATE
+            # on ne coupe que si on a entendu de la parole (sinon on attend max_seconds)
+            if heard_speech and total >= min_seconds and silent >= silence_seconds:
                 if on_status:
                     on_status(f"fin de parole détectée ({total:.1f}s)")
                 break  # fin de parole détectée

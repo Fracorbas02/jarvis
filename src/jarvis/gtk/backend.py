@@ -479,22 +479,9 @@ class GtkBackend:
             if seconds and seconds > 0:
                 path = await record_wav(seconds, vcfg)
             else:
-                from ..voice import _pcm_rms, record_wav as _rw
-                floor = None
-                try:
-                    import tempfile, os
-                    fp = Path(tempfile.gettempdir()) / f"jarvis-floor-{os.getpid()}.wav"
-                    await _rw(1.0, vcfg, out_path=fp)
-                    import wave
-                    with wave.open(str(fp)) as w:
-                        floor = _pcm_rms(w.readframes(w.getnframes()))
-                    fp.unlink(missing_ok=True)
-                    if floor is not None:
-                        _phase(f"bruit de fond RMS {floor:.0f}")
-                except Exception:  # noqa: BLE001 — le VAD a son seuil fixe par défaut
-                    pass
-                path = await record_wav_vad(vcfg, max_seconds=60.0, on_status=_phase,
-                                            noise_floor=floor)
+                # VAD auto-calibré en direct (1re seconde du flux = bruit de fond) :
+                # pas de mesure séparée, le début de parole n'est pas mangé.
+                path = await record_wav_vad(vcfg, max_seconds=60.0, on_status=_phase)
             text = await self._transcribe_path(path, on_status=_phase)
             self.events.put({"type": "stt_done", "text": text})
         except VoiceError as exc:

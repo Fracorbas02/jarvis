@@ -460,11 +460,13 @@ def test_wav_rms_via_pcm() -> None:
 
 
 def test_record_wav_vad_seuil_adaptatif() -> None:
-    """Avec noise_floor, le seuil de silence monte : max(300, floor*2.5)."""
+    """Seuil adaptatif + garde heard_speech : avec floor=1000 (seuil 2500),
+    un bloc fort (16384 >= 2*2500) est de la parole, un bloc faible (512) est
+    du silence -> le VAD s'arrête. Sans parole entendue, il ne coupe pas."""
     import asyncio
     import jarvis.voice as voice
-    loud = b"\x00\x10" * 1600      # RMS ~4096 (parole)
-    mid = b"\x00\x02" * 1600       # RMS ~512  (sous seuil adaptatif 300? non: 512>300 -> parole; avec floor=1000 -> seuil 2500 -> mid = silence)
+    loud = b"\x00\x40" * 1600      # RMS ~16384 (parole forte)
+    mid = b"\x00\x02" * 1600       # RMS ~512 (silence sous seuil 2500)
     chunks = [loud] * 10 + [mid] * 30
 
     class FakeStdout:
@@ -473,7 +475,7 @@ def test_record_wav_vad_seuil_adaptatif() -> None:
             await asyncio.sleep(0)
             if self.i < len(chunks):
                 c = chunks[self.i]; self.i += 1; return c
-            return b""  # EOF -> la boucle sort, pas de blocage
+            return b""
     class FakeProc:
         def __init__(self): self.stdout = FakeStdout(); self.returncode = 0
         def terminate(self): self.returncode = -15
@@ -490,14 +492,12 @@ def test_record_wav_vad_seuil_adaptatif() -> None:
                                       "-i", "default", "-ar", "16000", "-ac", "1",
                                       "-f", "s16le", "-"])
         out = Path(tempfile.mkdtemp()) / "vad2.wav"
-        # floor=1000 -> seuil = max(300, 2500) = 2500 : loud(4096) = parole, mid(512) = silence
-        # -> VAD s'arrête après 1 s de parole + 0,25 s de "silence" mid
         p = _run(voice.record_wav_vad(cfg, out_path=out, max_seconds=60.0,
                                       silence_seconds=0.25, silence_rms=300.0,
                                       min_seconds=0.5, noise_floor=1000.0))
         with wave.open(str(p)) as w:
             secs = w.getnframes() / w.getframerate()
-        assert 1.0 <= secs <= 2.0, secs
+        assert 1.0 <= secs <= 2.0, secs  # 1 s parole + 0.25 s silence -> coupe
     finally:
         voice.asyncio.create_subprocess_exec = orig_exec
         voice.shutil.which = orig_which
