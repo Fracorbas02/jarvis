@@ -28,6 +28,11 @@ class TurnTrace:
     iterations: int = 0
     error: str | None = None
     tts_tags: list[str] = field(default_factory=list)  # [emotion=..][pace=..] extraits de la réponse
+    # usage réel remonté par le serveur (somme sur toutes les itérations) ;
+    # à 0 si le serveur ne renvoie pas d'usage -> fallback estimation côté UI
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    gen_seconds: float = 0.0  # temps passé dans les appels LLM seuls (hors outils)
 
 
 @dataclass
@@ -217,8 +222,13 @@ class Agent:
                 if used is None:
                     used = self._ctx_estimate(history)
                 history = self._with_ctx_note(history, used)
+            t_llm = time.perf_counter()
             msg, history = await self._chat(history, tools, on_reasoning,
                                             on_content_cb, user_text)
+            trace.gen_seconds += time.perf_counter() - t_llm
+            usage = msg.get("usage") or {}
+            trace.prompt_tokens += int(usage.get("prompt_tokens") or 0)
+            trace.completion_tokens += int(usage.get("completion_tokens") or 0)
             if on_llm_end:
                 on_llm_end()
 

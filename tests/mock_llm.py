@@ -23,8 +23,13 @@ TOOL_CALL = {
 }
 
 
+USAGE = {"prompt_tokens": 123, "completion_tokens": 45,
+         "total_tokens": 168}
+
+
 def _assistant(message: dict) -> dict:
-    return {"choices": [{"message": message, "finish_reason": "stop"}]}
+    return {"choices": [{"message": message, "finish_reason": "stop"}],
+            "usage": dict(USAGE)}
 
 
 def _scenario(messages: list[dict]) -> list[dict]:
@@ -129,6 +134,9 @@ class Handler(BaseHTTPRequestHandler):
         for chunk in _scenario(messages):
             self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
             self.wfile.flush()
+        # chunk final d'usage (stream_options.include_usage), comme llama-server
+        self.wfile.write(f"data: {json.dumps({'usage': dict(USAGE)})}\n\n".encode())
+        self.wfile.flush()
         self.wfile.write(b"data: [DONE]\n\n")
         self.wfile.flush()
 

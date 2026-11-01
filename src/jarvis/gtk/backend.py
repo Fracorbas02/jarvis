@@ -287,17 +287,27 @@ class GtkBackend:
                 on_content=lambda f: sink({"type": "content", "text": f}),
             )
             duration = _time.perf_counter() - t0
-            # estimation tokens : ~4 caractères/token en français (compte aussi le reasoning)
+            # tokens : usage RÉEL remonté par le serveur si dispo, sinon
+            # estimation ~4 caractères/token (compte aussi le reasoning)
             n_chars = sum(len(e.get("text", "")) for e in list(self.events.queue)
                           if e.get("type") in ("content", "reasoning"))
-            n_tok = max(1, round(n_chars / 4))
+            real = trace.completion_tokens > 0
+            n_tok = trace.completion_tokens or max(1, round(n_chars / 4))
+            # tok/s sur le temps de GÉNÉRATION seul (hors exécution des outils)
+            gen_secs = trace.gen_seconds if real else duration
             sink({"type": "done", "reply": reply,
                   "duration": duration, "gen_tokens": n_tok,
-                  "gen_tps": round(n_tok / duration, 1) if duration > 0 else None,
+                  "gen_seconds": gen_secs if real else None,
+                  "prompt_tokens": trace.prompt_tokens or None,
+                  "tokens_real": real,
+                  "gen_tps": round(n_tok / gen_secs, 1) if gen_secs > 0 else None,
                   "trace": {"tool_calls": trace.tool_calls,
                             "iterations": trace.iterations,
                             "error": trace.error,
-                            "tts_tags": trace.tts_tags}})
+                            "tts_tags": trace.tts_tags,
+                            "prompt_tokens": trace.prompt_tokens,
+                            "completion_tokens": trace.completion_tokens,
+                            "gen_seconds": trace.gen_seconds}})
             self._save_session()
         except Exception as exc:  # noqa: BLE001 — remonter à l'UI
             log.exception("tour en erreur")

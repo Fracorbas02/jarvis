@@ -1325,6 +1325,16 @@ class JarvisWindow(Adw.ApplicationWindow):
             if trace.get("error"):
                 meta = trace["error"] + " — " + meta
             box.set_meta(meta)
+        if box is not None:
+            # stats pour le bouton "i" de la bulle (tokens réels si le serveur
+            # renvoie l'usage, tok/s sur le temps de génération seul)
+            box.set_stats({
+                "gen_tokens": tok, "gen_tps": tps, "duration": dur,
+                "prompt_tokens": event.get("prompt_tokens"),
+                "gen_seconds": event.get("gen_seconds"),
+                "tokens_real": event.get("tokens_real"),
+                "trace": trace,
+            })
         if dur is not None and tok is not None:
             self._info_last_txt = (f"{tok} tok générés en {dur:.1f} s"
                                   + (f" → {tps} tok/s" if tps else ""))

@@ -558,6 +558,10 @@ class MessageBox(Gtk.Box):
         self._last_render = 0
         self._render_timer = None
         self.webview = None
+        # lignes d'outils intercalées dans le flux : (offset dans _md_buffer au
+        # moment de l'appel, widget entry) — triées à chaque re-rendu
+        self._tool_entries: list[tuple[int, Gtk.Box]] = []
+        self._stats: dict = {}
         if role == "assistant" and WEBKIT_AVAILABLE:
             self.webview = self._make_webview()
             # visible dès la création (hauteur mini 40px) : _render_md la rend
@@ -569,16 +573,36 @@ class MessageBox(Gtk.Box):
         self.tools_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         bubble.append(self.tools_box)
 
-        # bouton copier (bulles assistant uniquement) : copie le texte brut markdown
+        # boutons d'action (bulles assistant uniquement) : infos (tokens/tok/s)
+        # + copier le texte brut markdown
         if role == "assistant":
+            actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+            actions.set_halign(Gtk.Align.END)
+            self.info_btn = Gtk.Button(icon_name="info-symbolic",
+                                       tooltip_text="Infos de la réponse (tokens, tok/s, durée)",
+                                       valign=Gtk.Align.CENTER)
+            self.info_btn.add_css_class("flat")
+            self.info_btn.add_css_class("jarvis-msg-copy")
+            self.info_btn.set_visible(False)  # affiché quand des stats sont connues
+            self._info_pop = Gtk.Popover()
+            self._info_lbl = Gtk.Label(xalign=0, wrap=True, selectable=True)
+            self._info_lbl.set_max_width_chars(52)
+            self._info_lbl.set_margin_top(10)
+            self._info_lbl.set_margin_bottom(10)
+            self._info_lbl.set_margin_start(12)
+            self._info_lbl.set_margin_end(12)
+            self._info_pop.set_child(self._info_lbl)
+            self._info_pop.set_parent(self.info_btn)
+            self.info_btn.connect("clicked", lambda b: self._info_pop.popup())
             copy_btn = Gtk.Button(icon_name="edit-copy-symbolic",
                                   tooltip_text="Copier la réponse",
                                   valign=Gtk.Align.CENTER)
             copy_btn.add_css_class("flat")
             copy_btn.add_css_class("jarvis-msg-copy")
-            copy_btn.set_halign(Gtk.Align.END)
             copy_btn.connect("clicked", lambda b: self.copy_content())
-            bubble.append(copy_btn)
+            actions.append(self.info_btn)
+            actions.append(copy_btn)
+            bubble.append(actions)
 
         self.meta_label = Gtk.Label(xalign=0, wrap=True)
         self.meta_label.add_css_class("jarvis-meta")
@@ -676,8 +700,19 @@ class MessageBox(Gtk.Box):
             self.webview.set_visible(False)
         self.content_box.set_visible(True)
         link_defs, footnotes = collect_defs(text)
-        for b in parse_blocks(text):
-            _render_block(self.content_box, b, link_defs, footnotes)
+        # Intercale chaque ligne d'outil à la position du flux où le LLM l'a
+        # appelée : le buffer markdown est découpé aux offsets enregistrés
+        pos = 0
+        for off, entry in sorted(self._tool_entries, key=lambda t: t[0]):
+            seg = text[pos:off]
+            if seg:
+                for b in parse_blocks(seg):
+                    _render_block(self.content_box, b, link_defs, footnotes)
+            self.content_box.append(entry)  # le widget est re-parenté à chaque rendu
+            pos = off
+        if text[pos:]:
+            for b in parse_blocks(text[pos:]):
+                _render_block(self.content_box, b, link_defs, footnotes)
         if not self.content_box.get_first_child():
             self.content_box.append(_label("", ""))
         self._connect_footnote_anchors()
@@ -859,7 +894,15 @@ class MessageBox(Gtk.Box):
         entry._jarvis_result = result_lbl  # pour set_tool_result
         entry._jarvis_arrow = arrow
         entry._jarvis_name = name
-        self.tools_box.append(entry)
+        # position dans le flux = offset courant du buffer markdown : la ligne
+        # reste à l'endroit où le LLM a appelé l'outil, pas en fin de bulle
+        self._tool_entries.append((len(self._md_buffer), entry))
+        if self.webview is not None:
+            # mode WebKit : le contenu est un HTML dans la webview, on ne peut
+            # pas intercaler en HTML -> les outils restent dessous la webview
+            self.tools_box.append(entry)
+        else:
+            self._flush_render()  # re-rend tout de suite avec l'entrée à sa place
         return lbl
 
     def set_tool_result(self, lbl: Gtk.Label, ok: bool, duration: float,
@@ -886,6 +929,37 @@ class MessageBox(Gtk.Box):
     def set_meta(self, text: str) -> None:
         self.meta_label.set_text(text)
         self.meta_label.set_visible(bool(text))
+
+    def set_stats(self, stats: dict) -> None:
+        """Stats du tour (événement done) : alimente le popover du bouton "i"."""
+        self._stats = stats
+        if not hasattr(self, "info_btn"):
+            return
+        gen = stats.get("gen_tokens")
+        tps = stats.get("gen_tps")
+        dur = stats.get("duration")
+        prompt = stats.get("prompt_tokens")
+        gen_s = stats.get("gen_seconds")
+        real = stats.get("tokens_real")
+        trace = stats.get("trace") or {}
+        lines: list[str] = []
+        if gen is not None:
+            kind = "usage serveur" if real else "estimé (~4 car/tok)"
+            lines.append(f"Tokens générés : {gen} ({kind})")
+        if tps is not None:
+            gtxt = f" — génération {gen_s:.1f} s" if gen_s else ""
+            lines.append(f"Vitesse : {tps:.1f} tok/s{gtxt}")
+        if prompt:
+            lines.append(f"Prompt : {prompt} tokens")
+        if dur is not None:
+            n_tools = len(trace.get("tool_calls") or [])
+            it = trace.get("iterations") or 0
+            extra = f" · {n_tools} outil(s) · {it} itération(s)" if (n_tools or it) else ""
+            lines.append(f"Tour total : {dur:.1f} s{extra}")
+        if trace.get("error"):
+            lines.append(f"Erreur : {trace['error']}")
+        self._info_lbl.set_text("\n".join(lines) or "pas de stats")
+        self.info_btn.set_visible(True)
 
 
 class MessagesColumn(Gtk.Box):
