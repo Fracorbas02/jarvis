@@ -861,6 +861,10 @@ class JarvisWindow(Adw.ApplicationWindow):
         self._start_mic_turn()
 
     def _start_mic_turn(self) -> None:
+        if self._busy:
+            self._toast("Un tour est déjà en cours")
+            return
+        self._busy = True  # bloque aussi Ctrl+P pendant l'enregistrement micro
         self.stack.set_visible_child_name("chat")
         self.chat_mic.set_sensitive(False)
         self.mic_button.set_sensitive(False)
@@ -967,6 +971,9 @@ class JarvisWindow(Adw.ApplicationWindow):
             self.conv_list.append(row)
 
     def _on_conv_row_activated(self, _listbox, row) -> None:
+        if self._busy:
+            self._toast("Termine le tour en cours avant de changer de conversation")
+            return
         self.backend.load_session(row.sid)
         self.split.set_show_sidebar(False)  # referme la sidebar après choix
 
@@ -1016,6 +1023,7 @@ class JarvisWindow(Adw.ApplicationWindow):
         self._assistant_box = assistant_message()
         self.messages.add(self._assistant_box)
         self._busy = True
+        self.messages.scroll_to_end(force=True)  # nouveau tour : on revient en bas
         self._set_busy_ui(True)
         self.backend.stream_turn(text)
 
@@ -1090,10 +1098,16 @@ class JarvisWindow(Adw.ApplicationWindow):
                 self.messages.scroll_to_end()
         elif t == "tool_call":
             if self._assistant_box is not None:
-                self._tool_lines[event["name"]] = self._assistant_box.add_tool_line(
+                # clé unique par appel (le même outil peut être appelé 2× dans un tour)
+                key = f"{event['name']}#{len(self._tool_lines)}"
+                self._tool_lines[key] = self._assistant_box.add_tool_line(
                     event["name"], event["args"])
         elif t == "tool_result":
-            lbl = self._tool_lines.pop(event["name"], None)
+            # retrouve la 1re ligne encore ouverte pour cet outil
+            lbl = None
+            for key in [k for k in self._tool_lines if k.startswith(event["name"] + "#")]:
+                lbl = self._tool_lines.pop(key)
+                break
             if lbl is not None and self._assistant_box is not None:
                 import json as _json
                 args_txt = _json.dumps(event["args"], ensure_ascii=False)
@@ -1186,6 +1200,8 @@ class JarvisWindow(Adw.ApplicationWindow):
             self._refresh_status()
         return GLib.SOURCE_REMOVE
     def _on_turn_done(self, event: dict) -> None:
+        if self._assistant_box is not None:
+            self._assistant_box.flush_render()  # re-rendu final immédiat (hors throttle)
         box = self._assistant_box
         trace = event.get("trace") or {}
         if box is not None:
@@ -1275,10 +1291,20 @@ class JarvisWindow(Adw.ApplicationWindow):
             content = m.get("content")
             if role == "user" and content:
                 self.messages.add(user_message(str(content)))
-            elif role == "assistant" and content:
+            elif role == "assistant":
                 box = assistant_message()
-                box.set_markdown(str(content))
-                self.messages.add(box)
+                if content:
+                    box.set_markdown(str(content))
+                # rejoue les appels d'outils du tour (lignes grisées, sans les résultats bruts)
+                for tc in m.get("tool_calls") or []:
+                    fn = tc.get("function") or {}
+                    try:
+                        args = json.loads(fn.get("arguments") or "{}")
+                    except json.JSONDecodeError:
+                        args = {}
+                    box.add_tool_line(str(fn.get("name", "?")), args, ok=True, duration=0.0)
+                if content or m.get("tool_calls"):
+                    self.messages.add(box)
 
     # ---------- divers ----------
 
