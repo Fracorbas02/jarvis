@@ -1004,7 +1004,8 @@ async def record_wav_vad(voice_cfg: VoiceConfig, out_path: Path | None = None,
                          silence_rms: float = 800.0,
                          min_seconds: float = 0.8,
                          on_chunk=None, on_status=None,
-                         noise_floor: float | None = None) -> Path:
+                         noise_floor: float | None = None,
+                         noise_factor: float = 2.0) -> Path:
     """Enregistre le micro jusqu'à la fin de parole (VAD par seuil RMS),
     puis écrit le WAV 16 kHz mono. Utilisé par l'UI pour le "parler et
     attendre" : plus de durée fixe.
@@ -1063,15 +1064,17 @@ async def record_wav_vad(voice_cfg: VoiceConfig, out_path: Path | None = None,
     # parole) : pendant la 1re seconde, on estime le bruit de fond (RMS min des
     # blocs) et le seuil devient max(silence_rms, floor*2.5). Avant calibration,
     # seuil fixe. noise_floor fourni de l'extérieur a priorité.
-    # Seuil FIXE (pas d'auto-calib : le min des blocs sur 1 s tombe dans un trou
-    # de silence et effondre le seuil -> le VAD ne détecte plus jamais la fin).
-    # noise_floor fourni de l'extérieur reste prioritaire si présent.
+    # Seuil RELATIF au bruit ambiant : médiane glissante des RMS des 2 dernières
+    # secondes (fenêtre de 20 blocs de 100 ms). threshold = max(silence_rms,
+    # median * noise_factor). Avec de la musique/ des voix autour, la médiane
+    # monte -> le seuil monte -> on coupe quand on retombe au niveau ambiant.
+    # noise_floor externe prioritaire si fourni.
     floor = noise_floor
     threshold = silence_rms
     if floor is not None:
         threshold = max(silence_rms, floor * 2.5)
-    calib_until = 0.0
-    calib_min = None
+    import collections as _collections
+    window: _collections.deque = _collections.deque(maxlen=20)
     try:
         deadline = asyncio.get_running_loop().time() + max_seconds
         while asyncio.get_running_loop().time() < deadline:
@@ -1086,15 +1089,14 @@ async def record_wav_vad(voice_cfg: VoiceConfig, out_path: Path | None = None,
                     pass
             rms = _pcm_rms(chunk)
             total += len(chunk) / 2 / SAMPLE_RATE
+            window.append(rms)
+            if len(window) >= 10:  # assez de blocs pour une médiane stable
+                med = sorted(window)[len(window) // 2]
+                threshold = max(silence_rms, med * noise_factor)
             if int(total * 2) != int((total - len(chunk) / 2 / SAMPLE_RATE) * 2):
-                log.debug("vad t=%.2f rms=%.0f seuil=%.0f heard=%s silent=%.2f",
-                          total, rms, threshold, heard_speech, silent)
-            if floor is None and total <= calib_until:
-                calib_min = rms if calib_min is None else min(calib_min, rms)
-                if total >= calib_until:
-                    floor = calib_min
-                    threshold = max(silence_rms, (floor or 0) * 2.5)
-                    log.debug("vad auto-calib: floor=%.0f seuil=%.0f", floor, threshold)
+                log.debug("vad t=%.2f rms=%.0f med=%.0f seuil=%.0f heard=%s silent=%.2f",
+                          total, rms, sorted(window)[len(window) // 2] if window else 0,
+                          threshold, heard_speech, silent)
             if rms >= threshold:
                 silent = 0.0
                 heard_speech = True
