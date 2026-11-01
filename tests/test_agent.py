@@ -123,6 +123,124 @@ async def run_case_compact_tool() -> bool:
         thread.join(timeout=5)
 
 
+async def _a(v):
+    return v
+
+
+async def run_case_auto_compact() -> bool:
+    """Au-delà de 75% du contexte, l'agent compacte AVANT l'appel LLM (sinon le
+    tool call du modèle serait tronqué par llama-server -> HTTP 500)."""
+    from jarvis.compact import compact_tool
+
+    srv, thread = start_mock(18080)
+    try:
+        llm = LLMClient("http://127.0.0.1:18080/v1", model="mock")
+        tools = McpToolProvider({"echo": [sys.executable, str(ECHO_SERVER)]})
+        await tools.start()
+        agent = Agent(llm, tools, "system de test", max_iterations=4,
+                      internal_tools={"jarvis__compact": compact_tool},
+                      ctx_max=100, ctx_usage=lambda: _a(90))
+        history = [
+            {"role": "system", "content": "system de test"},
+            {"role": "user", "content": "question 1"},
+            {"role": "assistant", "content": "réponse 1"},
+            {"role": "user", "content": "question 2"},
+            {"role": "assistant", "content": "réponse 2"},
+        ]
+        reply, history, _trace = await agent.turn(history, "continue stp")
+        ok = ("résumé automatiquement" in str(history[1].get("content"))
+              and history[-1].get("role") == "assistant")
+        status = "OK " if ok else "FAIL"
+        print(f"[{status}] compaction auto au seuil: reply={reply!r} history_len={len(history)}")
+        await tools.stop()
+        await llm.aclose()
+        return ok
+    finally:
+        srv.shutdown()
+        thread.join(timeout=5)
+
+
+async def run_case_ctx_note() -> bool:
+    """L'usage du contexte est injecté dans le system prompt envoyé au LLM,
+    pour que le modèle puisse appeler jarvis__compact lui-même."""
+    srv, thread = start_mock(18080)
+    try:
+        llm = LLMClient("http://127.0.0.1:18080/v1", model="mock")
+        tools = McpToolProvider({"echo": [sys.executable, str(ECHO_SERVER)]})
+        await tools.start()
+        seen: list[list[dict]] = []
+        orig_chat = llm.chat
+
+        async def spy(messages, **kw):
+            seen.append(messages)
+            return await orig_chat(messages, **kw)
+
+        llm.chat = spy  # type: ignore[method-assign]
+        agent = Agent(llm, tools, "system de test", max_iterations=4,
+                      ctx_max=16384, ctx_usage=lambda: _a(12300))
+        await agent.turn([], "bonjour")
+        sysmsg = next((m for m in seen[-1] if m.get("role") == "system"), {})
+        content = str(sysmsg.get("content"))
+        ok = "[Usage du contexte :" in content and "12300/16384" in content
+        status = "OK " if ok else "FAIL"
+        print(f"[{status}] note d'usage dans le system prompt: {content!r}")
+        await tools.stop()
+        await llm.aclose()
+        return ok
+    finally:
+        srv.shutdown()
+        thread.join(timeout=5)
+
+
+async def run_case_truncated_tool_call_retry() -> bool:
+    """Si llama-server renvoie HTTP 500 'Failed to parse tool call arguments'
+    (tool call tronqué, contexte plein), l'agent compacte et réessaie une fois
+    au lieu de laisser mourir le tour."""
+    from jarvis.compact import compact_tool
+    from jarvis.llm import LLMError
+
+    srv, thread = start_mock(18080)
+    try:
+        llm = LLMClient("http://127.0.0.1:18080/v1", model="mock")
+        tools = McpToolProvider({"echo": [sys.executable, str(ECHO_SERVER)]})
+        await tools.start()
+        orig_chat = llm.chat
+        state = {"failed": False}
+
+        async def flaky(messages, **kw):
+            if (not state["failed"]
+                    and not any(m.get("role") == "tool" for m in messages)
+                    and "résume la conversation" not in str(messages[-1].get("content")).lower()):
+                state["failed"] = True
+                raise LLMError('llama-server HTTP 500: {"error":{"message":"Failed to '
+                               'parse tool call arguments as JSON: parse error - unexpected '
+                               "end of input; expected '}'\"}}")
+            return await orig_chat(messages, **kw)
+
+        llm.chat = flaky  # type: ignore[method-assign]
+        agent = Agent(llm, tools, "system de test", max_iterations=4,
+                      internal_tools={"jarvis__compact": compact_tool},
+                      ctx_max=16384, ctx_usage=lambda: _a(100))
+        history = [
+            {"role": "system", "content": "system de test"},
+            {"role": "user", "content": "question 1"},
+            {"role": "assistant", "content": "réponse 1"},
+            {"role": "user", "content": "question 2"},
+            {"role": "assistant", "content": "réponse 2"},
+        ]
+        reply, history, _trace = await agent.turn(history, "continue stp")
+        ok = (state["failed"] and "réponse directe" in reply
+              and any("résumé automatiquement" in str(m.get("content")) for m in history))
+        status = "OK " if ok else "FAIL"
+        print(f"[{status}] retry après tool call tronqué: reply={reply!r}")
+        await tools.stop()
+        await llm.aclose()
+        return ok
+    finally:
+        srv.shutdown()
+        thread.join(timeout=5)
+
+
 async def main() -> int:
     results = [
         await run_case("tour avec outil", "fais un ping vers 127.0.0.1",
@@ -131,6 +249,9 @@ async def main() -> int:
                        "réponse directe", expect_tool=False),
         await run_case_failing_tool(),
         await run_case_compact_tool(),
+        await run_case_auto_compact(),
+        await run_case_ctx_note(),
+        await run_case_truncated_tool_call_retry(),
     ]
     print(f"\n{sum(results)}/{len(results)} tests OK")
     return 0 if all(results) else 1

@@ -146,9 +146,16 @@ class GtkBackend:
         self.llm = LLMClient(**{k: v for k, v in self.cfg.llm.__dict__.items()
                                 if k in _LLM_PARAMS})
         self.tools = McpToolProvider(self.cfg.mcp_servers)
+        async def _ctx_used() -> int | None:
+            try:
+                return (await server_ctx_usage(self.cfg.llm.base_url))["used"] or None
+            except Exception:  # noqa: BLE001 — sonde best-effort
+                return None
+
         self.agent = Agent(self.llm, self.tools, self.cfg.agent.system_prompt,
                            self.cfg.agent.max_iterations, stream=True,
-                           internal_tools={"jarvis__compact": compact_tool})
+                           internal_tools={"jarvis__compact": compact_tool},
+                           ctx_max=self.cfg.llm.ctx_size, ctx_usage=_ctx_used)
         self.history: list[dict] = []
         self.busy = False
         self._lock = asyncio.Lock()
@@ -356,6 +363,8 @@ class GtkBackend:
         st = await server_mod.get_status(self.cfg.llm.base_url)
         usage = await server_ctx_usage(self.cfg.llm.base_url)
         metrics = await server_metrics(self.cfg.llm.base_url)
+        if usage.get("n_ctx"):
+            self.agent.ctx_max = int(usage["n_ctx"])  # lu sur le serveur réel (main #49)
         self.events.put({"type": "server_status", "state": st.state, "host": st.host,
                          "port": st.port, "models": st.models, "detail": st.detail,
                          "ctx": usage, "metrics": metrics})
