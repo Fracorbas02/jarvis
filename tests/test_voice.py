@@ -523,6 +523,53 @@ def test_cleanup_recordings_garde_le_dernier(tmp_path, monkeypatch) -> None:
     assert cleanup_recordings(keep=1) == 0  # idempotent
 
 
+def test_record_wav_vad_seuil_relatif_ambiant() -> None:
+    """Seuil relatif : avec une ambiance soutenue (tous les blocs ~2000), le
+    seuil monte (~4000) ; un bloc de silence (~100) est détecté -> coupe.
+    Et inversement : ambiance forte, parole forte (6000) -> heard, puis silence."""
+    import asyncio
+    import jarvis.voice as voice
+    amb = b"\x00\x08" * 1600        # RMS ~2048 (ambiance musique)
+    speech = b"\x00\x18" * 1600     # RMS ~6144 (parole)
+    silence = b"\x00\x00" * 1600    # RMS 0
+    # 10 blocs ambiance, 10 blocs parole, puis silence
+    chunks = [amb] * 10 + [speech] * 10 + [silence] * 40
+
+    class FakeStdout:
+        def __init__(self): self.i = 0
+        async def read(self, n):
+            await asyncio.sleep(0)
+            if self.i < len(chunks):
+                c = chunks[self.i]; self.i += 1; return c
+            return b""
+    class FakeProc:
+        def __init__(self): self.stdout = FakeStdout(); self.returncode = 0
+        def terminate(self): self.returncode = -15
+        async def wait(self): return self.returncode
+        async def communicate(self): return b"", b""
+    async def fake_exec(*a, **k): return FakeProc()
+    orig_exec, orig_which = voice.asyncio.create_subprocess_exec, voice.shutil.which
+    voice.asyncio.create_subprocess_exec = fake_exec
+    voice.shutil.which = lambda c: "/usr/bin/" + c
+    try:
+        import tempfile, wave
+        from jarvis.config import VoiceConfig
+        cfg = VoiceConfig(record_cmd=["ffmpeg", "-loglevel", "error", "-f", "pulse",
+                                      "-i", "default", "-ar", "16000", "-ac", "1",
+                                      "-f", "s16le", "-"])
+        out = Path(tempfile.mkdtemp()) / "vad3.wav"
+        p = _run(voice.record_wav_vad(cfg, out_path=out, max_seconds=60.0,
+                                      silence_seconds=0.25, silence_rms=800.0,
+                                      min_seconds=0.5, noise_factor=2.0))
+        with wave.open(str(p)) as w:
+            secs = w.getnframes() / w.getframerate()
+        # 1 s ambiance + 1 s parole + ~0.3 s silence -> ~2.3 s (coupe bien malgré l'ambiance)
+        assert 1.8 <= secs <= 3.0, secs
+    finally:
+        voice.asyncio.create_subprocess_exec = orig_exec
+        voice.shutil.which = orig_which
+
+
 def test_pcm_rms():
     from jarvis.voice import _pcm_rms
     assert _pcm_rms(b"") == 0.0
