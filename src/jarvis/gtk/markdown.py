@@ -91,7 +91,7 @@ class Block:
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 _SETEXT_RE = re.compile(r"^(=+|-+)\s*$")
 _HR_RE = re.compile(r"^\s{0,3}((?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$")
-_FENCE_RE = re.compile(r"^\s{0,3}```+\s*([^\s`]*)\s*$")
+_FENCE_RE = re.compile(r"^(\s{0,3})(`{3,}|~{3,})(.*)$")
 _ULIST_RE = re.compile(r"^(\s{0,3})([-*+])\s+(.*)$")
 _OLIST_RE = re.compile(r"^(\s{0,3})(\d{1,9})[.)]\s+(.*)$")
 _TASK_RE = re.compile(r"^\[( |x|X)\]\s+(.*)$")
@@ -108,9 +108,10 @@ def _split_table_row(line: str) -> list[str]:
     s = line.strip()
     if s.startswith("|"):
         s = s[1:]
-    if s.endswith("|"):
+    if s.endswith("|") and not s.endswith("\\|"):
         s = s[:-1]
-    return [c.strip() for c in s.split("|")]
+    parts = re.split(r"(?<!\\)\|", s)
+    return [c.strip().replace("\\|", "|") for c in parts]
 
 
 def _parse_table_aligns(sep_line: str) -> list:
@@ -147,7 +148,7 @@ def _is_block_start(line: str, next_line: str | None) -> bool:
 def parse_blocks(text: str) -> list[Block]:
     """Découpe le texte en blocs. Tolérant au streaming : fences, tableaux et
     listes non terminés sont émis tels quels (re-parsés au fragment suivant)."""
-    lines = text.split("\n")
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     blocks: list[Block] = []
 
     i = 0
@@ -169,17 +170,20 @@ def parse_blocks(text: str) -> list[Block]:
             i += 1
             continue
 
-        # fence code
-        fm = _FENCE_RE.match(stripped)
-        if fm:
-            lang = fm.group(1)
+        # fence code : ```N ou ~~~N ; fermeture = ligne avec >= N du MÊME caractère
+        fm = _FENCE_RE.match(line)
+        if fm and not _INDENT_CODE_RE.match(line):
+            marker, info = fm.group(2), fm.group(3).strip()
+            ch, n_open = marker[0], len(marker)
+            lang = info.split()[0] if info else ""
             i += 1
             code_lines: list[str] = []
-            while i < n and not _FENCE_RE.match(lines[i].strip()):
+            close_re = re.compile(rf"^\s{{0,3}}{re.escape(ch)}{{{n_open},}}\s*$")
+            while i < n and not close_re.match(lines[i]):
                 code_lines.append(lines[i])
                 i += 1
             if i < n:
-                i += 1  # fence fermant
+                i += 1
             blocks.append(Block(kind="code", lang=lang, text="\n".join(code_lines)))
             continue
 
@@ -189,7 +193,8 @@ def parse_blocks(text: str) -> list[Block]:
             continue
 
         # titre setext (ligne suivie de === ou ---) : prioritaire sur hr
-        if nxt is not None and _SETEXT_RE.match(nxt.strip()) and stripped:
+        if (nxt is not None and _SETEXT_RE.match(nxt.strip()) and stripped
+                and not _INDENT_CODE_RE.match(line)):
             level = 1 if nxt.strip().startswith("=") else 2
             blocks.append(Block(kind="heading", level=level, text=stripped))
             i += 2
@@ -239,9 +244,21 @@ def parse_blocks(text: str) -> list[Block]:
                 mo2 = _OLIST_RE.match(cur)
                 kind2 = "u" if mu2 else ("o" if mo2 else None)
                 if kind2 is None:
-                    # continuation indentée du dernier item
-                    if items and (len(cur) - len(cur.lstrip(" "))) >= marker_indent + 2:
-                        items[-1].extend(parse_blocks(cur.strip()))
+                    if not cur.strip():
+                        # ligne vide : si la suite reprend un item de la liste, on continue
+                        j = i + 1
+                        while j < n and not lines[j].strip():
+                            j += 1
+                        if j < n:
+                            m3 = _ULIST_RE.match(lines[j]) or _OLIST_RE.match(lines[j])
+                            if m3 and len(m3.group(1)) >= marker_indent:
+                                i = j
+                                continue
+                        break
+                    ind = len(cur) - len(cur.lstrip(" "))
+                    if items and ind >= marker_indent + 2:
+                        # dé-indente de marker_indent+2 (garde la structure interne)
+                        items[-1].extend(parse_blocks(cur[marker_indent + 2:]))
                         i += 1
                         continue
                     break
@@ -350,9 +367,18 @@ def parse_blocks(text: str) -> list[Block]:
                 break
             if para and _is_block_start(cur, lines[i + 1] if i + 1 < n else None):
                 break
+            nxt2 = lines[i + 1] if i + 1 < n else None
+            if (para and nxt2 is not None and _SETEXT_RE.match(nxt2.strip())
+                    and not _INDENT_CODE_RE.match(cur)):
+                level = 1 if nxt2.strip().startswith("=") else 2
+                blocks.append(Block(kind="heading", level=level, text="\n".join(para + [cur])))
+                i += 2
+                para = []
+                break
             para.append(cur)
             i += 1
-        blocks.append(Block(kind="paragraph", text="\n".join(para)))
+        if para:
+            blocks.append(Block(kind="paragraph", text="\n".join(para)))
 
     return blocks
 
@@ -363,21 +389,23 @@ def parse_blocks(text: str) -> list[Block]:
 # [txt][id], ref courte [txt], autolink <...>, url nue, ***...***, **...**,
 # *...*, ~~...~~
 _INLINE_RE = re.compile(
+    r"|<br\s*/?>|</?sub>|</?sup>|</?kbd>"                            # 0: mini-HTML sûr (sans groupe)
     r"|<((?:https?://|mailto:)[^>\s]+)>"                            # 1: <url> autolink
     r"|(\\[\\`*_{}\[\]()#+\-.!>~|$])"                              # 2: échappement (incl. \$)
     r"|\$\$([^$]+)\$\$"                                            # 3: $$...$$ bloc maths
     r"|\$([^$\n]+)\$"                                               # 4: $...$ inline maths
-    r"|(`+)([^`\n]*?)\5"                                            # 5-6: `code`
-    r"|!\[([^\]]*)\]\(([^\s\"\')]+)(?:\s+\"([^\"]*)\")?\)"            # 7-9: ![alt](url "t")
+    r"|(`+)([^\n]*?)\5"                                             # 5-6: `code` à N backticks (contenu peut contenir des ` < N)
+    r"|!\[([^\]]*)\]\(((?:[^\s()]|\([^)]*\))+)(?:\s+\"([^\"]*)\")?\)"   # 7-9: ![alt](url) parens équi.
     r"|\[\^([^\]]+)\]"                                              # 10: [^id] footnote
-    r"|\[([^\]]+)\]\(([^\s\"\')]+)(?:\s+\"([^\"]*)\")?\)"             # 11-13: [txt](url "t")
+    r"|\[([^\]]+)\]\(((?:[^\s()]|\([^)]*\))+)(?:\s+\"([^\"]*)\")?\)"    # 11-13: [txt](url) parens équi.
     r"|\[([^\]]+)\]\[([^\]]*)\]"                                    # 14-15: [txt][id]
     r"|\[([^\]]+)\]"                                                # 16: [txt] ref courte
     r"|(?<![\w<])((?:https?://|www\.)[^\s<>()]+[^\s<>().,;:!?\'\"\]<])"   # 17: url nue
     r"|(\*\*\*|___)(.+?)\18"                                        # 18-19: ***...***
     r"|(\*\*|__)(.+?)\20"                                           # 20-21: **...**
-    r"|(\*|_)([^*_\n]+)\22"                                         # 22-23: *...* / _..._
-    r"|(~~)(.+?)\24"                                                # 24-25: ~~...~~
+    r"|(\*)([^*\n]+)\22"                                            # 22-23: *...*
+    r"|(?<![\w])_([^_\n]+)_(?![\w])"                                 # 24: _..._ pas intra-mot
+    r"|(~~)(.+?)\25"                                                # 24-25: ~~...~~
 )
 
 
@@ -399,7 +427,23 @@ def inline_to_pango(text: str, link_defs: dict | None = None,
     for m in _INLINE_RE.finditer(text):
         if m.start() > pos:
             out.append(escape(text[pos:m.start()]))
-        if m.group(1):                       # <url> autolink
+        g0 = m.group(0)
+        gl = g0.lower()
+        if gl in ("<br>", "<br/>", "<br />"):
+            out.append("\n")
+        elif gl == "<sub>":
+            out.append("<sub>")
+        elif gl == "</sub>":
+            out.append("</sub>")
+        elif gl == "<sup>":
+            out.append("<sup>")
+        elif gl == "</sup>":
+            out.append("</sup>")
+        elif gl == "<kbd>":
+            out.append('<span font-family="monospace" background="#0a0c10">')
+        elif gl == "</kbd>":
+            out.append("</span>")
+        elif m.group(1):                       # <url> autolink
             url = m.group(1)
             out.append(_link_markup(url, "", escape(url)))
         elif m.group(2):                     # échappement \x -> x
@@ -468,11 +512,14 @@ def inline_to_pango(text: str, link_defs: dict | None = None,
         elif m.group(20):                    # **...**
             inner = inline_to_pango(m.group(21), link_defs, footnotes)
             out.append(f"<b>{inner}</b>")
-        elif m.group(22):                    # *...* / _..._
+        elif m.group(22):                    # *...*
             inner = inline_to_pango(m.group(23), link_defs, footnotes)
             out.append(f"<i>{inner}</i>")
-        elif m.group(24):                    # ~~...~~
-            inner = inline_to_pango(m.group(25), link_defs, footnotes)
+        elif m.group(24):                    # _..._ pas intra-mot
+            inner = inline_to_pango(m.group(24), link_defs, footnotes)
+            out.append(f"<i>{inner}</i>")
+        elif m.group(25):                    # ~~...~~
+            inner = inline_to_pango(m.group(26), link_defs, footnotes)
             out.append(f"<s>{inner}</s>")
         pos = m.end()
     if pos < len(text):
