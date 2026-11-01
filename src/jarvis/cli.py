@@ -40,6 +40,7 @@ from .llm import LLMClient
 from .mcp import McpToolProvider
 from .sessions import SessionStore
 from .tui import Display
+from .ttyguard import install as install_tty_guard, restore_stdin
 from .voice import (VoiceError, play_wav, record_wav, record_wav_vad,
                     stop_all_voice_servers, synthesize, transcribe_file,
                     voice_server_status)
@@ -116,7 +117,10 @@ def _make_session(hist_file: Path | None) -> PromptSession:
         if buf.text.rstrip().endswith("\\"):
             buf.text = buf.text.rstrip()[:-1] + "\n"  # continuation
         else:
-            buf.submit()
+            # Buffer.submit() n'existe plus dans prompt_toolkit 3.x : un
+            # AttributeError ici casse le chemin de sortie propre de
+            # l'application et laisse le terminal en mode brut (plus d'echo).
+            buf.validate_and_handle()
 
     return PromptSession(
         history=FileHistory(str(hist_file)) if hist_file is not None else None,
@@ -533,6 +537,7 @@ async def _cmd_apivoices(cfg, console) -> None:
 
 
 async def amain() -> int:
+    install_tty_guard()  # snapshot termios : restaure le tty même en cas de sortie anormale
     _setup_logging()
     try:
         cfg = load_config()
@@ -786,6 +791,7 @@ async def amain() -> int:
             if trace.error:
                 console.print(f"[bold yellow]warn:[/] {trace.error}")
     finally:
+        restore_stdin()  # le terminal doit retrouver echo/icanon quoi qu'il arrive
         await tools.stop()
         await llm.aclose()
         await stop_all_voice_servers(cfg.voice)

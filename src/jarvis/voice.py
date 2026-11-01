@@ -261,7 +261,8 @@ async def start_voice_server(name: str, vcfg: VoiceServerConfig,
     try:
         log.write(f"\n--- {argv} ---\n".encode())
         env = {**os.environ, **vcfg.env} if vcfg.env else None
-        proc = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT,
+        proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL,
+                                stdout=log, stderr=subprocess.STDOUT,
                                 start_new_session=True, env=env)
     finally:
         log.close()
@@ -971,7 +972,8 @@ async def record_wav(seconds: float, voice_cfg: VoiceConfig,
         else:
             wait_secs = seconds  # arecord : on coupe nous-mêmes à `seconds`
         proc = await asyncio.create_subprocess_exec(
-            *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            *argv, stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         pcm, err = await _stop_after(proc, wait_secs)
         # arecord/ffmpeg coupés par SIGTERM renvoient un code non nul : ce n'est
         # pas une erreur tant qu'on a du PCM exploitable.
@@ -988,7 +990,8 @@ async def record_wav(seconds: float, voice_cfg: VoiceConfig,
     else:
         argv.append(str(out_path))
         proc = await asyncio.create_subprocess_exec(
-            *argv, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+            *argv, stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
         _, err = await _stop_after(proc, seconds)
         if not out_path.is_file():
             raise VoiceError(f"{cmd[0]} a échoué : {err.decode(errors='replace')[:300]}")
@@ -1049,7 +1052,8 @@ async def record_wav_vad(voice_cfg: VoiceConfig, out_path: Path | None = None,
         on_status("parle")
     log.debug("record_wav_vad argv: %s", argv)
     proc = await asyncio.create_subprocess_exec(
-        *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        *argv, stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     block = SAMPLE_RATE * 2 // 10  # 100 ms de PCM 16-bit mono
     buf = bytearray()
     silent = 0.0
@@ -1174,7 +1178,7 @@ async def play_wav(path: str | Path, voice_cfg: VoiceConfig | None = None) -> st
             continue
         seen.add(cmd[0])
         proc = await asyncio.create_subprocess_exec(
-            binary, *cmd[1:], str(path),
+            binary, *cmd[1:], str(path), stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
         try:
             await asyncio.wait_for(proc.wait(), timeout=600.0)
@@ -1199,6 +1203,7 @@ async def to_wav_16k_mono(src: Path, dst: Path | None = None) -> Path:
     proc = await asyncio.create_subprocess_exec(
         ffmpeg, "-y", "-loglevel", "error", "-i", str(src),
         "-ar", str(SAMPLE_RATE), "-ac", "1", str(dst),
+        stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
     _, err = await proc.communicate()
     if proc.returncode != 0:
