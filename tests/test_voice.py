@@ -503,6 +503,26 @@ def test_record_wav_vad_seuil_adaptatif() -> None:
         voice.shutil.which = orig_which
 
 
+def test_cleanup_recordings_garde_le_dernier(tmp_path, monkeypatch) -> None:
+    """cleanup_recordings(keep=1) supprime les vieux rec-*.wav, garde le plus récent."""
+    import os, time
+    from jarvis.voice import cleanup_recordings
+    monkeypatch.setenv("JARVIS_LOG_DIR", str(tmp_path))
+    files = []
+    for i in range(5):
+        f = tmp_path / f"rec-1-{i}.wav"
+        f.write_bytes(b"RIFF" + bytes([i]))
+        os.utime(f, (1000 + i, 1000 + i))  # mtime croissant
+        files.append(f)
+    (tmp_path / "voice-stt.log").write_text("log")  # pas un rec-*.wav -> intact
+    n = cleanup_recordings(keep=1)
+    assert n == 4, n
+    assert files[-1].is_file()          # le plus récent est gardé
+    assert not files[0].exists()
+    assert (tmp_path / "voice-stt.log").is_file()
+    assert cleanup_recordings(keep=1) == 0  # idempotent
+
+
 def test_pcm_rms():
     from jarvis.voice import _pcm_rms
     assert _pcm_rms(b"") == 0.0

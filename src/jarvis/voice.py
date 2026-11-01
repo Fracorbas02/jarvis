@@ -912,6 +912,10 @@ async def record_wav(seconds: float, voice_cfg: VoiceConfig,
             cache = Path(tempfile.gettempdir())
         import time as _time
         out_path = cache / f"rec-{os.getpid()}-{_time.time_ns() // 1000}.wav"
+        try:
+            cleanup_recordings(keep=1)
+        except Exception:  # noqa: BLE001 — le nettoyage ne doit jamais casser l'enregistrement
+            pass
     cmd = list(voice_cfg.record_cmd)
     if not cmd:
         raise VoiceError("record_cmd vide : pas de binaire d'enregistrement configuré")
@@ -1018,6 +1022,10 @@ async def record_wav_vad(voice_cfg: VoiceConfig, out_path: Path | None = None,
             import tempfile
             cache = Path(tempfile.gettempdir())
         out_path = cache / f"rec-{os.getpid()}-{_time.time_ns() // 1000}.wav"
+        try:
+            cleanup_recordings(keep=1)
+        except Exception:  # noqa: BLE001 — le nettoyage ne doit jamais casser l'enregistrement
+            pass
 
     cmd = list(voice_cfg.record_cmd)
     if not cmd:
@@ -1108,6 +1116,31 @@ async def record_wav_vad(voice_cfg: VoiceConfig, out_path: Path | None = None,
         raise VoiceError(f"{cmd[0]} a échoué : {err.decode(errors='replace')[:300]}")
     write_wav(out_path, bytes(buf))
     return out_path
+
+
+def cache_dir() -> Path:
+    """Répertoire cache jarvis (~/.cache/jarvis ou $JARVIS_LOG_DIR)."""
+    return Path(os.environ.get("JARVIS_LOG_DIR", Path.home() / ".cache" / "jarvis"))
+
+
+def cleanup_recordings(keep: int = 1) -> int:
+    """Supprime les vieux WAV d'enregistrement (rec-*.wav) dans le cache :
+    on garde les `keep` plus récents. Retourne le nombre supprimé."""
+    import glob as _glob
+    d = cache_dir()
+    try:
+        files = sorted(_glob.glob(str(d / "rec-*.wav")), key=lambda f: os.path.getmtime(f),
+                       reverse=True)
+    except OSError:
+        return 0
+    n = 0
+    for f in files[keep:]:
+        try:
+            os.unlink(f)
+            n += 1
+        except OSError:
+            pass
+    return n
 
 
 def _pcm_rms(chunk: bytes) -> float:

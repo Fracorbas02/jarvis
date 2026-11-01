@@ -157,6 +157,8 @@ class GtkBackend:
 
     async def _astart(self) -> None:
         try:
+            from ..voice import cleanup_recordings
+            cleanup_recordings(keep=1)
             if self.cfg.mcp_servers:
                 await self.tools.start()
             # reprise de la derni\u00e8re session comme au CLI
