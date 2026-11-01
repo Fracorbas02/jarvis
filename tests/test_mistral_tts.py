@@ -332,6 +332,64 @@ def test_default_model_est_la_v3():
     assert DEFAULT_MODEL == "voxtral-mini-tts-3-0"
 
 
+def test_tts_tags_prefixes_dans_input():
+    """synthesize(..., tts_tags=['[emotion=calm]']) -> input commence par le tag."""
+    srv, t = _start_mock()
+    port = srv.server_address[1]
+    try:
+        async def go():
+            c = MistralTTSClient("test-key-123", base_url=f"http://127.0.0.1:{port}")
+            try:
+                audio = await c.synthesize("Bonjour !", voice_id="voice_592",
+                                           tts_tags=["[emotion=calm]", "[pace=slow]"])
+                return audio
+            finally:
+                await c.aclose()
+        audio = asyncio.run(go())
+        assert audio == FAKE_AUDIO
+        inp = Handler.last_payload["input"]
+        assert inp.startswith("[emotion=calm][pace=slow] "), inp
+        assert inp.endswith("Bonjour !"), inp
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_tts_tags_module():
+    """extract_lead_tags / strip_all_tags / apply_tags."""
+    from jarvis.tts_tags import extract_lead_tags, strip_all_tags, apply_tags
+    tags, clean = extract_lead_tags("[emotion=happy] Salut !")
+    assert tags == ["[emotion=happy]"] and clean == "Salut !"
+    tags2, clean2 = extract_lead_tags("Salut [emotion=happy] !")
+    assert tags2 == [] and clean2 == "Salut [emotion=happy] !"
+    assert strip_all_tags("a [emotion=sad] b") == "a  b"
+    assert apply_tags("Yo", ["[pace=fast]"]) == "[pace=fast] Yo"
+
+
+def test_agent_extrait_tag_et_nettoie():
+    """Tour dont la reponse commence par [emotion=..] : tag dans trace.tts_tags,
+    content retourne/historique nettoye."""
+    import asyncio as _a
+    from jarvis.agent import Agent
+
+    class FakeLLM:
+        async def chat(self, messages, tools=None, stream=False, **kw):
+            return {"role": "assistant",
+                    "content": "[emotion=calm] Voici la réponse."}
+
+    class FakeTools:
+        def schemas(self):
+            return []
+        async def call(self, name, args):
+            return ""
+
+    agent = Agent(FakeLLM(), FakeTools(), "sys", stream=False)
+    reply, history, trace = _a.run(agent.turn([], "test"))
+    assert reply == "Voici la réponse.", repr(reply)
+    assert trace.tts_tags == ["[emotion=calm]"], trace.tts_tags
+    assert history[-1]["content"] == "Voici la réponse."
+
+
 def test_config_tts_api_toml(tmp_path):
     from jarvis.config import load_config
     cfg_file = tmp_path / "config.toml"

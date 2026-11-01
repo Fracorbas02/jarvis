@@ -27,6 +27,7 @@ class TurnTrace:
     tool_calls: list[tuple[str, str]] = field(default_factory=list)
     iterations: int = 0
     error: str | None = None
+    tts_tags: list[str] = field(default_factory=list)  # [emotion=..][pace=..] extraits de la réponse
 
 
 @dataclass
@@ -192,7 +193,16 @@ class Agent:
 
             if not msg.get("tool_calls"):
                 history.append(msg)  # la réponse finale fait partie de l'historique
-                return msg.get("content") or "", history, trace
+                content = msg.get("content") or ""
+                # tag d'émotion/pace en tête de réponse (Voxtral TTS 3) : extrait pour
+                # le TTS, mais retiré du texte affiché/sauvegardé (jamais lu à l'écran)
+                from .tts_tags import extract_lead_tags
+                tags, clean = extract_lead_tags(content)
+                if tags:
+                    trace.tts_tags = tags
+                    msg["content"] = clean
+                    content = clean
+                return content, history, trace
 
             history.append(msg)
             for tc in msg["tool_calls"]:

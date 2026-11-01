@@ -1305,7 +1305,8 @@ class JarvisWindow(Adw.ApplicationWindow):
                                   + (f" → {tps} tok/s" if tps else ""))
             self._render_info()
         if self.tts_enabled and event.get("reply"):
-            self.backend.tts_speak(event["reply"])
+            tags = (event.get("trace") or {}).get("tts_tags") or []
+            self.backend.tts_speak(event["reply"], tags=tags)
 
     def _on_server_status(self, event: dict) -> None:
         self._status_state = event.get("state", "unknown")
