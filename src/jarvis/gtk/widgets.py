@@ -20,6 +20,8 @@ Le raisonnement du modèle est repliable (Adw.ExpanderRow) et grisé/italique.
 
 from __future__ import annotations
 
+import sys
+
 import gi
 
 gi.require_version("Gtk", "4.0")
@@ -471,8 +473,8 @@ class MessageBox(Gtk.Box):
         self.role = role
         self.set_hexpand(True)  # sinon halign START/END n'a aucun effet (box pleine largeur)
         self.add_css_class(f"jarvis-msg-{role}")
-        self.set_margin_start(48)
-        self.set_margin_end(48)
+        self.set_margin_start(24)
+        self.set_margin_end(24)
         self.set_margin_top(6)
         self.set_margin_bottom(6)
 
@@ -480,6 +482,7 @@ class MessageBox(Gtk.Box):
         bubble.add_css_class("jarvis-bubble")
         bubble.set_margin_start(12)
         bubble.set_margin_end(12)
+        bubble.set_size_request(320, -1)  # largeur mini : la webview a besoin d'une vraie largeur
         bubble.set_margin_top(8)
         bubble.set_margin_bottom(8)
         self.append(bubble)
@@ -565,20 +568,32 @@ class MessageBox(Gtk.Box):
 
     def _render_md(self, text: str) -> None:
         if self.webview is not None:
-            # rendu HTML complet via markdown-it-py + WebKit.
-            # Toujours visible (hauteur mini 40px) même si le texte est vide :
-            # en streaming, les 1ers fragments peuvent être vides et la bulle
-            # ne doit pas disparaître (0px) avant le 1er contenu.
-            self.content_box.set_visible(False)
-            self.webview.set_visible(True)
-            # hauteur auto = contenu HTML ; on resette le size_request à chaque
-            # fragment pour que la webview suive la hauteur du texte rendu
-            self.webview.set_size_request(-1, -1)
-            self.webview.load_html(markdown_to_html(text or " "), "about:blank")
-            # WebKit met à jour la hauteur après le chargement ; on force un
-            # re-layout de la bulle pour que la hauteur suive le contenu
-            GLib.idle_add(lambda: (self.queue_resize(), GLib.SOURCE_REMOVE)[1])
-            return
+            try:
+                self._render_webview(text)
+                return
+            except Exception:  # noqa: BLE001 — WebKit KO (version, sandbox...) : repli natif
+                import traceback
+                print("[jarvis] webview KO, repli rendu natif:", traceback.format_exc()[:300],
+                      file=sys.stderr)
+                self.webview = None  # ne plus réessayer
+        self._render_native(text)
+
+    def _render_webview(self, text: str) -> None:
+        # rendu HTML complet via markdown-it-py + WebKit.
+        # Toujours visible (hauteur mini 40px) même si le texte est vide :
+        # en streaming, les 1ers fragments peuvent être vides et la bulle
+        # ne doit pas disparaître (0px) avant le 1er contenu.
+        self.content_box.set_visible(False)
+        self.webview.set_visible(True)
+        # hauteur auto = contenu HTML ; on resette la hauteur à chaque fragment
+        # pour que la webview suive le texte rendu (largeur mini posée à la création)
+        self.webview.set_size_request(-1, -1)
+        self.webview.load_html(markdown_to_html(text or " "), "about:blank")
+        # WebKit met à jour la hauteur après le chargement ; on force un
+        # re-layout de la bulle pour que la hauteur suive le contenu
+        GLib.idle_add(lambda: (self.queue_resize(), GLib.SOURCE_REMOVE)[1])
+
+    def _render_native(self, text: str) -> None:
         self._clear_content()
         if self.webview is not None:
             self.webview.set_visible(False)
@@ -595,9 +610,9 @@ class MessageBox(Gtk.Box):
         liens externes (script-message -> xdg-open)."""
         wv = WebKit.WebView()
         wv.set_vexpand(False)         # hauteur = contenu HTML (pas tout l'écran)
-        wv.set_hexpand(False)         # PAS pleine largeur : suit la bulle (max-width 80%)
-        wv.set_halign(Gtk.Align.START)
-        wv.set_size_request(-1, 40)   # hauteur mini : la webview n'occupe jamais 0px
+        wv.set_hexpand(True)          # prend la largeur de la bulle (qui a un min de 320px)
+        wv.set_halign(Gtk.Align.FILL)
+        wv.set_size_request(300, 40)  # largeur/hauteur mini : viewport WebKit non nul
         settings = wv.get_settings()
         try:
             settings.set_enable_javascript(True)

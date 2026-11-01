@@ -93,16 +93,15 @@ def main() -> int:
         # régression #37 : la webview ne doit PAS prendre toute la hauteur (vexpand)
         wv_src = inspect.getsource(gtk_widgets.MessageBox._make_webview)
         assert "set_vexpand(False)" in wv_src and "set_vexpand(True)" not in wv_src
-        render_src2 = inspect.getsource(gtk_widgets.MessageBox._render_md)
-        assert "set_vexpand(True)" not in render_src2  # hauteur auto = contenu HTML
-        render_src = inspect.getsource(gtk_widgets.MessageBox._render_md)
-        assert "self.webview.set_visible(True)" in render_src
-        # la webview ne doit JAMAIS être re-cachée dans la branche webkit de _render_md
-        # (texte vide en streaming) : set_visible(True) puis load_html, pas de set_visible(False)
-        webkit_branch = render_src.split("if self.webview is not None:")[1].split("self._clear_content()")[0]
-        assert "self.webview.set_visible(True)" in webkit_branch
-        assert "self.webview.set_visible(False)" not in webkit_branch
-        assert "load_html" in webkit_branch
+        # la branche webview vit dans _render_webview (appelée par _render_md avec
+        # try/except -> repli natif si WebKit KO)
+        wv_render = inspect.getsource(gtk_widgets.MessageBox._render_webview)
+        assert "set_vexpand(True)" not in wv_render  # hauteur auto = contenu HTML
+        assert "self.webview.set_visible(True)" in wv_render
+        assert "self.webview.set_visible(False)" not in wv_render
+        assert "load_html" in wv_render
+        md_src = inspect.getsource(gtk_widgets.MessageBox._render_md)
+        assert "_render_webview" in md_src and "_render_native" in md_src  # fallback présent
         # et la property text_label ne doit pas contenir de code après son return
         prop_src = inspect.getsource(gtk_widgets.MessageBox.text_label.fget)
         body = prop_src.split("return", 1)[1]
