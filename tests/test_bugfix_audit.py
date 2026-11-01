@@ -1,13 +1,13 @@
-"""Tests de r\u00e9gression pour l'audit (bugs trouv\u00e9s et corrig\u00e9s).
+"""Tests de régression pour l'audit (bugs trouvés et corrigés).
 
 Couvre en particulier la ligne AMD (CPU/GPU) et la robustesse multi-config :
 - jarvis.gpu : device_index, env_for_device, parsing lspci/rocminfo sans crash ;
-- jarvis.voice : --device avec index (pas 'hip:0'), record_wav qui s'arr\u00eatre
-  proprement apr\u00e8s N s, host_port, transcribe_bytes (uuid + nettoyage) ;
+- jarvis.voice : --device avec index (pas 'hip:0'), record_wav qui s'arrêtre
+  proprement après N s, host_port, transcribe_bytes (uuid + nettoyage) ;
 - jarvis.agent : arguments JSON invalides -> pas de NameError ;
 - jarvis.server : parsing /v1/models au format OpenAI {"data": [...]} ;
 - mcp_servers/sysinfo : _amdgpu_sysfs sur un faux /sys, gpu_status/temperatures
-  ne l\u00e8vent jamais ;
+  ne lèvent jamais ;
 - mcp_servers/nettools : la regex du certificat TLS compile et matche.
 
 Usage: uv run pytest tests/test_bugfix_audit.py -v
@@ -65,7 +65,7 @@ def test_args_for_device_nom_ggml():
 
 
 def test_detect_gpus_lspci_sans_deux_points(monkeypatch):
-    """lspci peut renvoyer des lignes VGA/3D sans ': ' apr\u00e8s l'adresse PCI :
+    """lspci peut renvoyer des lignes VGA/3D sans ': ' après l'adresse PCI :
     detect_gpus ne doit pas lever d'IndexError."""
     monkeypatch.setattr(gpu, "_run", lambda cmd, timeout=10.0: (
         "00:00.0 Host bridge: Intel\n"
@@ -120,7 +120,7 @@ def test_host_port_defaut():
 
 
 def test_record_wav_s_arrete_apres_n_secondes(tmp_path):
-    """Un 'micro' infini (cat) doit \u00eatre stopp\u00e9 apr\u00e8s `seconds`, pas apr\u00e8s
+    """Un 'micro' infini (cat) doit être stoppé après `seconds`, pas après
     le timeout (seconds+10) : le WAV produit est valide et le test est rapide."""
     import time
     cfg = VoiceConfig()
@@ -135,13 +135,13 @@ def test_record_wav_s_arrete_apres_n_secondes(tmp_path):
 
     p, dt = asyncio.run(go())
     assert p == out and out.is_file()
-    assert dt < 8.0, f"record_wav a attendu le timeout au lieu de couper \u00e0 1s ({dt:.1f}s)"
+    assert dt < 8.0, f"record_wav a attendu le timeout au lieu de couper à 1s ({dt:.1f}s)"
     with wave.open(str(out)) as w:
         assert (w.getframerate(), w.getnchannels(), w.getsampwidth()) == (16000, 1, 2)
 
 
 def test_transcribe_bytes_nettoie_tmp(tmp_path, monkeypatch):
-    """L'upload .wav ne doit pas n\u00e9cessiter ffmpeg et le tmp est supprim\u00e9."""
+    """L'upload .wav ne doit pas nécessiter ffmpeg et le tmp est supprimé."""
     import mock_voice
     srv, _t = mock_voice.start_mock_voice(0, "stt")
     port = srv.server_address[1]
@@ -158,7 +158,7 @@ def test_transcribe_bytes_nettoie_tmp(tmp_path, monkeypatch):
         text = asyncio.run(go())
         assert "octets audio" in text
         after = set(Path("/tmp").glob("jarvis-stt-*"))
-        assert after == before, f"fichiers temporaires laiss\u00e9s : {after - before}"
+        assert after == before, f"fichiers temporaires laissés : {after - before}"
     finally:
         srv.shutdown()
         srv.server_close()
@@ -168,7 +168,7 @@ def test_transcribe_bytes_nettoie_tmp(tmp_path, monkeypatch):
 
 def test_agent_args_json_invalides_pas_de_nameerror():
     """Un tool_call avec arguments invalides ne doit pas lever NameError
-    (args doit exister m\u00eame dans le branche except)."""
+    (args doit exister même dans le branche except)."""
 
     class FakeLLM:
         def __init__(self):
@@ -181,7 +181,7 @@ def test_agent_args_json_invalides_pas_de_nameerror():
                 return {"role": "assistant", "content": None, "tool_calls": [{
                     "id": "c1", "type": "function",
                     "function": {"name": "x__y", "arguments": "{invalide"}}]}
-            return {"role": "assistant", "content": "ok apr\u00e8s erreur"}
+            return {"role": "assistant", "content": "ok après erreur"}
 
     class FakeTools:
         def schemas(self):
@@ -192,7 +192,7 @@ def test_agent_args_json_invalides_pas_de_nameerror():
 
     agent = Agent(FakeLLM(), FakeTools(), "sys", max_iterations=3, stream=False)
     reply, history, trace = asyncio.run(agent.turn([], "test"))
-    assert reply == "ok apr\u00e8s erreur"
+    assert reply == "ok après erreur"
     tool_msgs = [m for m in history if m.get("role") == "tool"]
     assert tool_msgs and tool_msgs[0]["content"].startswith("ERREUR: arguments JSON invalides")
     assert len(trace.tool_calls) == 1  # pas de crash sur json.dumps(args)
@@ -202,7 +202,7 @@ def test_agent_args_json_invalides_pas_de_nameerror():
 
 def test_get_status_parse_openai_data():
     """GET /v1/models renvoie {"object":"list","data":[...]} : la GUI doit lire
-    data (et pas models) pour conna\u00eetre le mod\u00e8le servi."""
+    data (et pas models) pour connaître le modèle servi."""
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     import json as _json
     import threading
@@ -265,7 +265,7 @@ def test_amdgpu_sysfs_faux_sys(tmp_path):
 
 
 def test_sysinfo_tools_ne_levent_pas():
-    """gpu_status / temperatures r\u00e9pondent toujours (donn\u00e9es ou ERREUR propre)."""
+    """gpu_status / temperatures répondent toujours (données ou ERREUR propre)."""
     import importlib.util
     spec = importlib.util.spec_from_file_location(
         "sysinfo_srv2", Path(__file__).parent.parent / "mcp_servers" / "sysinfo.py")
