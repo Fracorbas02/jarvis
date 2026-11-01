@@ -8,6 +8,7 @@ JARVIS_GIT_REPO (chemin absolu ou relatif).
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 
@@ -60,6 +61,18 @@ def git_log(n: int = 10) -> str:
                  "--date=short"])
 
 
+_REF_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/+~^-]*")
+
+
+def _check_ref(ref: str) -> str | None:
+    """Valide une ref passée à git diff/show : jamais de valeur commençant par
+    '-' (sinon prise pour une option : --output=, --ext-diff=... qui peut
+    exécuter un programme externe)."""
+    if not ref or not _REF_RE.fullmatch(ref):
+        return f"ERREUR: ref invalide ({ref!r})."
+    return None
+
+
 @mcp.tool()
 def git_diff(what: str = "worktree", path: str = "") -> str:
     """Diff du dépôt. what: 'worktree' (modifs non indexées, défaut), 'staged'
@@ -72,7 +85,10 @@ def git_diff(what: str = "worktree", path: str = "") -> str:
     elif what == "HEAD":
         args = ["diff", "HEAD"]
     else:
-        args = ["diff", what]
+        err = _check_ref(what)
+        if err:
+            return err
+        args = ["diff", "--", what]
     if path:
         args += ["--", path]
     return _git(args, timeout=30.0)
@@ -94,11 +110,12 @@ def git_remotes() -> str:
 def git_show(ref: str, path: str = "") -> str:
     """Contenu d'un fichier à une révision donnée (git show ref:path), ou le
     détail d'un commit si path est vide. ref: hash, branche, tag, HEAD~2..."""
-    if not ref or any(c in ref for c in " ;&|`$(){}[]<>\\\"'"):
-        return "ERREUR: ref invalide."
+    err = _check_ref(ref)
+    if err:
+        return err
     if path:
         return _git(["show", f"{ref}:{path}"], timeout=30.0)
-    return _git(["show", "--stat", "--pretty=format:%h | %ad | %an | %s", "--date=short", ref])
+    return _git(["show", "--stat", "--pretty=format:%h | %ad | %an | %s", "--date=short", "--", ref])
 
 
 if __name__ == "__main__":

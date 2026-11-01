@@ -35,8 +35,17 @@ async def compact_history(agent: "Agent", history: list[dict]) -> tuple[str, lis
     convo = [m for m in history if m.get("role") != "system"]
     if len(convo) < 4:
         return ("historique déjà court (< 4 messages), rien à compacter", history)
+    # tronque chaque message : un historique avec des résultats d'outils bruts
+    # (logs, read_file de centaines de ko) dépasserait sinon le contexte sur
+    # l'appel de compact lui-même, qui est censé le sauver
+    _MAX_MSG = 4000
+
+    def _clip(content) -> str:
+        s = str(content or "appel d outil")
+        return s if len(s) <= _MAX_MSG else s[:_MAX_MSG] + f"\n… (tronqué à {_MAX_MSG} car.)"
+
     text = "\n\n".join(
-        f"[{m.get('role')}] {m.get('content') or 'appel d outil'}" for m in convo
+        f"[{m.get('role')}] {_clip(m.get('content'))}" for m in convo
     )
     msg = await agent.llm.chat([
         {"role": "system", "content": COMPACT_SYSTEM},

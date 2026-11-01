@@ -82,8 +82,13 @@ def save_api_key(api_key: str) -> Path:
     """Enregistre la clé localement (fichier 0600, jamais loguée/affichée)."""
     p = api_key_path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"api_key": api_key}, indent=2), encoding="utf-8")
-    os.chmod(p, stat.S_IRUSR | stat.S_IWUSR)  # 0600
+    # os.open avec mode 0o600 : write_text créerait le fichier avec l'umask
+    # (souvent 0644) et la clé serait lisible des autres utilisateurs entre
+    # la création et le chmod
+    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(json.dumps({"api_key": api_key}, indent=2))
+    os.chmod(p, stat.S_IRUSR | stat.S_IWUSR)  # 0600 même si le fichier existait déjà
     return p
 
 

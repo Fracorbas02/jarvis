@@ -7,6 +7,8 @@ from __future__ import annotations
 import difflib
 import json
 import re
+import signal
+import threading
 
 try:
     from mcp.server.mcpserver import MCPServer as Server  # SDK MCP >= 2
@@ -69,11 +71,81 @@ def json_query(json_text: str, path: str = "") -> str:
     return str(value)
 
 
+_REGEX_TIMEOUT = 2.0  # secondes max d'exécution de la regex (anti-ReDoS)
+_REGEX_MAX_TEXT = 2_000  # texte réduit : un pattern catastrophique reste borné
+
+
+class _RegexTimeout(Exception):
+    pass
+
+
+def _regex_alarm(signum, frame):
+    raise _RegexTimeout()
+
+
+_WORKER_SRC = """
+import json, re, sys
+data = json.load(sys.stdin)
+try:
+    rx = re.compile(data["pattern"], data["flags"])
+    out = [{"span": list(m.span()), "match": m.group(0)[:200],
+            "groups": [None if g is None else g[:200] for g in m.groups()]}
+           for m in rx.finditer(data["text"])]
+    json.dump({"ok": True, "matches": out}, sys.stdout)
+except re.error as exc:
+    json.dump({"ok": False, "error": str(exc)}, sys.stdout)
+"""
+
+
+def _regex_finditer_timed(pattern: str, flags: int, text: str, timeout: float):
+    """list(rx.finditer(text)) avec plafond de temps, sous forme de dicts.
+
+    Thread principal : alarme SIGALRM (signal.signal/setitimer ne marchent
+    QUE là). Ailleurs (le SDK MCP exécute les outils sync dans un thread
+    worker anyio, où signal.signal lève ValueError) : la regex tourne dans
+    un SOUS-PROCESSUS tué par le timeout du père — un join(timeout) sur un
+    thread en calcul CPU pur ne respecte pas toujours son délai (observé :
+    join(2s) bloqué 17s), alors que le timeout subprocess est géré par le
+    noyau (SIGKILL), donc fiable.
+    """
+    if threading.current_thread() is threading.main_thread():
+        rx = re.compile(pattern, flags)
+        old = None
+        try:
+            old = signal.signal(signal.SIGALRM, _regex_alarm)
+            signal.setitimer(signal.ITIMER_REAL, timeout)
+            return [{"span": list(m.span()), "match": m.group(0)[:200],
+                     "groups": [None if g is None else g[:200] for g in m.groups()]}
+                    for m in rx.finditer(text)]
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            if old is not None:
+                signal.signal(signal.SIGALRM, old)
+    import json as _json
+    import subprocess as _sp
+    import sys as _sys
+    payload = _json.dumps({"pattern": pattern, "flags": flags, "text": text})
+    try:
+        proc = _sp.run([_sys.executable, "-c", _WORKER_SRC], input=payload,
+                       capture_output=True, text=True, timeout=timeout)
+    except _sp.TimeoutExpired:
+        raise _RegexTimeout()
+    if proc.returncode != 0:
+        raise _RegexTimeout() if False else RuntimeError(
+            f"worker regex mort (code {proc.returncode}): {proc.stderr[:200]}")
+    data = _json.loads(proc.stdout or "{}")
+    if not data.get("ok"):
+        raise re.error(data.get("error", "erreur worker"))
+    return data["matches"]
+
+
+
 @mcp.tool()
 def regex_test(pattern: str, text: str, flags: str = "") -> str:
     """Teste une regex Python sur un texte : nombre de matchs, et pour chaque
     match les groupes capturés. flags: 'i' (insensible), 'm' (multiligne), 's'
-    (dotall), combinaisons 'im'. text tronqué à 20000 caractères."""
+    (dotall), combinaisons 'im'. text tronqué à 2000 caractères, exécution
+    plafonnée à 2 s (protection contre les regex à backtracking catastrophique)."""
     flag_map = {"i": re.IGNORECASE, "m": re.MULTILINE, "s": re.DOTALL}
     fl = 0
     for c in flags.lower():
@@ -81,19 +153,28 @@ def regex_test(pattern: str, text: str, flags: str = "") -> str:
             fl |= flag_map[c]
         else:
             return f"ERREUR: flag '{c}' inconnu (i, m, s)."
-    text = text[:_MAX]
+    text = text[:_REGEX_MAX_TEXT]
     try:
-        rx = re.compile(pattern, fl)
+        re.compile(pattern, fl)  # valide d'abord (erreur propre si invalide)
     except re.error as exc:
         return f"ERREUR: regex invalide ({exc})"
-    matches = list(rx.finditer(text))
+    # plafond de temps anti-ReDoS : un pattern type (a+)+$ sur un texte long
+    # bloquerait sinon le process stdio indéfiniment. SIGALRM dans le thread
+    # principal, sous-processus tué par timeout sinon (chemin MCP : worker).
+    try:
+        matches = _regex_finditer_timed(pattern, fl, text, _REGEX_TIMEOUT)
+    except _RegexTimeout:
+        return (f"ERREUR: regex interrompue après {_REGEX_TIMEOUT:.0f}s "
+                f"(backtracking trop coûteux — simplifie le pattern).")
+    except re.error as exc:
+        return f"ERREUR: regex invalide ({exc})"
     if not matches:
         return f"0 match pour {pattern!r}."
     out = [f"{len(matches)} match(s) pour {pattern!r}:"]
     for i, m in enumerate(matches[:50], 1):
-        groups = m.groups()
-        g = ", ".join(repr(g) for g in groups) if groups else "(pas de groupe)"
-        out.append(f"{i}. span={m.span()} match={m.group(0)[:80]!r} groupes: {g}")
+        groups = m["groups"]
+        g = ", ".join(repr(x) for x in groups) if groups else "(pas de groupe)"
+        out.append(f"{i}. span={tuple(m['span'])} match={m['match'][:80]!r} groupes: {g}")
     if len(matches) > 50:
         out.append(f"... et {len(matches) - 50} autres matchs")
     return "\n".join(out)
