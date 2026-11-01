@@ -35,6 +35,7 @@ from rich.text import Text
 
 from .agent import Agent
 from .compact import compact_history, compact_tool
+from .voice_tone import voice_tone_tool
 from .config import load_config
 from .llm import LLMClient
 from .mcp import McpToolProvider
@@ -563,6 +564,10 @@ async def amain() -> int:
     tools = McpToolProvider(cfg.mcp_servers)
     if cfg.mcp_servers:
         await tools.start()
+    agent = Agent(llm, tools, cfg.agent.system_prompt, cfg.agent.max_iterations,
+                  stream=True, internal_tools={"jarvis__compact": compact_tool,
+                           "jarvis__voice_tone": voice_tone_tool})
+
     console = _make_console()
     display = Display(console)
     server = await _server_info(cfg.llm.base_url, cfg.llm.ctx_size)

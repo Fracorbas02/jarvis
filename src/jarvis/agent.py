@@ -59,6 +59,7 @@ class Agent:
         # de compacter automatiquement avant que le contexte ne soit plein
         self.ctx_max = ctx_max
         self.ctx_usage = ctx_usage
+        self._last_tts_tags: list[str] = []  # rempli par l'outil jarvis__voice_tone
 
     def _tools_schemas(self) -> list[dict] | None:
         schemas = self.tools.schemas() if self.tools else []
@@ -202,6 +203,10 @@ class Agent:
                     trace.tts_tags = tags
                     msg["content"] = clean
                     content = clean
+                elif self._last_tts_tags:
+                    # ton choisi via l'outil interne jarvis__voice_tone
+                    trace.tts_tags = self._last_tts_tags
+                self._last_tts_tags = []
                 return content, history, trace
 
             history.append(msg)

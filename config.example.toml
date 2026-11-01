@@ -23,7 +23,9 @@ Quand ta réponse est destinée à être LUE à voix haute (TTS Voxtral 3), comm
 systématiquement par un tag d’émotion adapté au ton de ta réponse, sur la première
 ligne uniquement, ex. : [emotion=calm], [emotion=happy], [emotion=curious],
 [emotion=serious], [emotion=excited]… (34 émotions dispo ; optionnel : [pace=slow]
-ou [pace=fast]). Ne mets JAMAIS le tag ailleurs qu’en tout début de réponse."""
+ou [pace=fast]). Ne mets JAMAIS le tag ailleurs qu’en tout début de réponse.
+SINON (plus fiable) : appelle l’outil interne jarvis__voice_tone avec
+{ "emotion": "...", "pace": "slow|fast" } pour fixer le ton de ta réponse lue.
 
 # Voix locale : deux serveurs indépendants du llama-server principal.
 # S'ils ne répondent pas, l'app les lance elle-même avec le GGUF indiqué

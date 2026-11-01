@@ -390,6 +390,42 @@ def test_agent_extrait_tag_et_nettoie():
     assert history[-1]["content"] == "Voici la réponse."
 
 
+def test_voice_tone_internal_tool():
+    """L'outil interne jarvis__voice_tone fixe trace.tts_tags via un appel d'outil."""
+    import asyncio as _a
+    from jarvis.agent import Agent
+    from jarvis.voice_tone import voice_tone_tool
+
+    class FakeLLM:
+        def __init__(self): self.calls = 0
+        async def chat(self, messages, tools=None, stream=False, **kw):
+            self.calls += 1
+            if self.calls == 1:
+                return {"role": "assistant", "content": None, "tool_calls": [{
+                    "id": "c1", "type": "function",
+                    "function": {"name": "jarvis__voice_tone",
+                                 "arguments": '{"emotion": "excited", "pace": "fast"}'}}]}
+            return {"role": "assistant", "content": "Bonne nouvelle !"}
+
+    class FakeTools:
+        def schemas(self): return []
+        async def call(self, n, a): return ""
+
+    agent = Agent(FakeLLM(), FakeTools(), "sys", stream=False,
+                  internal_tools={"jarvis__voice_tone": voice_tone_tool})
+    reply, _hist, trace = _a.run(agent.turn([], "test"))
+    assert reply == "Bonne nouvelle !"
+    assert trace.tts_tags == ["[emotion=excited]", "[pace=fast]"], trace.tts_tags
+
+    # emotion invalide -> ERREUR remontee au modele, pas de tag
+    agent2 = Agent(FakeLLM(), FakeTools(), "sys", stream=False,
+                   internal_tools={"jarvis__voice_tone": voice_tone_tool})
+    async def bad():
+        return await voice_tone_tool.fn(agent2, [], {"emotion": " rage"})
+    res, _ = _a.run(bad())
+    assert res.startswith("ERREUR"), res
+
+
 def test_config_tts_api_toml(tmp_path):
     from jarvis.config import load_config
     cfg_file = tmp_path / "config.toml"

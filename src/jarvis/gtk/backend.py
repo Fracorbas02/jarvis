@@ -36,6 +36,7 @@ import httpx
 
 from ..agent import Agent
 from ..compact import compact_tool
+from ..voice_tone import voice_tone_tool
 from ..config import Config, load_config
 from ..gpu import args_for_device, config_dir, env_for_device, load_gpu_choice, save_gpu_choice
 from ..models import discover_models
@@ -160,6 +161,8 @@ class GtkBackend:
                            self.cfg.agent.max_iterations, stream=True,
                            internal_tools={"jarvis__compact": compact_tool},
                            ctx_max=self.cfg.llm.ctx_size, ctx_usage=_ctx_used)
+                           internal_tools={"jarvis__compact": compact_tool,
+                           "jarvis__voice_tone": voice_tone_tool})
         self.history: list[dict] = []
         self.busy = False
         self._lock = asyncio.Lock()

@@ -82,6 +82,10 @@ texte affiché et de l'historique** (jamais lu à l'écran). Réglable :
 `[voice.tts_api] emotion_tags = false` pour désactiver. Le `system_prompt` de
 `config.example.toml` contient l'instruction pour le LLM.
 
+**Outil interne `jarvis__voice_tone`** (plus fiable qu'un tag oublié) : le LLM
+appelle explicitement `jarvis__voice_tone({"emotion": "excited", "pace": "fast"})` ;
+Jarvis enregistre le ton dans `trace.tts_tags` et l'envoie au TTS uniquement.
+
 ## Voix locale (STT + TTS)
 
 Deux serveurs indépendants du llama-server principal, configurés dans
