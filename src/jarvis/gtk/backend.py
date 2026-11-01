@@ -280,6 +280,24 @@ class GtkBackend:
         self.events.put({"type": "session_loaded", "session_id": sid,
                          "history_len": len(history)})
 
+    def delete_session(self, sid: str) -> None:
+        """Supprime une conversation. Si c'est la session courante, le contexte
+        du modèle est réinitialisé (nouvelle session vide)."""
+        self._run(self._adelete(sid))
+
+    async def _adelete(self, sid: str) -> None:
+        ok = self.sessions.delete(sid)
+        if sid == self.session_id:
+            # reset contexte : nouvelle session vide (comme Ctrl+N)
+            self.history.clear()
+            self.session_id = self.sessions.new_id()
+            self._save_session()
+            self.events.put({"type": "session_new", "session_id": self.session_id,
+                             "history_len": 0, "deleted": sid})
+        self.events.put({"type": "session_deleted", "session_id": sid, "ok": ok})
+        self.events.put({"type": "sessions_list",
+                         "sessions": self.sessions.list(limit=50)})
+
     def list_sessions(self) -> None:
         self._run(self._alist_sessions())
 

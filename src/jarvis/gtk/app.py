@@ -942,24 +942,39 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.conv_empty.set_visible(not sessions)
         for s in sessions:
             row = Gtk.ListBoxRow()
-            inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2,
+            inner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6,
                             margin_top=6, margin_bottom=6, margin_start=8, margin_end=8)
-            inner.append(Gtk.Label(label=s.get("title", "?"), xalign=0,
-                                   ellipsize=3))  # Pango.EllipsizeMode.END
+            text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True)
+            text_box.append(Gtk.Label(label=s.get("title", "?"), xalign=0,
+                                      ellipsize=3))  # Pango.EllipsizeMode.END
             sub = Gtk.Label(label=f"{s.get('updated', '')}  ·  {s.get('count', 0)} msg",
                             xalign=0)
             sub.add_css_class("dim-label")
             sub.add_css_class("caption")
-            inner.append(sub)
+            text_box.append(sub)
+            inner.append(text_box)
+            btn_del = Gtk.Button(icon_name="user-trash-symbolic",
+                                 tooltip_text="Supprimer cette conversation",
+                                 valign=Gtk.Align.CENTER)
+            btn_del.add_css_class("flat")
+            sid = s.get("id")
+            btn_del.connect("clicked", lambda b, s=sid: self._on_delete_conv(s))
+            inner.append(btn_del)
             row.set_child(inner)
-            row.sid = s.get("id")
-            if s.get("id") == self.backend.session_id:
+            row.sid = sid
+            if sid == self.backend.session_id:
                 self.conv_list.select_row(row)
             self.conv_list.append(row)
 
     def _on_conv_row_activated(self, _listbox, row) -> None:
         self.backend.load_session(row.sid)
         self.split.set_show_sidebar(False)  # referme la sidebar après choix
+
+    def _on_delete_conv(self, sid: str) -> None:
+        """Supprime la conversation ; si c'était la courante, le backend reset le
+        contexte (nouvelle session vide) et l'UI est vidée via session_new."""
+        self.backend.delete_session(sid)
+        self._toast("Conversation supprimée")
 
     def _on_reset_context(self, _btn) -> None:
         which = self.reset_target.get_active_id() or "llm"
@@ -1159,6 +1174,9 @@ class JarvisWindow(Adw.ApplicationWindow):
             self.stack.set_visible_child_name("chat")
             self.backend.list_sessions()
             self.split.set_show_sidebar(False)  # referme la sidebar (notify resynchronise le bouton)
+        elif t == "session_deleted":
+            if not event.get("ok"):
+                self._toast("Suppression impossible (fichier introuvable)")
         elif t == "sessions_list":
             self._fill_conv_list(event["sessions"])
         elif t == "context_reset":
