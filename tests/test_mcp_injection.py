@@ -111,9 +111,9 @@ def test_git_show_refuse_option_comme_ref():
 # ---------- textutils : anti-ReDoS ----------
 
 def test_regex_test_reule_pattern_catastrophique():
-    """(a+)+$ sur 30 'a' + '!' : backtracking exponentiel -> timeout 2s."""
+    """(a+)+$ sur 28 'a'+'!' : backtracking exponentiel (~17 s, 0 match) -> timeout 2s."""
     t0 = time.monotonic()
-    out = textutils.regex_test(r"(a+)+$", "a" * 30 + "!")
+    out = textutils.regex_test(r"(a+)+$", "a" * 28 + "!")
     dt = time.monotonic() - t0
     assert "interrompue" in out, out
     assert dt < 10, f"trop long: {dt:.1f}s"
@@ -131,3 +131,24 @@ def test_regex_test_texte_tronque():
     # 50 000 caractères -> ramené à 2 000, pas d'explosion
     out = textutils.regex_test(r"a", "a" * 50_000)
     assert "match(s)" in out
+
+
+def test_regex_test_dans_thread_worker_comme_via_mcp():
+    """Le SDK MCP exécute les outils sync dans un thread worker anyio, PAS le
+    thread principal : signal.signal(SIGALRM) y lève ValueError. Le chemin
+    réel MCP doit fonctionner (thread + join timeout), y compris le ReDoS."""
+    import threading
+    results: dict = {}
+
+    def in_worker():
+        results["ok"] = textutils.regex_test(r"\d+", "abc 123 def 456")
+        results["redos"] = textutils.regex_test(r"(a+)+$", "a" * 28 + "!")
+        results["err"] = textutils.regex_test("(invalide", "x")
+
+    t = threading.Thread(target=in_worker)
+    t.start()
+    t.join(30)
+    assert not t.is_alive(), "regex_test bloque dans un thread worker"
+    assert "2 match(s)" in results["ok"], results
+    assert "interrompue" in results["redos"], results  # timeout même hors main thread
+    assert results["err"].startswith("ERREUR"), results
