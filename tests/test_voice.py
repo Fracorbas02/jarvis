@@ -445,6 +445,20 @@ def test_record_wav_vad_fin_de_parole() -> None:
         voice.shutil.which = orig_which
 
 
+def test_wav_rms_via_pcm() -> None:
+    """RMS d'un WAV écrit par write_wav (via _pcm_rms sur les frames)."""
+    import tempfile
+    from jarvis.voice import _pcm_rms, write_wav
+    tmp = Path(tempfile.mkdtemp())
+    silence = write_wav(tmp / "s.wav", b"\x00\x00" * 16000)
+    import wave
+    with wave.open(str(silence)) as w:
+        assert _pcm_rms(w.readframes(w.getnframes())) == 0.0
+    sig = write_wav(tmp / "g.wav", b"\x00\x40" * 16000)
+    with wave.open(str(sig)) as w:
+        assert _pcm_rms(w.readframes(w.getnframes())) > 10000
+
+
 def test_pcm_rms():
     from jarvis.voice import _pcm_rms
     assert _pcm_rms(b"") == 0.0

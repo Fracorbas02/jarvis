@@ -107,26 +107,6 @@ async def server_ctx_usage(base_url: str, timeout: float = 3.0) -> dict:
     return out
 
 
-def _wav_rms(path) -> float | None:
-    """Niveau RMS d'un WAV 16-bit mono (diagnostic : 0 = silence, micro muet)."""
-    import math
-    import wave
-    try:
-        with wave.open(str(path), "rb") as w:
-            if w.getsampwidth() != 2:
-                return None
-            frames = w.readframes(w.getnframes())
-        if not frames:
-            return 0.0
-        n = len(frames) // 2
-        total = 0
-        for i in range(0, min(len(frames), 16000 * 2 * 10), 2):
-            total += int.from_bytes(frames[i:i + 2], "little", signed=True) ** 2
-        return math.sqrt(total / max(1, min(n, 16000 * 10)))
-    except Exception:  # noqa: BLE001
-        return None
-
-
 class GtkBackend:
     """C\u0153ur async de l'UI GTK : config + LLM + MCP + Agent + sessions."""
 
@@ -469,99 +449,6 @@ class GtkBackend:
             self.events.put({"type": "voice_error", "message": str(exc)})
         except Exception as exc:  # noqa: BLE001
             log.exception("stt record/transcribe en erreur")
-            self.events.put({"type": "voice_error",
-                             "message": f"erreur interne STT : {type(exc).__name__}: {exc}"})
-
-    def refresh_stt_status(self) -> None:
-        """Statut du serveur STT -> événement stt_server_status."""
-        self._run(self._astt_status())
-
-    def _stt_status_event(self, st) -> dict:
-        from ..voice import _find_mmproj, resolve_model_path
-        mmproj = None
-        if (self.cfg.voice.stt.protocol or "whisper") == "voxtral":
-            try:
-                mmproj = _find_mmproj(resolve_model_path(self.cfg.voice.stt.model))
-            except Exception:  # noqa: BLE001
-                mmproj = None
-            if mmproj is None and "--mmproj" in (self.cfg.voice.stt.extra_args or []):
-                i = self.cfg.voice.stt.extra_args.index("--mmproj")
-                if i + 1 < len(self.cfg.voice.stt.extra_args):
-                    mmproj = self.cfg.voice.stt.extra_args[i + 1]
-        return {"type": "stt_server_status", "state": st.state, "host": st.host,
-                "port": st.port, "detail": st.detail, "healthy": st.healthy,
-                "protocol": self.cfg.voice.stt.protocol,
-                "model": self.cfg.voice.stt.model, "binary": self.cfg.voice.stt.binary,
-                "mmproj": str(mmproj) if mmproj else ""}
-
-    async def _astt_status(self) -> None:
-        from ..voice import voice_server_status
-        st = await voice_server_status("stt", self.cfg.voice.stt)
-        self.events.put(self._stt_status_event(st))
-
-    def start_stt_server(self) -> None:
-        self._run(self._astt_start())
-
-    async def _astt_start(self) -> None:
-        from ..voice import start_voice_server
-        st = await start_voice_server("stt", self.cfg.voice.stt)
-        self.events.put(self._stt_status_event(st))
-
-    def stop_stt_server(self) -> None:
-        self._run(self._astt_stop())
-
-    async def _astt_stop(self) -> None:
-        from ..voice import stop_voice_server
-        st = await stop_voice_server("stt", self.cfg.voice.stt)
-        self.events.put(self._stt_status_event(st))
-
-    def stt_test_transcribe(self, seconds: float = 6.0,
-                            device: str | None = None) -> None:
-        """Phase de test STT : enregistre puis transcrit, SANS lancer de tour
-        LLM. Événements : stt_test_recording -> stt_test_done / voice_error."""
-        self._run(self._astt_test(seconds, device))
-
-    async def _astt_test(self, seconds: float, device: str | None) -> None:
-        import time
-        from ..voice import VoiceError, ensure_voice_server, record_wav, record_wav_vad
-        vcfg = self._record_cfg(device)
-        try:
-            st = await ensure_voice_server("stt", self.cfg.voice.stt)
-            if st.state == "offline":
-                raise VoiceError(f"serveur STT indisponible : {st.detail}")
-            def _phase(msg: str) -> None:
-                self.events.put({"type": "stt_test_phase", "message": msg})
-
-            self.events.put({"type": "stt_test_recording", "seconds": seconds})
-            if seconds and seconds > 0:
-                path = await record_wav(seconds, vcfg)
-            else:
-                path = await record_wav_vad(vcfg, max_seconds=60.0, on_status=_phase)
-            # copie de diagnostic stable (le rec-* est horodaté) :
-            import shutil as _shutil
-            stable = self._state_dir() / "stt-test-last.wav" if hasattr(self, "_state_dir") else None
-            try:
-                from .backend import state_dir as _sd
-                stable = _sd() / "stt-test-last.wav"
-                _shutil.copyfile(path, stable)
-                path = stable
-            except Exception:  # noqa: BLE001
-                pass
-            audio_rms = _wav_rms(path)
-            t0 = time.monotonic()
-            text = await self._transcribe_path(path, on_status=_phase)
-            self.events.put({"type": "stt_test_done", "text": text,
-                             "seconds": seconds,
-                             "elapsed": time.monotonic() - t0,
-                             "protocol": self.cfg.voice.stt.protocol,
-                             "server": f"{st.host}:{st.port}",
-                             "audio_rms": audio_rms,
-                             "wav_path": str(path),
-                             "wav_bytes": path.stat().st_size if path.is_file() else 0})
-        except VoiceError as exc:
-            self.events.put({"type": "voice_error", "message": str(exc)})
-        except Exception as exc:  # noqa: BLE001 — JAMAIS laisser la coroutine mourir en silence
-            log.exception("stt_test en erreur")
             self.events.put({"type": "voice_error",
                              "message": f"erreur interne STT : {type(exc).__name__}: {exc}"})
 
