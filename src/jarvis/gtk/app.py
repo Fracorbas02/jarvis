@@ -304,9 +304,11 @@ class JarvisWindow(Adw.ApplicationWindow):
         # tour + perfs globales llama-server /metrics)
         self.btn_info = Gtk.Button(icon_name="info-symbolic", tooltip_text="Infos modèle & perf")
         self.btn_info.connect("clicked", self._on_info_clicked)
-        conv_bar.append(self.btn_info)
         self._build_info_popover()
-        self._header.pack_end(conv_bar)  # barre d'actions dans le header
+        # PAS dans conv_bar : le détail du tour s'affiche sur la bulle elle-même (set_meta)
+        # la barre d'actions reste dans la page Conversation (pas dans le header
+        # global) : elle n'apparaît donc que quand on est sur l'onglet chat
+        outer.append(conv_bar)
 
         self.messages = MessagesColumn()
         outer.append(self.messages.widget)
@@ -1316,6 +1318,13 @@ class JarvisWindow(Adw.ApplicationWindow):
         dur = event.get("duration")
         tok = event.get("gen_tokens")
         tps = event.get("gen_tps")
+        if box is not None and dur is not None and tok is not None:
+            meta = f"{tok} tok en {dur:.1f} s"
+            if tps:
+                meta += f" → {tps:.1f} tok/s"
+            if trace.get("error"):
+                meta = trace["error"] + " — " + meta
+            box.set_meta(meta)
         if dur is not None and tok is not None:
             self._info_last_txt = (f"{tok} tok générés en {dur:.1f} s"
                                   + (f" → {tps} tok/s" if tps else ""))

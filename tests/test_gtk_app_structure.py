@@ -87,6 +87,13 @@ def main() -> int:
         code_src = inspect.getsource(gtk_widgets._code_card)
         assert "set_wrap(False)" in code_src and "WrapMode.NONE" in code_src
         assert "Gtk.PolicyType.AUTOMATIC" in code_src  # scroll horizontal
+        # la barre d'actions Conversation ne doit plus être packée dans le header global
+        build_src = inspect.getsource(gtk_app.JarvisWindow._build_chat_content)
+        assert "_header.pack_end(conv_bar)" not in build_src
+        assert "outer.append(conv_bar)" in build_src
+        # le méta du tour (durée/tok/s) doit s'afficher sur la bulle (set_meta)
+        done_src = inspect.getsource(gtk_app.JarvisWindow._on_turn_done)
+        assert "box.set_meta(meta)" in done_src
         # bouton copier sur les bulles assistant + sélection souris dans les bulles
         assert hasattr(gtk_widgets.MessageBox, "copy_content")
         assert "jarvis-msg-copy" in init_src
@@ -149,9 +156,10 @@ def main() -> int:
         assert 'connect("size-allocate"' not in inspect.getsource(gtk_app.JarvisWindow)
         css = open(ROOT / "src/jarvis/gtk/widgets.py", encoding="utf-8").read()
         assert "max-width" not in css and "border-collapse" not in css  # propriétés CSS inconnues de GTK
-        # barre d'actions (avec bouton info) dans le header, pas une barre séparée
+        # barre d'actions Conversation DANS la page chat (pas dans le header global)
         chat_src2 = inspect.getsource(gtk_app.JarvisWindow._build_chat_content)
-        assert "self._header.pack_end(conv_bar)" in chat_src2
+        assert "self._header.pack_end(conv_bar)" not in chat_src2
+        assert "outer.append(conv_bar)" in chat_src2
         assert "min_content_height=56" in chat_src2 and "max_content_height=220" in chat_src2
         print("OK  gtk app structure (main/JarvisApp/JarvisWindow handlers + markdown)")
         return 0
