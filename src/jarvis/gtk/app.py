@@ -313,19 +313,20 @@ class JarvisWindow(Adw.ApplicationWindow):
         # barre du bas : carte centrée à 70% de la largeur de la page, avec micro,
         # zone de saisie MULTI-LIGNES (TextView dans un ScrolledWindow, max ~6 lignes)
         # et bouton d'envoi. Entrée = envoyer, Maj+Entrée = retour à la ligne.
-        bottom = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8,
-                         halign=Gtk.Align.CENTER, margin_top=8, margin_bottom=12,
-                         margin_start=24, margin_end=24)
-        width_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, hexpand=True,
-                            halign=Gtk.Align.CENTER)
-        width_box.set_size_request(-1, -1)
-        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6,
-                      hexpand=True, halign=Gtk.Align.CENTER)
+        # conteneur pleine largeur avec 2 spacers hexpand de part et d'autre :
+        # la carte fait exactement 70% de la largeur de la fenêtre (recalculé au resize)
+        bottom = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0,
+                         margin_top=8, margin_bottom=12, hexpand=True)
+        spacer_l = Gtk.Box(hexpand=True)
+        spacer_r = Gtk.Box(hexpand=True)
+        bottom.append(spacer_l)
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         bar.add_css_class("jarvis-entry-bar")
-        # largeur de la carte = 70% de la page : on utilise un Gtk.AspectFrame? non,
-        # plus simple : un conteneur avec une contrainte de largeur via CSS max-width
-        bar.set_hexpand(True)
-        bar.get_style_context().add_class("jarvis-chat-bar")  # max-width: 70% en CSS
+        # largeur cible = 70% de la largeur allouée à bottom ; on la fixe en px au resize
+        self._entry_bar = bar
+        bottom.append(bar)
+        bottom.append(spacer_r)
+        bottom.connect("size-allocate", self._on_entry_bar_allocate)
         self.chat_mic = Gtk.Button(icon_name="audio-input-microphone-symbolic",
                                    tooltip_text="Parler à Jarvis (enregistre puis transcrit)")
         self.chat_mic.add_css_class("circular")
@@ -351,8 +352,6 @@ class JarvisWindow(Adw.ApplicationWindow):
         send_btn.set_valign(Gtk.Align.END)
         send_btn.connect("clicked", self._on_entry_activate)
         bar.append(send_btn)
-        width_box.append(bar)
-        bottom.append(width_box)
         outer.append(bottom)
         # raccourcis clavier sur le TextView : Entrée = envoyer, Maj+Entrée = newline
         key_ctrl = Gtk.EventControllerKey()
@@ -903,6 +902,11 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.chat_entry.set_sensitive(False)
         self._set_chat_hint("Parle… (fin de parole détectée automatiquement)")
         self.backend.stt_record_and_transcribe(0.0, device=getattr(self, "mic_device", "default"))
+
+    def _on_entry_bar_allocate(self, _widget, allocation) -> None:
+        """Fixe la largeur de la carte de saisie à 70% de la largeur de la page."""
+        w = max(320, int(allocation.width * 0.70))
+        self._entry_bar.set_size_request(w, -1)
 
     def _on_entry_key(self, _ctrl, keyval, _keycode, state) -> bool:
         """Entrée seule = envoyer ; Maj+Entrée = retour à la ligne (laisser passer)."""

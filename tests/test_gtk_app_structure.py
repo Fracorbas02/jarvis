@@ -137,7 +137,9 @@ def main() -> int:
         mb_src = inspect.getsource(gtk_widgets.MessageBox)
         assert "reasoning_box" in mb_src and "_flush_reasoning" in mb_src
         assert "set_tool_result" in mb_src and "Adw.ExpanderRow" in mb_src
-        assert "max-width: 70%" in open(ROOT / "src/jarvis/gtk/widgets.py", encoding="utf-8").read()
+        # largeur 70% appliquée en px via size-allocate (pas en CSS max-width)
+        assert "_on_entry_bar_allocate" in inspect.getsource(gtk_app.JarvisWindow)
+        assert "* 0.70" in inspect.getsource(gtk_app.JarvisWindow._on_entry_bar_allocate)
         # barre d'actions (avec bouton info) dans le header, pas une barre séparée
         chat_src2 = inspect.getsource(gtk_app.JarvisWindow._build_chat_content)
         assert "self._header.pack_end(conv_bar)" in chat_src2
