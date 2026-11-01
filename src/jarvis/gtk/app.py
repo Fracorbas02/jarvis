@@ -296,36 +296,65 @@ class JarvisWindow(Adw.ApplicationWindow):
             self.reset_target.append(key, label)
         self.reset_target.set_active(0)
         conv_bar.append(self.reset_target)
+        # bouton info : popover avec les stats de génération (tokens/s du dernier
+        # tour + perfs globales llama-server /metrics)
+        self.btn_info = Gtk.Button(icon_name="info-symbolic", tooltip_text="Infos modèle & perf")
+        self.btn_info.connect("clicked", self._on_info_clicked)
+        conv_bar.append(self.btn_info)
+        self._build_info_popover()
         outer.append(conv_bar)
 
         self.messages = MessagesColumn()
         outer.append(self.messages.widget)
 
-        # barre du bas moderne : conteneur arrondi (carte) avec micro, champ
-        # pill moderne et bouton d'envoi circulaire accentué
+        # barre du bas : carte centrée à 70% de la largeur de la page, avec micro,
+        # zone de saisie MULTI-LIGNES (TextView dans un ScrolledWindow, max ~6 lignes)
+        # et bouton d'envoi. Entrée = envoyer, Maj+Entrée = retour à la ligne.
         bottom = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8,
                          halign=Gtk.Align.CENTER, margin_top=8, margin_bottom=12,
                          margin_start=24, margin_end=24)
+        width_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, hexpand=True,
+                            halign=Gtk.Align.CENTER)
+        width_box.set_size_request(-1, -1)
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6,
                       hexpand=True, halign=Gtk.Align.CENTER)
         bar.add_css_class("jarvis-entry-bar")
+        # largeur de la carte = 70% de la page : on utilise un Gtk.AspectFrame? non,
+        # plus simple : un conteneur avec une contrainte de largeur via CSS max-width
+        bar.set_hexpand(True)
+        bar.get_style_context().add_class("jarvis-chat-bar")  # max-width: 70% en CSS
         self.chat_mic = Gtk.Button(icon_name="audio-input-microphone-symbolic",
                                    tooltip_text="Parler à Jarvis (enregistre puis transcrit)")
         self.chat_mic.add_css_class("circular")
+        self.chat_mic.set_valign(Gtk.Align.END)
         self.chat_mic.connect("clicked", self._on_mic)
         bar.append(self.chat_mic)
-        self.chat_entry = Gtk.Entry(hexpand=True,
-                                    placeholder_text="Message à Jarvis…")
+        # TextView multi-lignes dans un ScrolledWindow (hauteur ~1-6 lignes, scroll au-delà)
+        self.chat_entry = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR)
         self.chat_entry.add_css_class("jarvis-entry-modern")
-        self.chat_entry.connect("activate", self._on_entry_activate)
-        bar.append(self.chat_entry)
-        send_btn = Gtk.Button(icon_name="go-next-symbolic", tooltip_text="Envoyer")
+        self.chat_entry.set_top_margin(8)
+        self.chat_entry.set_bottom_margin(8)
+        self.chat_entry.set_left_margin(12)
+        self.chat_entry.set_right_margin(12)
+        self.chat_entry.set_accepts_tab(False)
+        entry_scroll = Gtk.ScrolledWindow(hexpand=True, min_content_height=34,
+                                          max_content_height=140)
+        entry_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        entry_scroll.set_child(self.chat_entry)
+        bar.append(entry_scroll)
+        send_btn = Gtk.Button(icon_name="go-next-symbolic", tooltip_text="Envoyer (Entrée)")
         send_btn.add_css_class("circular")
         send_btn.add_css_class("suggested-action")
+        send_btn.set_valign(Gtk.Align.END)
         send_btn.connect("clicked", self._on_entry_activate)
         bar.append(send_btn)
-        bottom.append(bar)
+        width_box.append(bar)
+        bottom.append(width_box)
         outer.append(bottom)
+        # raccourcis clavier sur le TextView : Entrée = envoyer, Maj+Entrée = newline
+        key_ctrl = Gtk.EventControllerKey()
+        key_ctrl.connect("key-pressed", self._on_entry_key)
+        self.chat_entry.add_controller(key_ctrl)
         hint_row = Gtk.Box(halign=Gtk.Align.CENTER, margin_bottom=8)
         self.chat_hint = Gtk.Label(label="", halign=Gtk.Align.CENTER)
         self.chat_hint.add_css_class("dim-label")
@@ -872,11 +901,22 @@ class JarvisWindow(Adw.ApplicationWindow):
         self._set_chat_hint("Parle… (fin de parole détectée automatiquement)")
         self.backend.stt_record_and_transcribe(0.0, device=getattr(self, "mic_device", "default"))
 
+    def _on_entry_key(self, _ctrl, keyval, _keycode, state) -> bool:
+        """Entrée seule = envoyer ; Maj+Entrée = retour à la ligne (laisser passer)."""
+        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+            if state & Gdk.ModifierType.SHIFT_MASK:
+                return False  # Maj+Entrée : laisse le TextView insérer un 
+
+            self._on_entry_activate(None)
+            return True  # on a consommé
+        return False
+
     def _on_entry_activate(self, _widget) -> None:
-        text = self.chat_entry.get_text().strip()
+        buf = self.chat_entry.get_buffer()
+        text = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), True).strip()
         if not text:
             return
-        self.chat_entry.set_text("")
+        buf.set_text("")
         self._send_turn(text)
 
     def _on_prompt(self, *_args) -> None:
@@ -919,6 +959,46 @@ class JarvisWindow(Adw.ApplicationWindow):
             return
         dialog.close()
         self._send_turn(text)
+
+    def _build_info_popover(self) -> None:
+        """Popover du bouton info : perfs du dernier tour + métriques globales."""
+        self.info_popover = Gtk.Popover()
+        self.info_popover.set_parent(self.btn_info)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
+                      margin_top=12, margin_bottom=12, margin_start=14, margin_end=14)
+        box.set_size_request(300, -1)
+        title = Gtk.Label(label="Perf du modèle", xalign=0)
+        title.add_css_class("heading")
+        box.append(title)
+        self.info_last = Gtk.Label(xalign=0, wrap=True, selectable=True)
+        self.info_last.add_css_class("dim-label")
+        box.append(self.info_last)
+        self.info_server = Gtk.Label(xalign=0, wrap=True, selectable=True)
+        self.info_server.add_css_class("dim-label")
+        box.append(self.info_server)
+        self.info_ctx = Gtk.Label(xalign=0, wrap=True)
+        box.append(self.info_ctx)
+        btn_refresh = Gtk.Button(label="Rafraîchir", valign=Gtk.Align.CENTER)
+        btn_refresh.connect("clicked", lambda b: self.backend.refresh_metrics())
+        box.append(btn_refresh)
+        self.info_popover.set_child(box)
+        self._info_last_txt = "(aucun tour pour l'instant)"
+        self._info_server_txt = "(serveur hors ligne ou métriques indisponibles)"
+        self._render_info()
+
+    def _render_info(self) -> None:
+        if hasattr(self, "info_last"):
+            self.info_last.set_text("Dernier tour : " + self._info_last_txt)
+            self.info_server.set_text("Serveur : " + self._info_server_txt)
+            ctx = getattr(self, "_last_ctx", None) or {}
+            if ctx.get("n_ctx"):
+                self.info_ctx.set_text(f"Contexte : {ctx['used']}/{ctx['n_ctx']} tok")
+            else:
+                self.info_ctx.set_text("Contexte : ?")
+
+    def _on_info_clicked(self, _btn) -> None:
+        self.backend.refresh_metrics()  # récupère /metrics à l'ouverture
+        self.info_popover.popup()
 
     def _on_new_session(self, *_args) -> None:
         self.backend.new_session()
@@ -1082,6 +1162,16 @@ class JarvisWindow(Adw.ApplicationWindow):
             self._toast(f"Erreur : {event['message']}")
         elif t == "server_status":
             self._on_server_status(event)
+        elif t == "server_metrics":
+            m = event.get("metrics") or {}
+            parts = []
+            if m.get("pp_tps") is not None:
+                parts.append(f"prompt {m['pp_tps']:.1f} tok/s")
+            if m.get("tg_tps") is not None:
+                parts.append(f"génération {m['tg_tps']:.1f} tok/s")
+            self._info_server_txt = (" · ".join(parts) + " (moy. serveur, /metrics)"
+                                    if parts else "(métriques /metrics indisponibles)")
+            self._render_info()
         elif t == "stt_status":
             self._on_stt_status(event)
         elif t in ("server_started", "server_stopped"):
@@ -1109,15 +1199,9 @@ class JarvisWindow(Adw.ApplicationWindow):
                 lbl = self._tool_lines.pop(key)
                 break
             if lbl is not None and self._assistant_box is not None:
-                import json as _json
-                args_txt = _json.dumps(event["args"], ensure_ascii=False)
-                if len(args_txt) > 120:
-                    args_txt = args_txt[:117] + "..."
-                mark = "✓" if event["ok"] else "✗"
-                lbl.set_text(f"{mark} {event['name']}({args_txt}) "
-                             f"{event['duration']:.2f}s")
-                if not event["ok"]:
-                    lbl.set_tooltip_text(event["result"][:400])
+                # met à jour la ligne + remplit le résultat complet dans l'expander
+                self._assistant_box.set_tool_result(
+                    lbl, event["ok"], event["duration"], event["result"], event["args"])
         elif t == "done":
             self._on_turn_done(event)
         elif t == "error":
@@ -1201,7 +1285,8 @@ class JarvisWindow(Adw.ApplicationWindow):
         return GLib.SOURCE_REMOVE
     def _on_turn_done(self, event: dict) -> None:
         if self._assistant_box is not None:
-            self._assistant_box.flush_render()  # re-rendu final immédiat (hors throttle)
+            self._assistant_box.flush_render()      # re-rendu final immédiat (hors throttle)
+            self._assistant_box.flush_reasoning()   # idem pour le raisonnement
         box = self._assistant_box
         trace = event.get("trace") or {}
         if box is not None:
@@ -1211,6 +1296,14 @@ class JarvisWindow(Adw.ApplicationWindow):
         self._tool_lines.clear()
         self._busy = False
         self._set_busy_ui(False)
+        # stats du tour pour le popover info
+        dur = event.get("duration")
+        tok = event.get("gen_tokens")
+        tps = event.get("gen_tps")
+        if dur is not None and tok is not None:
+            self._info_last_txt = (f"{tok} tok générés en {dur:.1f} s"
+                                  + (f" → {tps} tok/s" if tps else ""))
+            self._render_info()
         if self.tts_enabled and event.get("reply"):
             self.backend.tts_speak(event["reply"])
 
@@ -1235,6 +1328,18 @@ class JarvisWindow(Adw.ApplicationWindow):
         else:
             self.ctx_bar.set_value(0)
             self.ctx_label.set_text("ctx ?")
+        self._last_ctx = ctx
+        m = event.get("metrics") or {}
+        if m.get("tg_tps") is not None or m.get("pp_tps") is not None:
+            parts = []
+            if m.get("pp_tps") is not None:
+                parts.append(f"prompt {m['pp_tps']:.1f} tok/s")
+            if m.get("tg_tps") is not None:
+                parts.append(f"génération {m['tg_tps']:.1f} tok/s")
+            self._info_server_txt = " · ".join(parts) + " (moy. serveur, /metrics)"
+        else:
+            self._info_server_txt = "(métriques /metrics indisponibles)"
+        self._render_info()
         txt = f"{state_txt} — {host}:{port} — {models}{ctx_txt}"
         self.home_status.set_text(txt)
         self.pop_status_label.set_text(txt + (f"\n{event.get('detail') or ''}"

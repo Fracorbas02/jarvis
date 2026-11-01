@@ -79,6 +79,32 @@ def state_dir() -> Path:
     return d
 
 
+async def server_metrics(base_url: str, timeout: float = 3.0) -> dict:
+    """GET /metrics (Prometheus) de llama-server : extrait les perfs globales
+    llama_perf_sampling_* (tokens/s prompt = pp, génération = tg).
+    Retourne {"pp_tps": float|None, "tg_tps": float|None, "raw": str|None}."""
+    import re as _re
+    out: dict = {"pp_tps": None, "tg_tps": None, "raw": None}
+    root = base_url.rstrip("/")
+    if root.endswith("/v1"):
+        root = root[: -len("/v1")]
+    try:
+        async with httpx.AsyncClient(base_url=root, timeout=timeout) as http:
+            r = await http.get("/metrics")
+            if r.status_code == 200:
+                text = r.text
+                out["raw"] = text[:4000]
+                m = _re.search(r'llama_perf_sampling_prompt_tokens_per_second\s+([\d.]+)', text)
+                if m:
+                    out["pp_tps"] = float(m.group(1))
+                m = _re.search(r'llama_perf_sampling_tokens_per_second\s+([\d.]+)', text)
+                if m:
+                    out["tg_tps"] = float(m.group(1))
+    except Exception as exc:  # noqa: BLE001 — best-effort
+        log.debug("metrics indisponibles: %s", exc)
+    return out
+
+
 async def server_ctx_usage(base_url: str, timeout: float = 3.0) -> dict:
     """GET /props + /slots de llama-server : usage réel du contexte.
 
@@ -243,6 +269,8 @@ class GtkBackend:
         async with self._lock:
             self.busy = True
         try:
+            import time as _time
+            t0 = _time.perf_counter()
             reply, self.history, trace = await self.agent.turn(
                 self.history, text,
                 on_tool_call=lambda n, a: sink({"type": "tool_call", "name": n, "args": a}),
@@ -252,7 +280,14 @@ class GtkBackend:
                 on_reasoning=lambda f: sink({"type": "reasoning", "text": f}),
                 on_content=lambda f: sink({"type": "content", "text": f}),
             )
+            duration = _time.perf_counter() - t0
+            # estimation tokens : ~4 caractères/token en français (compte aussi le reasoning)
+            n_chars = sum(len(e.get("text", "")) for e in list(self.events.queue)
+                          if e.get("type") in ("content", "reasoning"))
+            n_tok = max(1, round(n_chars / 4))
             sink({"type": "done", "reply": reply,
+                  "duration": duration, "gen_tokens": n_tok,
+                  "gen_tps": round(n_tok / duration, 1) if duration > 0 else None,
                   "trace": {"tool_calls": trace.tool_calls,
                             "iterations": trace.iterations,
                             "error": trace.error}})
@@ -316,14 +351,23 @@ class GtkBackend:
     def refresh_status(self) -> None:
         self._run(self._astatus())
 
+    def refresh_metrics(self) -> None:
+        """Rafraîchit juste les métriques de perf (bouton info)."""
+        self._run(self._ametrics())
+
+    async def _ametrics(self) -> None:
+        metrics = await server_metrics(self.cfg.llm.base_url)
+        self.events.put({"type": "server_metrics", "metrics": metrics})
+
     async def _astatus(self) -> None:
         st = await server_mod.get_status(self.cfg.llm.base_url)
         usage = await server_ctx_usage(self.cfg.llm.base_url)
+        metrics = await server_metrics(self.cfg.llm.base_url)
         if usage.get("n_ctx"):
-            self.agent.ctx_max = int(usage["n_ctx"])  # lu sur le serveur réel
+            self.agent.ctx_max = int(usage["n_ctx"])  # lu sur le serveur réel (main #49)
         self.events.put({"type": "server_status", "state": st.state, "host": st.host,
                          "port": st.port, "models": st.models, "detail": st.detail,
-                         "ctx": usage})
+                         "ctx": usage, "metrics": metrics})
 
     def start_server(self, model_path: str, ctx_size: int | None = None) -> None:
         self._run(self._astart_server(model_path, ctx_size))
