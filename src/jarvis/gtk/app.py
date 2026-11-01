@@ -69,6 +69,7 @@ class JarvisWindow(Adw.ApplicationWindow):
         self._busy = False
         self._status_state = "unknown"
         self._stt_state = "unknown"
+        self._stt_state = "unknown"
         self._ctx = self.settings.get("ctx_size", 16384)
         self.mic_device = self.settings.get("mic", "default")
 
@@ -666,6 +667,18 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.pop_button = Gtk.Button(label="Démarrer le serveur")
         self.pop_button.connect("clicked", self._on_pop_start_stop)
         box.append(self.pop_button)
+        # --- serveur STT (voix) ---
+        sep = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        box.append(sep)
+        stt_title = Gtk.Label(label="Serveur STT (voix)", xalign=0)
+        stt_title.add_css_class("heading")
+        box.append(stt_title)
+        self.pop_stt_label = Gtk.Label(xalign=0, wrap=True,
+                                       label="STT : interrogation…")
+        box.append(self.pop_stt_label)
+        self.pop_stt_button = Gtk.Button(label="Démarrer le serveur STT")
+        self.pop_stt_button.connect("clicked", self._on_pop_stt_start_stop)
+        box.append(self.pop_stt_button)
         self.status_popover.set_child(box)
 
     # ---------- réglages ----------
@@ -1044,6 +1057,8 @@ class JarvisWindow(Adw.ApplicationWindow):
             self._toast(f"Erreur : {event['message']}")
         elif t == "server_status":
             self._on_server_status(event)
+        elif t == "stt_status":
+            self._on_stt_status(event)
         elif t in ("server_started", "server_stopped"):
             self._on_server_status(event)
             if t == "server_started" and event.get("models"):
@@ -1194,8 +1209,39 @@ class JarvisWindow(Adw.ApplicationWindow):
             self.pop_button.set_label("Arrêter le serveur (géré)"
                                        if self._server_managed() else "Serveur externe")
 
+    def _on_pop_stt_start_stop(self, _btn) -> None:
+        if self._stt_state == "managed":
+            self.backend.stop_stt_server()
+        elif self._stt_state == "online":
+            self._toast("Serveur STT externe — arrêt impossible depuis Jarvis")
+        else:
+            self._toast("Démarrage du serveur STT (chargement du modèle, peut être long)…")
+            self.backend.start_stt_server()
+
+    def _on_stt_status(self, event: dict) -> None:
+        self._stt_state = event.get("state", "unknown")
+        labels = {"online": "en ligne", "managed": "géré par Jarvis",
+                  "offline": "hors ligne"}
+        txt = f"{labels.get(self._stt_state, self._stt_state)} — {event.get('host', '')}:{event.get('port', '')}"
+        if event.get("detail") and self._stt_state == "offline":
+            txt += f" ({event['detail']})"
+        txt += f"  ·  {event.get('protocol', '?')} / {event.get('binary', '?')}"
+        if hasattr(self, "pop_stt_label"):
+            self.pop_stt_label.set_text(txt)
+        if hasattr(self, "pop_stt_button"):
+            if self._stt_state == "managed":
+                self.pop_stt_button.set_label("Arrêter le serveur STT")
+                self.pop_stt_button.set_sensitive(True)
+            elif self._stt_state == "online":
+                self.pop_stt_button.set_label("Serveur externe")
+                self.pop_stt_button.set_sensitive(False)
+            else:
+                self.pop_stt_button.set_label("Démarrer le serveur STT")
+                self.pop_stt_button.set_sensitive(True)
+
     def _refresh_status(self) -> bool:
         self.backend.refresh_status()
+        self.backend.refresh_stt_status()
         return GLib.SOURCE_CONTINUE
 
     def _replay_history(self) -> None:

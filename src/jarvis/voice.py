@@ -47,6 +47,17 @@ from .config import VoiceConfig, VoiceServerConfig
 
 SAMPLE_RATE = 16000
 
+
+def _ffmpeg_input_args() -> list[str]:
+    """Args d'entrée ffmpeg pour le micro : `-f pulse -i default` si PipeWire/
+    PulseAudio est l'API dispo (système moderne sans ALSA direct), sinon
+    `-f alsa -i default`."""
+    import shutil
+    if shutil.which("pactl") or shutil.which("pulseaudio"):
+        return ["-f", "pulse", "-i", "default"]
+    return ["-f", "alsa", "-i", "default"]
+
+
 log = logging.getLogger("jarvis.voice")
 
 
@@ -900,7 +911,7 @@ async def record_wav(seconds: float, voice_cfg: VoiceConfig,
         raise VoiceError("record_cmd vide : pas de binaire d'enregistrement configuré")
     binary = shutil.which(cmd[0])
     if binary is None and cmd[0] == "arecord" and shutil.which("ffmpeg"):
-        cmd = ["ffmpeg", "-loglevel", "error", "-f", "alsa", "-i", "default",
+        cmd = ["ffmpeg", "-loglevel", "error", *_ffmpeg_input_args(),
                "-ar", str(SAMPLE_RATE), "-ac", "1", "-f", "s16le", "-"]
         binary = "ffmpeg"
     if binary is None:
@@ -1006,7 +1017,7 @@ async def record_wav_vad(voice_cfg: VoiceConfig, out_path: Path | None = None,
         raise VoiceError("record_cmd vide : pas de binaire d'enregistrement configuré")
     binary = shutil.which(cmd[0])
     if binary is None and cmd[0] == "arecord" and shutil.which("ffmpeg"):
-        cmd = ["ffmpeg", "-loglevel", "error", "-f", "alsa", "-i", "default",
+        cmd = ["ffmpeg", "-loglevel", "error", *_ffmpeg_input_args(),
                "-ar", str(SAMPLE_RATE), "-ac", "1", "-f", "s16le", "-"]
         binary = "ffmpeg"
     if binary is None:
@@ -1021,6 +1032,7 @@ async def record_wav_vad(voice_cfg: VoiceConfig, out_path: Path | None = None,
 
     if on_status:
         on_status("parle")
+    log.debug("record_wav_vad argv: %s", argv)
     proc = await asyncio.create_subprocess_exec(
         *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     block = SAMPLE_RATE * 2 // 10  # 100 ms de PCM 16-bit mono

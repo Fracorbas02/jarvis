@@ -372,6 +372,43 @@ class GtkBackend:
 
     # ---------- voix ----------
 
+    def refresh_stt_status(self) -> None:
+        self._run(self._astt_status())
+
+    async def _astt_status(self) -> None:
+        from ..voice import voice_server_status
+        st = await voice_server_status("stt", self.cfg.voice.stt)
+        self.events.put({"type": "stt_status", "state": st.state, "host": st.host,
+                         "port": st.port, "detail": st.detail, "healthy": st.healthy,
+                         "protocol": self.cfg.voice.stt.protocol,
+                         "binary": self.cfg.voice.stt.binary,
+                         "model": self.cfg.voice.stt.model})
+
+    def start_stt_server(self) -> None:
+        self._run(self._astt_start())
+
+    async def _astt_start(self) -> None:
+        from ..voice import start_voice_server
+        st = await start_voice_server("stt", self.cfg.voice.stt)
+        self.events.put({"type": "stt_status", "state": st.state, "host": st.host,
+                         "port": st.port, "detail": st.detail, "healthy": st.healthy,
+                         "protocol": self.cfg.voice.stt.protocol,
+                         "binary": self.cfg.voice.stt.binary,
+                         "model": self.cfg.voice.stt.model})
+
+    def stop_stt_server(self) -> None:
+        self._run(self._astt_stop())
+
+    async def _astt_stop(self) -> None:
+        from ..voice import stop_voice_server
+        st = await stop_voice_server("stt", self.cfg.voice.stt)
+        self.events.put({"type": "stt_status", "state": st.state, "host": st.host,
+                         "port": st.port, "detail": st.detail, "healthy": st.healthy,
+                         "protocol": self.cfg.voice.stt.protocol,
+                         "binary": self.cfg.voice.stt.binary,
+                         "model": self.cfg.voice.stt.model})
+
+
     async def _transcribe_path(self, path, on_status=None) -> str:
         """Transcription d'un WAV via le serveur STT, toujours par la même
         cascade (STTClient : route batch -> chat multimodal -> WS /v1/realtime)."""
