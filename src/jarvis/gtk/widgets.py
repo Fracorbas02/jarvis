@@ -571,8 +571,13 @@ class MessageBox(Gtk.Box):
             # ne doit pas disparaître (0px) avant le 1er contenu.
             self.content_box.set_visible(False)
             self.webview.set_visible(True)
-            self.webview.set_vexpand(True)
+            # hauteur auto = contenu HTML ; on resette le size_request à chaque
+            # fragment pour que la webview suive la hauteur du texte rendu
+            self.webview.set_size_request(-1, -1)
             self.webview.load_html(markdown_to_html(text or " "), "about:blank")
+            # WebKit met à jour la hauteur après le chargement ; on force un
+            # re-layout de la bulle pour que la hauteur suive le contenu
+            GLib.idle_add(lambda: (self.queue_resize(), GLib.SOURCE_REMOVE)[1])
             return
         self._clear_content()
         if self.webview is not None:
@@ -589,10 +594,10 @@ class MessageBox(Gtk.Box):
         """Crée le WebKit.WebView : charge le HTML markdown, intercepte les
         liens externes (script-message -> xdg-open)."""
         wv = WebKit.WebView()
-        wv.set_vexpand(True)
-        wv.set_hexpand(False)          # PAS pleine largeur : suit la bulle (max-width 80%)
+        wv.set_vexpand(False)         # hauteur = contenu HTML (pas tout l'écran)
+        wv.set_hexpand(False)         # PAS pleine largeur : suit la bulle (max-width 80%)
         wv.set_halign(Gtk.Align.START)
-        wv.set_size_request(-1, 40)    # hauteur mini : la webview n'occupe jamais 0px
+        wv.set_size_request(-1, 40)   # hauteur mini : la webview n'occupe jamais 0px
         settings = wv.get_settings()
         try:
             settings.set_enable_javascript(True)

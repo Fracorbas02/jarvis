@@ -90,6 +90,11 @@ def main() -> int:
         # webview assistant : VISIBLE dès la création (hauteur mini 40px) — sinon la
         # bulle assistant disparaît si le 1er rendu markdown est vide/échoué
         assert "self.webview.set_visible(True)" in init_src
+        # régression #37 : la webview ne doit PAS prendre toute la hauteur (vexpand)
+        wv_src = inspect.getsource(gtk_widgets.MessageBox._make_webview)
+        assert "set_vexpand(False)" in wv_src and "set_vexpand(True)" not in wv_src
+        render_src2 = inspect.getsource(gtk_widgets.MessageBox._render_md)
+        assert "set_vexpand(True)" not in render_src2  # hauteur auto = contenu HTML
         render_src = inspect.getsource(gtk_widgets.MessageBox._render_md)
         assert "self.webview.set_visible(True)" in render_src
         # la webview ne doit JAMAIS être re-cachée dans la branche webkit de _render_md
