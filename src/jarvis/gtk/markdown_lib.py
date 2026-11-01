@@ -68,8 +68,11 @@ _CSS = """
 body {
   font-family: 'Inter', 'Cantarell', system-ui, sans-serif;
   font-size: 14px; line-height: 1.55; color: #e6edf3;
-  margin: 0; padding: 2px 0; overflow-wrap: break-word;
+  margin: 0; padding: 2px 0;
+  overflow-wrap: break-word; word-break: break-word; white-space: normal;
+  max-width: 100%;
 }
+p, li, blockquote, td, th { overflow-wrap: break-word; white-space: normal; }
 h1 { font-size: 1.7em; color: #4cc2ff; margin: 0.5em 0 0.3em; }
 h2 { font-size: 1.4em; color: #4cc2ff; margin: 0.5em 0 0.3em; }
 h3 { font-size: 1.15em; color: #4cc2ff; margin: 0.5em 0 0.25em; }

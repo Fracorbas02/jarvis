@@ -506,14 +506,18 @@ class MessageBox(Gtk.Box):
         if role == "user":
             self.content_box.add_css_class("jarvis-text")
         # la bulle interne suit le halign de la MessageBox (START/END) et ne fait
-        # pas toute la largeur (max-width 80% via CSS)
-        bubble.set_hexpand(True)
+        # pas toute la largeur (max-width 80% via CSS) — hexpand False pour que
+        # le wrap du texte/webview se fasse à la largeur de la bulle, pas de la fenêtre
+        bubble.set_hexpand(False)
         bubble.append(self.content_box)
         self._md_buffer = ""
         self.webview = None
         if role == "assistant" and WEBKIT_AVAILABLE:
             self.webview = self._make_webview()
-            self.webview.set_visible(False)  # affiché au 1er rendu markdown
+            # visible dès la création (hauteur mini 40px) : _render_md la rend
+            # visible au 1er fragment de toute façon ; la cacher ici faisait
+            # disparaître la bulle assistant si le 1er rendu était vide/échouait
+            self.webview.set_visible(True)
             bubble.append(self.webview)
 
         self.tools_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
@@ -586,8 +590,9 @@ class MessageBox(Gtk.Box):
         liens externes (script-message -> xdg-open)."""
         wv = WebKit.WebView()
         wv.set_vexpand(True)
-        wv.set_hexpand(True)
-        wv.set_size_request(-1, 40)  # hauteur mini : la webview n'occupe jamais 0px
+        wv.set_hexpand(False)          # PAS pleine largeur : suit la bulle (max-width 80%)
+        wv.set_halign(Gtk.Align.START)
+        wv.set_size_request(-1, 40)    # hauteur mini : la webview n'occupe jamais 0px
         settings = wv.get_settings()
         try:
             settings.set_enable_javascript(True)

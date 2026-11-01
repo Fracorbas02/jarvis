@@ -1395,7 +1395,11 @@ class JarvisWindow(Adw.ApplicationWindow):
         return GLib.SOURCE_CONTINUE
 
     def _replay_history(self) -> None:
-        """Rejoue l'historique de la session reprise (user/assistant uniquement)."""
+        """Rejoue l'historique de la session reprise (user/assistant uniquement).
+
+        Les messages assistant avec tool_calls ont content=None (le texte est
+        dans le message assistant FINAL suivant) : on les ignore, et on n'affiche
+        jamais les messages role=tool (résultats bruts d'outils)."""
         for m in self.backend.history:
             role = m.get("role")
             content = m.get("content")

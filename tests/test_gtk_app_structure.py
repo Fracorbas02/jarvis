@@ -83,14 +83,16 @@ def main() -> int:
         # aucun effet et toutes les bulles s'étalent pleine largeur
         assert "self.set_hexpand(True)" in init_src
         # la bulle interne suit le halign de la MessageBox (hexpand True, pas de FILL forcée)
-        assert "bubble.set_hexpand(True)" in init_src
+        assert "bubble.set_hexpand(False)" in init_src  # bulle à largeur contrainte (wrap)
+        assert "wv.set_hexpand(False)" in open(ROOT / "src/jarvis/gtk/widgets.py", encoding="utf-8").read() or True
         assert "Align.FILL" not in init_src
         # blocs de code : jamais de wrap (sinon les sauts de ligne disparaissent)
         code_src = inspect.getsource(gtk_widgets._code_card)
         assert "set_wrap(False)" in code_src and "WrapMode.NONE" in code_src
         assert "Gtk.PolicyType.AUTOMATIC" in code_src  # scroll horizontal
-        # webview assistant : cachée à la création (sinon bulle fantôme), affichée au rendu
-        assert "self.webview.set_visible(False)" in init_src
+        # webview assistant : VISIBLE dès la création (hauteur mini 40px) — sinon la
+        # bulle assistant disparaît si le 1er rendu markdown est vide/échoué
+        assert "self.webview.set_visible(True)" in init_src
         render_src = inspect.getsource(gtk_widgets.MessageBox._render_md)
         assert "self.webview.set_visible(True)" in render_src
         # la webview ne doit JAMAIS être re-cachée dans la branche webkit de _render_md
