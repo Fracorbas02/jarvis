@@ -990,7 +990,8 @@ async def record_wav_vad(voice_cfg: VoiceConfig, out_path: Path | None = None,
                          silence_seconds: float = 1.2,
                          silence_rms: float = 300.0,
                          min_seconds: float = 0.8,
-                         on_chunk=None, on_status=None) -> Path:
+                         on_chunk=None, on_status=None,
+                         noise_floor: float | None = None) -> Path:
     """Enregistre le micro jusqu'à la fin de parole (VAD par seuil RMS),
     puis écrit le WAV 16 kHz mono. Utilisé par l'UI pour le "parler et
     attendre" : plus de durée fixe.
@@ -1039,6 +1040,12 @@ async def record_wav_vad(voice_cfg: VoiceConfig, out_path: Path | None = None,
     buf = bytearray()
     silent = 0.0
     total = 0.0
+    # Seuil adaptatif : si on fournit noise_floor (RMS du bruit de fond mesuré
+    # en amont), le seuil de silence = max(silence_rms, noise_floor * 2.5).
+    # Sinon seuil fixe. Un micro réglé fort ne doit pas bloquer le VAD.
+    threshold = silence_rms
+    if noise_floor is not None:
+        threshold = max(silence_rms, noise_floor * 2.5)
     try:
         deadline = asyncio.get_running_loop().time() + max_seconds
         while asyncio.get_running_loop().time() < deadline:
@@ -1053,7 +1060,7 @@ async def record_wav_vad(voice_cfg: VoiceConfig, out_path: Path | None = None,
                     pass
             rms = _pcm_rms(chunk)
             total += len(chunk) / 2 / SAMPLE_RATE
-            if rms < silence_rms:
+            if rms < threshold:
                 silent += len(chunk) / 2 / SAMPLE_RATE
             else:
                 silent = 0.0
