@@ -83,7 +83,7 @@ def _css() -> None:
     .jarvis-error { color: @error_color; }
     .jarvis-msg-user .jarvis-bubble { border-radius: 14px 14px 4px 14px; }
     .jarvis-msg-assistant .jarvis-bubble { border-radius: 14px 14px 14px 4px; }
-    .jarvis-bubble { border-radius: 14px; max-width: 80%; }
+    .jarvis-bubble { border-radius: 14px; }
     .jarvis-meta { font-size: 0.8em; color: alpha(@window_fg_color, 0.45); }
     .jarvis-home-title { font-size: 44px; font-weight: 700; }
     .jarvis-notif-badge {
@@ -112,7 +112,7 @@ def _css() -> None:
     .jarvis-md-code-lang { font-size: 0.75em; color: alpha(@window_fg_color, 0.5);
                            text-transform: uppercase; font-weight: 600; }
     .jarvis-md-code-copy { border-radius: 6px; }
-    .jarvis-md-table { border-collapse: collapse; }
+    .jarvis-md-table { }
     .jarvis-md-th {
         font-weight: 700; color: @accent_color;
         background-color: alpha(@accent_bg_color, 0.25);
@@ -533,7 +533,7 @@ class MessageBox(Gtk.Box):
         if role == "user":
             self.content_box.add_css_class("jarvis-text")
         # la bulle interne suit le halign de la MessageBox (START/END) et ne fait
-        # pas toute la largeur (max-width 80% via CSS) — hexpand False pour que
+        # pas toute la largeur — hexpand False pour que
         # le wrap du texte/webview se fasse à la largeur de la bulle, pas de la fenêtre
         bubble.set_hexpand(False)
         bubble.append(self.content_box)

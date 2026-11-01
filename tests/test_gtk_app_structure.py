@@ -138,8 +138,12 @@ def main() -> int:
         assert "reasoning_box" in mb_src and "_flush_reasoning" in mb_src
         assert "set_tool_result" in mb_src and "Adw.ExpanderRow" in mb_src
         # largeur 70% appliquée en px via size-allocate (pas en CSS max-width)
-        assert "_on_entry_bar_allocate" in inspect.getsource(gtk_app.JarvisWindow)
-        assert "* 0.70" in inspect.getsource(gtk_app.JarvisWindow._on_entry_bar_allocate)
+        # largeur 70% en px via _update_entry_bar_width (GTK4 : pas de signal size-allocate)
+        assert "_update_entry_bar_width" in inspect.getsource(gtk_app.JarvisWindow)
+        assert "* 0.70" in inspect.getsource(gtk_app.JarvisWindow._update_entry_bar_width)
+        assert 'connect("size-allocate"' not in inspect.getsource(gtk_app.JarvisWindow)
+        css = open(ROOT / "src/jarvis/gtk/widgets.py", encoding="utf-8").read()
+        assert "max-width" not in css and "border-collapse" not in css  # propriétés CSS inconnues de GTK
         # barre d'actions (avec bouton info) dans le header, pas une barre séparée
         chat_src2 = inspect.getsource(gtk_app.JarvisWindow._build_chat_content)
         assert "self._header.pack_end(conv_bar)" in chat_src2
