@@ -47,6 +47,17 @@ from .config import VoiceConfig, VoiceServerConfig
 
 SAMPLE_RATE = 16000
 
+
+def _ffmpeg_input_args() -> list[str]:
+    """Args d'entrée ffmpeg pour le micro : `-f pulse -i default` si PipeWire/
+    PulseAudio est l'API dispo (système moderne sans ALSA direct), sinon
+    `-f alsa -i default`."""
+    import shutil
+    if shutil.which("pactl") or shutil.which("pulseaudio"):
+        return ["-f", "pulse", "-i", "default"]
+    return ["-f", "alsa", "-i", "default"]
+
+
 log = logging.getLogger("jarvis.voice")
 
 
@@ -579,8 +590,8 @@ class STTClient:
 
     async def _post_chat_audio(self, path: Path, language: str | None) -> "httpx.Response":
         """Fallback chat multimodal : POST /v1/chat/completions avec le WAV en
-        base64 dans un bloc input_audio (chemin des mod\u00e8les audio llama.cpp
-        quand la route /v1/audio/transcriptions n'est pas enregistr\u00e9e)."""
+        base64 dans un bloc input_audio (chemin des modèles audio llama.cpp
+        quand la route /v1/audio/transcriptions n'est pas enregistrée)."""
         import base64
         b64 = base64.b64encode(path.read_bytes()).decode("ascii")
         lang_hint = f" in {language}" if language else ""
@@ -620,12 +631,12 @@ class STTClient:
         path = Path(wav_path)
         if not path.is_file():
             raise VoiceError(f"fichier audio introuvable : {path}")
-        # Strat\u00e9gies selon le protocole, en cascade :
+        # Stratégies selon le protocole, en cascade :
         #  voxtral : /v1/audio/transcriptions -> chat multimodal -> /inference
         #  whisper : /inference -> /v1/audio/transcriptions -> chat multimodal
-        # Le chat multimodal ne sert que si le serveur a une capacit\u00e9 audio
-        # (mmproj charg\u00e9) mais pas la route batch ; /inference couvre un
-        # whisper-server lanc\u00e9 \u00e0 la main.
+        # Le chat multimodal ne sert que si le serveur a une capacité audio
+        # (mmproj chargé) mais pas la route batch ; /inference couvre un
+        # whisper-server lancé à la main.
         if self.protocol == "voxtral":
             endpoints = [("/v1/audio/transcriptions", {"model": self.model}),
                          ("/inference", {})]
@@ -636,13 +647,19 @@ class STTClient:
             on_status("transcription en cours…")
         last_err = ""
         for endpoint, extra in endpoints:
-            resp = await self._post_transcription(path, language, endpoint, extra)
+            try:
+                resp = await self._post_transcription(path, language, endpoint, extra)
+            except (httpx.TransportError, httpx.HTTPError) as exc:
+                # serveur mort / connexion coupée (ReadError) : on essaie le
+                # endpoint suivant (puis le websocket) au lieu de tout planter
+                last_err = f"{endpoint} -> {type(exc).__name__}: {exc}"
+                continue
             if resp.status_code == 200:
                 payload = resp.json()
                 text = payload.get("text") if isinstance(payload, dict) else None
                 if text is None:
                     raise VoiceError(
-                        f"r\u00e9ponse inattendue du serveur STT : {str(payload)[:500]}")
+                        f"réponse inattendue du serveur STT : {str(payload)[:500]}")
                 return text.strip()
             if resp.status_code == 404:
                 continue  # endpoint absent -> on essaie le suivant
@@ -897,12 +914,16 @@ async def record_wav(seconds: float, voice_cfg: VoiceConfig,
             cache = Path(tempfile.gettempdir())
         import time as _time
         out_path = cache / f"rec-{os.getpid()}-{_time.time_ns() // 1000}.wav"
+        try:
+            cleanup_recordings(keep=1)
+        except Exception:  # noqa: BLE001 — le nettoyage ne doit jamais casser l'enregistrement
+            pass
     cmd = list(voice_cfg.record_cmd)
     if not cmd:
         raise VoiceError("record_cmd vide : pas de binaire d'enregistrement configuré")
     binary = shutil.which(cmd[0])
     if binary is None and cmd[0] == "arecord" and shutil.which("ffmpeg"):
-        cmd = ["ffmpeg", "-loglevel", "error", "-f", "alsa", "-i", "default",
+        cmd = ["ffmpeg", "-loglevel", "error", *_ffmpeg_input_args(),
                "-ar", str(SAMPLE_RATE), "-ac", "1", "-f", "s16le", "-"]
         binary = "ffmpeg"
     if binary is None:
@@ -981,9 +1002,10 @@ async def record_wav(seconds: float, voice_cfg: VoiceConfig,
 async def record_wav_vad(voice_cfg: VoiceConfig, out_path: Path | None = None,
                          max_seconds: float = 60.0,
                          silence_seconds: float = 1.2,
-                         silence_rms: float = 300.0,
+                         silence_rms: float = 800.0,
                          min_seconds: float = 0.8,
-                         on_chunk=None, on_status=None) -> Path:
+                         on_chunk=None, on_status=None,
+                         noise_floor: float | None = None) -> Path:
     """Enregistre le micro jusqu'à la fin de parole (VAD par seuil RMS),
     puis écrit le WAV 16 kHz mono. Utilisé par l'UI pour le "parler et
     attendre" : plus de durée fixe.
@@ -1004,13 +1026,17 @@ async def record_wav_vad(voice_cfg: VoiceConfig, out_path: Path | None = None,
             import tempfile
             cache = Path(tempfile.gettempdir())
         out_path = cache / f"rec-{os.getpid()}-{_time.time_ns() // 1000}.wav"
+        try:
+            cleanup_recordings(keep=1)
+        except Exception:  # noqa: BLE001 — le nettoyage ne doit jamais casser l'enregistrement
+            pass
 
     cmd = list(voice_cfg.record_cmd)
     if not cmd:
         raise VoiceError("record_cmd vide : pas de binaire d'enregistrement configuré")
     binary = shutil.which(cmd[0])
     if binary is None and cmd[0] == "arecord" and shutil.which("ffmpeg"):
-        cmd = ["ffmpeg", "-loglevel", "error", "-f", "alsa", "-i", "default",
+        cmd = ["ffmpeg", "-loglevel", "error", *_ffmpeg_input_args(),
                "-ar", str(SAMPLE_RATE), "-ac", "1", "-f", "s16le", "-"]
         binary = "ffmpeg"
     if binary is None:
@@ -1025,6 +1051,7 @@ async def record_wav_vad(voice_cfg: VoiceConfig, out_path: Path | None = None,
 
     if on_status:
         on_status("parle")
+    log.debug("record_wav_vad argv: %s", argv)
     proc = await asyncio.create_subprocess_exec(
         *argv, stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
@@ -1032,6 +1059,20 @@ async def record_wav_vad(voice_cfg: VoiceConfig, out_path: Path | None = None,
     buf = bytearray()
     silent = 0.0
     total = 0.0
+    heard_speech = False
+    # Auto-calibration IN-FLUX (pas de mesure séparée qui mangerait le début de
+    # parole) : pendant la 1re seconde, on estime le bruit de fond (RMS min des
+    # blocs) et le seuil devient max(silence_rms, floor*2.5). Avant calibration,
+    # seuil fixe. noise_floor fourni de l'extérieur a priorité.
+    # Seuil FIXE (pas d'auto-calib : le min des blocs sur 1 s tombe dans un trou
+    # de silence et effondre le seuil -> le VAD ne détecte plus jamais la fin).
+    # noise_floor fourni de l'extérieur reste prioritaire si présent.
+    floor = noise_floor
+    threshold = silence_rms
+    if floor is not None:
+        threshold = max(silence_rms, floor * 2.5)
+    calib_until = 0.0
+    calib_min = None
     try:
         deadline = asyncio.get_running_loop().time() + max_seconds
         while asyncio.get_running_loop().time() < deadline:
@@ -1046,11 +1087,22 @@ async def record_wav_vad(voice_cfg: VoiceConfig, out_path: Path | None = None,
                     pass
             rms = _pcm_rms(chunk)
             total += len(chunk) / 2 / SAMPLE_RATE
-            if rms < silence_rms:
-                silent += len(chunk) / 2 / SAMPLE_RATE
-            else:
+            if int(total * 2) != int((total - len(chunk) / 2 / SAMPLE_RATE) * 2):
+                log.debug("vad t=%.2f rms=%.0f seuil=%.0f heard=%s silent=%.2f",
+                          total, rms, threshold, heard_speech, silent)
+            if floor is None and total <= calib_until:
+                calib_min = rms if calib_min is None else min(calib_min, rms)
+                if total >= calib_until:
+                    floor = calib_min
+                    threshold = max(silence_rms, (floor or 0) * 2.5)
+                    log.debug("vad auto-calib: floor=%.0f seuil=%.0f", floor, threshold)
+            if rms >= threshold:
                 silent = 0.0
-            if total >= min_seconds and silent >= silence_seconds:
+                heard_speech = True
+            else:
+                silent += len(chunk) / 2 / SAMPLE_RATE
+            # on ne coupe que si on a entendu de la parole (sinon on attend max_seconds)
+            if heard_speech and total >= min_seconds and silent >= silence_seconds:
                 if on_status:
                     on_status(f"fin de parole détectée ({total:.1f}s)")
                 break  # fin de parole détectée
@@ -1069,6 +1121,31 @@ async def record_wav_vad(voice_cfg: VoiceConfig, out_path: Path | None = None,
         raise VoiceError(f"{cmd[0]} a échoué : {err.decode(errors='replace')[:300]}")
     write_wav(out_path, bytes(buf))
     return out_path
+
+
+def cache_dir() -> Path:
+    """Répertoire cache jarvis (~/.cache/jarvis ou $JARVIS_LOG_DIR)."""
+    return Path(os.environ.get("JARVIS_LOG_DIR", Path.home() / ".cache" / "jarvis"))
+
+
+def cleanup_recordings(keep: int = 1) -> int:
+    """Supprime les vieux WAV d'enregistrement (rec-*.wav) dans le cache :
+    on garde les `keep` plus récents. Retourne le nombre supprimé."""
+    import glob as _glob
+    d = cache_dir()
+    try:
+        files = sorted(_glob.glob(str(d / "rec-*.wav")), key=lambda f: os.path.getmtime(f),
+                       reverse=True)
+    except OSError:
+        return 0
+    n = 0
+    for f in files[keep:]:
+        try:
+            os.unlink(f)
+            n += 1
+        except OSError:
+            pass
+    return n
 
 
 def _pcm_rms(chunk: bytes) -> float:

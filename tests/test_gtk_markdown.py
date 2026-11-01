@@ -293,3 +293,67 @@ def test_render_math_png() -> None:
     assert d2 is not None and d2[:8] == b"\x89PNG\r\n\x1a\n"
     # cache : même objet
     assert render_math_png(r"\int_0^1 x^2\,dx = \frac{1}{3}") is d
+
+
+# ---------- repros rapport revue (B1-B12 + bug principal) ----------
+
+def test_b1_tilde_fence() -> None:
+    b = parse_blocks("~~~python\nx = 1\n~~~\n")
+    assert b[0].kind == "code" and b[0].lang == "python"
+
+
+def test_b2_fence_4_backticks_contenant_3() -> None:
+    b = parse_blocks("````md\n```py\nx\n```\ny\n````\n")
+    assert b[0].kind == "code" and "```py" in b[0].text and "y" in b[0].text
+
+
+def test_b3_info_string_avec_espace() -> None:
+    b = parse_blocks('```python title="x"\ncode\n```\n')
+    assert b[0].kind == "code" and b[0].lang == "python"
+
+
+def test_b4_setext_multilignes() -> None:
+    b = parse_blocks("ligne1\nligne2\n---\n")
+    assert b[0].kind == "heading" and b[0].level == 2 and "ligne1" in b[0].text
+
+
+def test_b5_liste_ligne_vide_entre_items() -> None:
+    b = parse_blocks("- a\n\n- b\n")
+    assert len(b) == 1 and b[0].kind == "list" and len(b[0].items) == 2
+
+
+def test_b7_crlf_normalise() -> None:
+    b = parse_blocks("a\r\nb\r\n")
+    assert b[0].text == "a\nb"
+
+
+def test_b8_url_avec_parentheses() -> None:
+    p = inline_to_pango("[x](https://wikipedia.org/wiki/Maladie_(virus))")
+    assert 'href="https://wikipedia.org/wiki/Maladie_(virus)"' in p
+
+
+def test_b9_underscore_intra_mot_pas_italique() -> None:
+    assert "<i>" not in inline_to_pango("snake_case_name")
+    assert "<i>italique</i>" in inline_to_pango("du _italique_ ici")
+
+
+def test_b10_double_backtick() -> None:
+    p = inline_to_pango("``a ` b``")
+    assert "a ` b" in p and p.count("font-family") == 1
+
+
+def test_b11_table_cellule_pipe_echappe() -> None:
+    b = parse_blocks("| a \\| b | c |\n|---|---|\n| 1 | 2 |\n")
+    assert b[0].rows[0] == ["a | b", "c"]
+
+
+def test_b12_html_mini_sur() -> None:
+    p = inline_to_pango("l1<br>l2 H<sub>2</sub>O x<sup>2</sup> <kbd>Ctrl</kbd>")
+    assert "\n" in p and "<sub>2</sub>" in p and "<sup>2</sup>" in p and "font-family" in p
+
+
+def test_bug_principal_code_indente_avec_tirets() -> None:
+    # le bug vu en prod : --- dans un bloc de code indenté cassait en titre
+    b = parse_blocks("para\n\n    x = 1\n    ---\n    y = 2\n")
+    assert [x.kind for x in b] == ["paragraph", "code"]
+    assert "---" in b[1].text

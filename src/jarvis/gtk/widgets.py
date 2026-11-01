@@ -21,7 +21,6 @@ Le raisonnement du modèle est repliable (Adw.ExpanderRow) et grisé/italique.
 from __future__ import annotations
 
 import sys
-import time as _time
 
 import gi
 
@@ -67,7 +66,6 @@ _HEADING_SIZE = {1: "xx-large", 2: "x-large", 3: "large", 4: "medium",
 # cache mémoire des images téléchargées : url -> (bytes, content_type), borné
 _IMAGE_CACHE: dict[str, tuple[bytes, str]] = {}
 _IMAGE_CACHE_MAX = 50  # éviction FIFO au-delà (pas de croissance infinie)
-_MD_RENDER_THROTTLE = 0.07  # secondes entre deux re-rendus markdown en streaming
 
 
 def _css() -> None:
@@ -531,7 +529,8 @@ class MessageBox(Gtk.Box):
         bubble.set_hexpand(False)
         bubble.append(self.content_box)
         self._md_buffer = ""
-        self._md_last_render = 0.0  # throttle du re-rendu en streaming (~15 Hz)
+        self._last_render = 0
+        self._render_timer = None
         self.webview = None
         if role == "assistant" and WEBKIT_AVAILABLE:
             self.webview = self._make_webview()
@@ -577,23 +576,34 @@ class MessageBox(Gtk.Box):
         self._md_buffer = text
         self._render_md(text)
 
-    def append_text(self, fragment: str) -> None:
-        """Ajoute un fragment streamé et re-rend tout le Markdown : les
-        marqueurs/blocs qui se ferment en cours de route sont pris en compte
-        au fragment suivant. Re-rendu throttlé (~15 Hz comme la CLI) : reparser
-        tout le buffer à chaque token ferait ramer le thread GTK."""
-        self._md_buffer += fragment
-        now = _time.monotonic()
-        if now - self._md_last_render >= _MD_RENDER_THROTTLE:
-            self._md_last_render = now
-            self._render_md(self._md_buffer)
+    _RENDER_MIN_MS = 66  # ~15 Hz, comme la TUI (RENDER_THROTTLE)
 
-    def flush_text(self) -> None:
-        """Force le re-rendu du buffer (fin de stream) même si le throttle
-        n'est pas écoulé."""
-        if self._md_buffer:
-            self._md_last_render = 0.0
-            self._render_md(self._md_buffer)
+    def append_text(self, fragment: str) -> None:
+        """Ajoute un fragment streamé. Le re-rendu complet est throttlé à ~15 Hz :
+        on bufferise et on ne re-rend que si le délai est écoulé (ou en fin de tour
+        via flush). Les marqueurs/blocs non fermés sont repris au fragment suivant."""
+        self._md_buffer += fragment
+        now = GLib.get_monotonic_time()
+        if self._last_render and now - self._last_render < self._RENDER_MIN_MS * 1000:
+            if self._render_timer is None:
+                self._render_timer = GLib.timeout_add(
+                    self._RENDER_MIN_MS,
+                    lambda: (self._flush_render(), GLib.SOURCE_REMOVE)[1])
+            return
+        self._flush_render()
+
+    def _flush_render(self) -> None:
+        self._render_timer = None
+        self._last_render = GLib.get_monotonic_time()
+        self._render_md(self._md_buffer)
+
+
+    def flush_render(self) -> None:
+        """Force le re-rendu immédiat (fin de tour)."""
+        if self._render_timer is not None:
+            GLib.source_remove(self._render_timer)
+            self._render_timer = None
+        self._flush_render()
 
     def _render_md(self, text: str) -> None:
         if self.webview is not None:
@@ -777,8 +787,14 @@ class MessagesColumn(Gtk.Box):
             self.remove(b)
         self._boxes.clear()
 
-    def scroll_to_end(self) -> None:
+    def scroll_to_end(self, force: bool = False) -> None:
+        """Scroll en bas, SAUF si l'utilisateur est remonté (stick-to-bottom) :
+        on ne scrolle que si on est déjà dans la dernière page (~150px du bas)."""
         vadj = self._scroll.get_vadjustment()
+        if not force:
+            at_bottom = vadj.get_value() + vadj.get_page_size() >= vadj.get_upper() - 150
+            if not at_bottom:
+                return  # l'utilisateur relit plus haut : on ne le ramène pas en bas
         GLib.idle_add(self._set_v, vadj, vadj.get_upper())
 
     @staticmethod

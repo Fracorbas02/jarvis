@@ -1,14 +1,14 @@
 """Application GTK4 / libadwaita de Jarvis (`uv run jarvis-app`).
 
-Refonte compl\u00e8te de l'UI, sans toucher au reste du projet :
-- page d'accueil : un seul bouton \u00ab Lancer \u00bb (d\u00e9marre le llama-server si
+Refonte complète de l'UI, sans toucher au reste du projet :
+- page d'accueil : un seul bouton « Lancer » (démarre le llama-server si
   besoin, puis ouvre la conversation) ;
-- page conversation : on parle au mod\u00e8le (bouton micro -> STT -> tour LLM),
+- page conversation : on parle au modèle (bouton micro -> STT -> tour LLM),
   le prompt texte vit dans le menu (Ctrl+P) ;
-- onglet r\u00e9glages : th\u00e8me, GPU, taille de contexte, outils MCP.
+- onglet réglages : thème, GPU, taille de contexte, outils MCP.
 
 Toute la logique async est dans backend.GtkBackend (thread asyncio + queue) ;
-les \u00e9v\u00e9nements remontent au thread GTK via GLib.idle_add.
+les événements remontent au thread GTK via GLib.idle_add.
 """
 
 from __future__ import annotations
@@ -69,6 +69,7 @@ class JarvisWindow(Adw.ApplicationWindow):
         self._busy = False
         self._status_state = "unknown"
         self._stt_state = "unknown"
+        self._stt_state = "unknown"
         self._ctx = self.settings.get("ctx_size", 16384)
         self.mic_device = self.settings.get("mic", "default")
 
@@ -117,16 +118,16 @@ class JarvisWindow(Adw.ApplicationWindow):
         header = Adw.HeaderBar()
         toolbar.add_top_bar(header)
 
-        # menu principal (prompt, sessions, tts, \u00e0 propos)
+        # menu principal (prompt, sessions, tts, à propos)
         menu = Gio.Menu()
-        menu.append("Prompt\u2026", "app.prompt")
+        menu.append("Prompt…", "app.prompt")
         menu.append("Nouvelle conversation", "app.new-session")
-        menu.append("Conversations\u2026", "app.sessions")
+        menu.append("Conversations…", "app.sessions")
         section = Gio.Menu()
-        section.append("Lire les r\u00e9ponses \u00e0 voix haute", "app.tts")
+        section.append("Lire les réponses à voix haute", "app.tts")
         menu.append_section(None, section)
         section2 = Gio.Menu()
-        section2.append("\u00c0 propos", "app.about")
+        section2.append("À propos", "app.about")
         menu.append_section(None, section2)
         menu_button = Gtk.MenuButton(menu_model=menu, icon_name="open-menu-symbolic",
                                      tooltip_text="Menu")
@@ -144,7 +145,7 @@ class JarvisWindow(Adw.ApplicationWindow):
         self._build_status_popover()
 
         self.mic_button = Gtk.Button(icon_name="audio-input-microphone-symbolic",
-                                     tooltip_text="Parler \u00e0 Jarvis (micro)")
+                                     tooltip_text="Parler à Jarvis (micro)")
         self.mic_button.connect("clicked", self._on_mic)
         header.pack_end(self.mic_button)
 
@@ -181,7 +182,7 @@ class JarvisWindow(Adw.ApplicationWindow):
                                         "go-home-symbolic")
         self.stack.add_titled_with_icon(self._build_chat(), "chat", "Conversation",
                                         "user-available-symbolic")
-        self.stack.add_titled_with_icon(self._build_settings(), "settings", "R\u00e9glages",
+        self.stack.add_titled_with_icon(self._build_settings(), "settings", "Réglages",
                                         "preferences-system-symbolic")
         toolbar.set_content(self.stack)
         self.set_content(toolbar)
@@ -668,6 +669,18 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.pop_button = Gtk.Button(label="Démarrer le serveur")
         self.pop_button.connect("clicked", self._on_pop_start_stop)
         box.append(self.pop_button)
+        # --- serveur STT (voix) ---
+        sep = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        box.append(sep)
+        stt_title = Gtk.Label(label="Serveur STT (voix)", xalign=0)
+        stt_title.add_css_class("heading")
+        box.append(stt_title)
+        self.pop_stt_label = Gtk.Label(xalign=0, wrap=True,
+                                       label="STT : interrogation…")
+        box.append(self.pop_stt_label)
+        self.pop_stt_button = Gtk.Button(label="Démarrer le serveur STT")
+        self.pop_stt_button.connect("clicked", self._on_pop_stt_start_stop)
+        box.append(self.pop_stt_button)
         self.status_popover.set_child(box)
 
     # ---------- réglages ----------
@@ -848,6 +861,10 @@ class JarvisWindow(Adw.ApplicationWindow):
         self._start_mic_turn()
 
     def _start_mic_turn(self) -> None:
+        if self._busy:
+            self._toast("Un tour est déjà en cours")
+            return
+        self._busy = True  # bloque aussi Ctrl+P pendant l'enregistrement micro
         self.stack.set_visible_child_name("chat")
         self.chat_mic.set_sensitive(False)
         self.mic_button.set_sensitive(False)
@@ -929,24 +946,42 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.conv_empty.set_visible(not sessions)
         for s in sessions:
             row = Gtk.ListBoxRow()
-            inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2,
+            inner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6,
                             margin_top=6, margin_bottom=6, margin_start=8, margin_end=8)
-            inner.append(Gtk.Label(label=s.get("title", "?"), xalign=0,
-                                   ellipsize=3))  # Pango.EllipsizeMode.END
+            text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True)
+            text_box.append(Gtk.Label(label=s.get("title", "?"), xalign=0,
+                                      ellipsize=3))  # Pango.EllipsizeMode.END
             sub = Gtk.Label(label=f"{s.get('updated', '')}  ·  {s.get('count', 0)} msg",
                             xalign=0)
             sub.add_css_class("dim-label")
             sub.add_css_class("caption")
-            inner.append(sub)
+            text_box.append(sub)
+            inner.append(text_box)
+            btn_del = Gtk.Button(icon_name="user-trash-symbolic",
+                                 tooltip_text="Supprimer cette conversation",
+                                 valign=Gtk.Align.CENTER)
+            btn_del.add_css_class("flat")
+            sid = s.get("id")
+            btn_del.connect("clicked", lambda b, s=sid: self._on_delete_conv(s))
+            inner.append(btn_del)
             row.set_child(inner)
-            row.sid = s.get("id")
-            if s.get("id") == self.backend.session_id:
+            row.sid = sid
+            if sid == self.backend.session_id:
                 self.conv_list.select_row(row)
             self.conv_list.append(row)
 
     def _on_conv_row_activated(self, _listbox, row) -> None:
+        if self._busy:
+            self._toast("Termine le tour en cours avant de changer de conversation")
+            return
         self.backend.load_session(row.sid)
         self.split.set_show_sidebar(False)  # referme la sidebar après choix
+
+    def _on_delete_conv(self, sid: str) -> None:
+        """Supprime la conversation ; si c'était la courante, le backend reset le
+        contexte (nouvelle session vide) et l'UI est vidée via session_new."""
+        self.backend.delete_session(sid)
+        self._toast("Conversation supprimée")
 
     def _on_reset_context(self, _btn) -> None:
         which = self.reset_target.get_active_id() or "llm"
@@ -988,6 +1023,7 @@ class JarvisWindow(Adw.ApplicationWindow):
         self._assistant_box = assistant_message()
         self.messages.add(self._assistant_box)
         self._busy = True
+        self.messages.scroll_to_end(force=True)  # nouveau tour : on revient en bas
         self._set_busy_ui(True)
         self.backend.stream_turn(text)
 
@@ -1046,6 +1082,8 @@ class JarvisWindow(Adw.ApplicationWindow):
             self._toast(f"Erreur : {event['message']}")
         elif t == "server_status":
             self._on_server_status(event)
+        elif t == "stt_status":
+            self._on_stt_status(event)
         elif t in ("server_started", "server_stopped"):
             self._on_server_status(event)
             if t == "server_started" and event.get("models"):
@@ -1060,25 +1098,22 @@ class JarvisWindow(Adw.ApplicationWindow):
                 self.messages.scroll_to_end()
         elif t == "tool_call":
             if self._assistant_box is not None:
-                # clé = nom + occurrence : 2 appels du même outil dans un tour
-                # ne doivent pas écraser la 1re ligne (restée en ⚡ sinon)
-                n = len([k for k in self._tool_lines
-                         if k == event["name"] or k.startswith(event["name"] + "#")])
-                key = event["name"] if n == 0 else f'{event["name"]}#{n}'
+                # clé unique par appel (le même outil peut être appelé 2× dans un tour)
+                key = f"{event['name']}#{len(self._tool_lines)}"
                 self._tool_lines[key] = self._assistant_box.add_tool_line(
                     event["name"], event["args"])
         elif t == "tool_result":
-            name = event["name"]
-            # retrouve la ligne la plus ancienne de cet outil encore ouverte
-            key = next((k for k in self._tool_lines
-                        if k == name or k.startswith(name + "#")), None)
-            lbl = self._tool_lines.pop(key, None) if key else None
+            # retrouve la 1re ligne encore ouverte pour cet outil
+            lbl = None
+            for key in [k for k in self._tool_lines if k.startswith(event["name"] + "#")]:
+                lbl = self._tool_lines.pop(key)
+                break
             if lbl is not None and self._assistant_box is not None:
                 import json as _json
                 args_txt = _json.dumps(event["args"], ensure_ascii=False)
                 if len(args_txt) > 120:
                     args_txt = args_txt[:117] + "..."
-                mark = "\u2713" if event["ok"] else "\u2717"
+                mark = "✓" if event["ok"] else "✗"
                 lbl.set_text(f"{mark} {event['name']}({args_txt}) "
                              f"{event['duration']:.2f}s")
                 if not event["ok"]:
@@ -1137,7 +1172,7 @@ class JarvisWindow(Adw.ApplicationWindow):
             elif event.get("error"):
                 self._toast(f"Voix API : {event['error']}")
         elif t == "tts_fallback":
-            self._toast(f"TTS local utilis\u00e9 en secours : {event.get('message', '')}")
+            self._toast(f"TTS local utilisé en secours : {event.get('message', '')}")
         elif t == "mistral_tts_test":
             self._toast(("TTS API OK — " + event.get("message", ""))
                         if event.get("ok")
@@ -1153,6 +1188,9 @@ class JarvisWindow(Adw.ApplicationWindow):
             self.stack.set_visible_child_name("chat")
             self.backend.list_sessions()
             self.split.set_show_sidebar(False)  # referme la sidebar (notify resynchronise le bouton)
+        elif t == "session_deleted":
+            if not event.get("ok"):
+                self._toast("Suppression impossible (fichier introuvable)")
         elif t == "sessions_list":
             self._fill_conv_list(event["sessions"])
         elif t == "context_reset":
@@ -1162,13 +1200,14 @@ class JarvisWindow(Adw.ApplicationWindow):
             self._refresh_status()
         return GLib.SOURCE_REMOVE
     def _on_turn_done(self, event: dict) -> None:
+        if self._assistant_box is not None:
+            self._assistant_box.flush_render()  # re-rendu final immédiat (hors throttle)
         box = self._assistant_box
         trace = event.get("trace") or {}
         if box is not None:
             if trace.get("error"):
                 box.set_meta(trace["error"])
             box.collapse_reasoning("Raisonnement replié")
-            box.flush_text()  # re-rendu final même si le throttle n'est pas écoulé
         self._tool_lines.clear()
         self._busy = False
         self._set_busy_ui(False)
@@ -1206,8 +1245,39 @@ class JarvisWindow(Adw.ApplicationWindow):
             self.pop_button.set_label("Arrêter le serveur (géré)"
                                        if self._server_managed() else "Serveur externe")
 
+    def _on_pop_stt_start_stop(self, _btn) -> None:
+        if self._stt_state == "managed":
+            self.backend.stop_stt_server()
+        elif self._stt_state == "online":
+            self._toast("Serveur STT externe — arrêt impossible depuis Jarvis")
+        else:
+            self._toast("Démarrage du serveur STT (chargement du modèle, peut être long)…")
+            self.backend.start_stt_server()
+
+    def _on_stt_status(self, event: dict) -> None:
+        self._stt_state = event.get("state", "unknown")
+        labels = {"online": "en ligne", "managed": "géré par Jarvis",
+                  "offline": "hors ligne"}
+        txt = f"{labels.get(self._stt_state, self._stt_state)} — {event.get('host', '')}:{event.get('port', '')}"
+        if event.get("detail") and self._stt_state == "offline":
+            txt += f" ({event['detail']})"
+        txt += f"  ·  {event.get('protocol', '?')} / {event.get('binary', '?')}"
+        if hasattr(self, "pop_stt_label"):
+            self.pop_stt_label.set_text(txt)
+        if hasattr(self, "pop_stt_button"):
+            if self._stt_state == "managed":
+                self.pop_stt_button.set_label("Arrêter le serveur STT")
+                self.pop_stt_button.set_sensitive(True)
+            elif self._stt_state == "online":
+                self.pop_stt_button.set_label("Serveur externe")
+                self.pop_stt_button.set_sensitive(False)
+            else:
+                self.pop_stt_button.set_label("Démarrer le serveur STT")
+                self.pop_stt_button.set_sensitive(True)
+
     def _refresh_status(self) -> bool:
         self.backend.refresh_status()
+        self.backend.refresh_stt_status()
         return GLib.SOURCE_CONTINUE
 
     def _replay_history(self) -> None:
@@ -1221,10 +1291,20 @@ class JarvisWindow(Adw.ApplicationWindow):
             content = m.get("content")
             if role == "user" and content:
                 self.messages.add(user_message(str(content)))
-            elif role == "assistant" and content:
+            elif role == "assistant":
                 box = assistant_message()
-                box.set_markdown(str(content))
-                self.messages.add(box)
+                if content:
+                    box.set_markdown(str(content))
+                # rejoue les appels d'outils du tour (lignes grisées, sans les résultats bruts)
+                for tc in m.get("tool_calls") or []:
+                    fn = tc.get("function") or {}
+                    try:
+                        args = json.loads(fn.get("arguments") or "{}")
+                    except json.JSONDecodeError:
+                        args = {}
+                    box.add_tool_line(str(fn.get("name", "?")), args, ok=True, duration=0.0)
+                if content or m.get("tool_calls"):
+                    self.messages.add(box)
 
     # ---------- divers ----------
 
@@ -1287,7 +1367,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(name)s %(levelname)s %(message)s")
-    # les requ\u00eates de statut (httpx) polluent le terminal toutes les 2 s
+    # les requêtes de statut (httpx) polluent le terminal toutes les 2 s
     logging.getLogger("httpx").setLevel(logging.WARNING)
     if args.debug_stt:
         logging.getLogger("jarvis.voice").setLevel(logging.DEBUG)

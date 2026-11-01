@@ -1,8 +1,8 @@
 """TTS via l'API Mistral (Voxtral) : POST https://api.mistral.ai/v1/audio/speech.
 
-La cl\u00e9 API n'est JAMAIS dans config.toml : elle est stock\u00e9e localement dans
+La clé API n'est JAMAIS dans config.toml : elle est stockée localement dans
 ~/.config/jarvis/mistral.json (ou $XDG_CONFIG_HOME/jarvis/mistral.json), avec
-chmod 600, et peut aussi venir de l'env MISTRAL_API_KEY (qui prime si d\u00e9fini).
+chmod 600, et peut aussi venir de l'env MISTRAL_API_KEY (qui prime si défini).
 
 Endpoint (docs Mistral, 2026) :
   POST {base_url}/v1/audio/speech   body: {"model", "input", "voice_id",
@@ -10,9 +10,9 @@ Endpoint (docs Mistral, 2026) :
   -> 200 application/json {"audio_data": "<base64>"} (non-stream)
   GET  {base_url}/v1/audio/voices   -> liste des voix (preset + workspace)
 
-Mod\u00e8les TTS : "voxtral-mini-tts-2603" (recommand\u00e9, le plus l\u00e9ger/rapide),
-"voxtral-tts-2603" (qualit\u00e9 max). Voix : voice_id preset (ex. "voice_592"
-Marie FR, "gb_jane_neutral"...) ou voix clon\u00e9e du workspace.
+Modèles TTS : "voxtral-mini-tts-2603" (recommandé, le plus léger/rapide),
+"voxtral-tts-2603" (qualité max). Voix : voice_id preset (ex. "voice_592"
+Marie FR, "gb_jane_neutral"...) ou voix clonée du workspace.
 """
 
 from __future__ import annotations
@@ -67,7 +67,7 @@ def api_key_path() -> Path:
 
 
 def load_api_key() -> str:
-    """Cl\u00e9 API : env MISTRAL_API_KEY (prime) puis fichier local mistral.json."""
+    """Clé API : env MISTRAL_API_KEY (prime) puis fichier local mistral.json."""
     env_key = os.environ.get("MISTRAL_API_KEY", "").strip()
     if env_key:
         return env_key
@@ -79,7 +79,7 @@ def load_api_key() -> str:
 
 
 def save_api_key(api_key: str) -> Path:
-    """Enregistre la cl\u00e9 localement (fichier 0600, jamais logu\u00e9e/affich\u00e9e)."""
+    """Enregistre la clé localement (fichier 0600, jamais loguée/affichée)."""
     p = api_key_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     # os.open avec mode 0o600 : write_text créerait le fichier avec l'umask
@@ -105,8 +105,8 @@ def has_api_key() -> bool:
 
 @dataclass
 class MistralVoice:
-    id: str          # voice_id \u00e0 passer en requ\u00eate ("voice_592", "gb_jane_neutral", id custom)
-    name: str        # libell\u00e9 lisible
+    id: str          # voice_id à passer en requête ("voice_592", "gb_jane_neutral", id custom)
+    name: str        # libellé lisible
     language: str = ""
     gender: str = ""
     kind: str = "preset"  # "preset" | "custom"
@@ -119,7 +119,7 @@ class MistralTTSClient:
                  model: str = DEFAULT_MODEL, timeout: float = 60.0):
         if not api_key.strip():
             raise MistralTTSError(
-                "cl\u00e9 API Mistral absente \u2014 la d\u00e9finir dans R\u00e9glages > Voix API "
+                "clé API Mistral absente — la définir dans Réglages > Voix API "
                 "(ou export MISTRAL_API_KEY)")
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -132,9 +132,9 @@ class MistralTTSClient:
 
     async def synthesize(self, text: str, voice_id: str | None = None,
                          response_format: str = "mp3") -> bytes:
-        """Synth\u00e9tise `text` -> octets audio (mp3 par d\u00e9faut).
+        """Synthétise `text` -> octets audio (mp3 par défaut).
 
-        L'API renvoie {"audio_data": "<base64>"} en non-stream ; on d\u00e9code.
+        L'API renvoie {"audio_data": "<base64>"} en non-stream ; on décode.
         """
         if not text.strip():
             raise MistralTTSError("texte vide")
@@ -147,11 +147,11 @@ class MistralTTSClient:
         except httpx.HTTPError as exc:
             raise MistralTTSError(f"API Mistral inaccessible : {exc}") from exc
         if resp.status_code == 401:
-            raise MistralTTSError("cl\u00e9 API invalide ou expir\u00e9e (401)")
+            raise MistralTTSError("clé API invalide ou expirée (401)")
         if resp.status_code == 403:
-            raise MistralTTSError("403 : mod\u00e9ration du contenu ou quota atteint")
+            raise MistralTTSError("403 : modération du contenu ou quota atteint")
         if resp.status_code == 404:
-            raise MistralTTSError(f"404 : mod\u00e8le {self.model!r} ou voix {voice_id!r} inconnu")
+            raise MistralTTSError(f"404 : modèle {self.model!r} ou voix {voice_id!r} inconnu")
         if resp.status_code != 200:
             # SECURITE : on ne met JAMAIS le corps de la reponse dans le message
             # (un proxy/WAF en erreur peut echoer des en-tetes, dont Authorization).
@@ -159,22 +159,22 @@ class MistralTTSClient:
             ctype = resp.headers.get("Content-Type", "?")
             raise MistralTTSError(
                 f"API Mistral HTTP {resp.status_code} ({ctype}, {len(resp.content)} o) "
-                f"sur /v1/audio/speech \u2014 corps non journalis\u00e9")
-        # non-stream -> JSON {"audio_data": base64} ; stream -> SSE (non utilis\u00e9 ici)
+                f"sur /v1/audio/speech — corps non journalisé")
+        # non-stream -> JSON {"audio_data": base64} ; stream -> SSE (non utilisé ici)
         ctype = resp.headers.get("Content-Type", "")
         if "application/json" in ctype:
             try:
                 data = resp.json()
             except ValueError as exc:
-                raise MistralTTSError("r\u00e9ponse 200 non-JSON de /v1/audio/speech "
+                raise MistralTTSError("réponse 200 non-JSON de /v1/audio/speech "
                                       f"({resp.headers.get('Content-Type', '?')})") from exc
             b64 = data.get("audio_data")
             if not b64:
-                # on ne cite que les cles, pas les valeurs (audio_data peut \u00eatre gros)
-                raise MistralTTSError("r\u00e9ponse sans audio_data "
+                # on ne cite que les cles, pas les valeurs (audio_data peut être gros)
+                raise MistralTTSError("réponse sans audio_data "
                                       f"(cles: {sorted(data)[:10]})")
             return base64.b64decode(b64)
-        # r\u00e9ponse binaire directe (certains proxys) : on la prend telle quelle
+        # réponse binaire directe (certains proxys) : on la prend telle quelle
         return resp.content
 
     async def list_tts_models(self) -> list[str]:
@@ -203,7 +203,7 @@ class MistralTTSClient:
         return models
 
     async def list_voices(self, page_size: int = 100) -> list[MistralVoice]:
-        """GET /v1/audio/voices (pagin\u00e9) -> voix preset + custom du workspace."""
+        """GET /v1/audio/voices (paginé) -> voix preset + custom du workspace."""
         voices: list[MistralVoice] = []
         cursor = None
         for _ in range(10):  # plafond de pages
@@ -215,15 +215,15 @@ class MistralTTSClient:
             except httpx.HTTPError as exc:
                 raise MistralTTSError(f"GET /v1/audio/voices inaccessible : {exc}") from exc
             if resp.status_code == 401:
-                raise MistralTTSError("cl\u00e9 API invalide ou expir\u00e9e (401) sur /v1/audio/voices")
+                raise MistralTTSError("clé API invalide ou expirée (401) sur /v1/audio/voices")
             if resp.status_code != 200:
                 raise MistralTTSError(
                     f"GET /v1/audio/voices -> HTTP {resp.status_code} "
-                    f"({resp.headers.get('Content-Type', '?')}, corps non journalis\u00e9)")
+                    f"({resp.headers.get('Content-Type', '?')}, corps non journalisé)")
             try:
                 data = resp.json()
             except ValueError as exc:
-                raise MistralTTSError("GET /v1/audio/voices -> r\u00e9ponse non-JSON") from exc
+                raise MistralTTSError("GET /v1/audio/voices -> réponse non-JSON") from exc
             page = data.get("result", data) if isinstance(data, dict) else data
             items = page.get("data", []) if isinstance(page, dict) else []
             for v in items:
@@ -250,6 +250,6 @@ class MistralTTSClient:
 
 
 def preset_voice_options() -> list[tuple[str, str]]:
-    """[(label, voice_id)] pour un s\u00e9lecteur, tri\u00e9 par langue puis nom."""
+    """[(label, voice_id)] pour un sélecteur, trié par langue puis nom."""
     return [(label, vid) for label, (vid, _lang) in
             sorted(PRESET_VOICES.items(), key=lambda kv: (kv[1][1], kv[0]))]

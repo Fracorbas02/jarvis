@@ -1,12 +1,12 @@
 """Tests du TTS API Mistral (jarvis.mistral_tts) contre un mock HTTP local.
 
-Valide sans r\u00e9seau ni cl\u00e9 r\u00e9elle :
-- save/load de la cl\u00e9 API locale (mistral.json, chmod 0600, env prioritaire) ;
-- POST /v1/audio/speech -> d\u00e9codage base64 de audio_data, payload attendu
+Valide sans réseau ni clé réelle :
+- save/load de la clé API locale (mistral.json, chmod 0600, env prioritaire) ;
+- POST /v1/audio/speech -> décodage base64 de audio_data, payload attendu
   (model, input, voice_id, response_format) ;
-- gestion des erreurs HTTP (401 cl\u00e9 invalide, 404 voix/mod\u00e8le inconnu, 403) ;
+- gestion des erreurs HTTP (401 clé invalide, 404 voix/modèle inconnu, 403) ;
 - GET /v1/audio/voices -> liste de voix preset/custom ;
-- config : [voice.tts_api] pars\u00e9 depuis un TOML.
+- config : [voice.tts_api] parsé depuis un TOML.
 
 Lancement : uv run pytest tests/test_mistral_tts.py -v
 """
@@ -58,7 +58,7 @@ class Handler(BaseHTTPRequestHandler):
             if body.get("input") == "MODERE":
                 self._json({"message": "content moderated"}, code=403)
                 return
-            # on v\u00e9rifie le contrat et on renvoie l'audio en base64
+            # on vérifie le contrat et on renvoie l'audio en base64
             assert body.get("model"), "model manquant"
             assert body.get("input"), "input manquant"
             Handler.last_payload = body
@@ -85,7 +85,7 @@ class Handler(BaseHTTPRequestHandler):
                  "languages": ["fr"], "gender": "female", "type": "preset"},
                 {"id": "gb_jane_neutral", "name": "Jane", "slug": "gb_jane_neutral",
                  "languages": ["en-gb"], "gender": "female", "type": "preset"},
-                {"id": "cl_abc123", "name": "Ma voix clon\u00e9e",
+                {"id": "cl_abc123", "name": "Ma voix clonée",
                  "languages": ["fr"], "gender": "", "type": "custom"},
             ], "next": None}})
             return
@@ -107,8 +107,8 @@ def test_api_key_storage(tmp_path, monkeypatch):
     p = save_api_key("cle-secrete-xyz")
     assert has_api_key() and load_api_key() == "cle-secrete-xyz"
     mode = stat.S_IMODE(p.stat().st_mode)
-    assert mode == 0o600, f"mistral.json doit \u00eatre 0600, pas {oct(mode)}"
-    # le contenu ne doit pas contenir la cl\u00e9 en clair dans un autre fichier
+    assert mode == 0o600, f"mistral.json doit être 0600, pas {oct(mode)}"
+    # le contenu ne doit pas contenir la clé en clair dans un autre fichier
     delete_api_key()
     assert not has_api_key()
     # env prioritaire sur le fichier
@@ -140,7 +140,7 @@ def test_synthesize_decodes_base64():
                 await c.aclose()
         audio = asyncio.run(go())
         assert audio == FAKE_AUDIO
-        # le payload envoy\u00e9 respecte le contrat de l'API
+        # le payload envoyé respecte le contrat de l'API
         assert Handler.last_payload["model"] == "voxtral-mini-tts-2603"
         assert Handler.last_payload["input"] == "Bonjour Jarvis"
         assert Handler.last_payload["voice_id"] == "voice_592"
@@ -156,7 +156,7 @@ def test_synthesize_errors():
     try:
         async def go():
             out = {}
-            # mauvaise cl\u00e9 -> 401
+            # mauvaise clé -> 401
             c = MistralTTSClient("mauvaise", base_url=f"http://127.0.0.1:{port}")
             try:
                 await c.synthesize("x")
@@ -172,7 +172,7 @@ def test_synthesize_errors():
                 out["404"] = "404" in str(e)
             finally:
                 await c.aclose()
-            # texte vide -> erreur locale avant requ\u00eate
+            # texte vide -> erreur locale avant requête
             c = MistralTTSClient("test-key-123", base_url=f"http://127.0.0.1:{port}")
             try:
                 await c.synthesize("   ")
@@ -194,14 +194,14 @@ def test_synthesize_no_key_raises():
         try:
             await c.synthesize("x")
         except MistralTTSError as e:
-            return "cl\u00e9" in str(e)
+            return "clé" in str(e)
         finally:
             await c.aclose()
         return False
-    # le constructeur l\u00e8ve d\u00e9j\u00e0 sur cl\u00e9 vide
+    # le constructeur lève déjà sur clé vide
     try:
         MistralTTSClient("  ", base_url="http://127.0.0.1:1")
-        raise AssertionError("devait lever sur cl\u00e9 vide")
+        raise AssertionError("devait lever sur clé vide")
     except MistralTTSError:
         pass
 
@@ -220,7 +220,7 @@ def test_list_voices():
         ids = [v.id for v in voices]
         assert "voice_592" in ids and "gb_jane_neutral" in ids and "cl_abc123" in ids
         custom = [v for v in voices if v.kind == "custom"]
-        assert custom and custom[0].name == "Ma voix clon\u00e9e"
+        assert custom and custom[0].name == "Ma voix clonée"
         fr = [v for v in voices if "fr" in v.language]
         assert fr
     finally:
@@ -348,7 +348,7 @@ def test_config_tts_api_toml(tmp_path):
     assert cfg.tts_api.model == "voxtral-tts-2603"
     assert cfg.tts_api.voice_id == "gb_jane_neutral"
     assert cfg.tts_api.response_format == "wav"
-    assert cfg.tts_api.base_url == "https://api.mistral.ai"  # d\u00e9faut conserv\u00e9
+    assert cfg.tts_api.base_url == "https://api.mistral.ai"  # défaut conservé
 
 
 def test_config_tts_api_default_disabled(tmp_path):
@@ -357,7 +357,7 @@ def test_config_tts_api_default_disabled(tmp_path):
     cfg_file.write_text("[llm]\nbase_url = \"http://127.0.0.1:9931/v1\"\n",
                          encoding="utf-8")
     cfg = load_config(cfg_file)
-    assert cfg.tts_api.enabled is False  # off par d\u00e9faut -> TTS local
+    assert cfg.tts_api.enabled is False  # off par défaut -> TTS local
 
 
 if __name__ == "__main__":

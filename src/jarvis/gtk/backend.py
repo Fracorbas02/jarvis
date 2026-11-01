@@ -1,12 +1,12 @@
-"""Pont asyncio pour l'UI GTK4 : boucle d\u00e9di\u00e9e sur un thread + file d'\u00e9v\u00e9nements.
+"""Pont asyncio pour l'UI GTK4 : boucle dédiée sur un thread + file d'événements.
 
-Même architecture que desktop/controller.py (thread asyncio d\u00e9di\u00e9 + queue
-thread-safe), adapt\u00e9 \u00e0 GTK : le thread GTK d\u00e9pose des coroutines via
-run_coroutine_threadsafe et lit la file d'\u00e9v\u00e9nements avec GLib.idle_add.
+Même architecture que desktop/controller.py (thread asyncio dédié + queue
+thread-safe), adapté à GTK : le thread GTK dépose des coroutines via
+run_coroutine_threadsafe et lit la file d'événements avec GLib.idle_add.
 
-R\u00e9utilise le c\u0153ur existant (config + LLMClient + McpToolProvider + Agent)
+Réutilise le cœur existant (config + LLMClient + McpToolProvider + Agent)
 sans passer par GuiBackend, pour avoir tous les callbacks du tour (on_tool_result
-avec statut/dur\u00e9e, que GuiBackend ne forward pas) :
+avec statut/durée, que GuiBackend ne forward pas) :
 
   {"type": "reasoning",    "text": ...}
   {"type": "content",      "text": ...}
@@ -16,9 +16,9 @@ avec statut/dur\u00e9e, que GuiBackend ne forward pas) :
   {"type": "done",         "reply": ..., "trace": {...}}
   {"type": "error",        "message": ...}
 
-+ sessions persistantes (SessionStore), statut/d\u00e9marrage du llama-server
-(gui.server), contexte r\u00e9el (GET /slots), r\u00e9glages UI persist\u00e9s dans
-~/.config/jarvis/ui.json (th\u00e8me, ctx_size, gpu, tts).
++ sessions persistantes (SessionStore), statut/démarrage du llama-server
+(gui.server), contexte réel (GET /slots), réglages UI persistés dans
+~/.config/jarvis/ui.json (thème, ctx_size, gpu, tts).
 """
 
 from __future__ import annotations
@@ -80,9 +80,9 @@ def state_dir() -> Path:
 
 
 async def server_ctx_usage(base_url: str, timeout: float = 3.0) -> dict:
-    """GET /props + /slots de llama-server : usage r\u00e9el du contexte.
+    """GET /props + /slots de llama-server : usage réel du contexte.
 
-    Retourne {"n_ctx": int|None, "used": int, "free": int}. Ne l\u00e8ve jamais.
+    Retourne {"n_ctx": int|None, "used": int, "free": int}. Ne lève jamais.
     """
     out: dict = {"n_ctx": None, "used": 0, "free": 0}
     root = base_url.rstrip("/")
@@ -108,7 +108,7 @@ async def server_ctx_usage(base_url: str, timeout: float = 3.0) -> dict:
 
 
 class GtkBackend:
-    """C\u0153ur async de l'UI GTK : config + LLM + MCP + Agent + sessions."""
+    """Cœur async de l'UI GTK : config + LLM + MCP + Agent + sessions."""
 
     def __init__(self, config_path: str | None = None):
         self.config_path = config_path
@@ -157,9 +157,11 @@ class GtkBackend:
 
     async def _astart(self) -> None:
         try:
+            from ..voice import cleanup_recordings
+            cleanup_recordings(keep=1)
             if self.cfg.mcp_servers:
                 await self.tools.start()
-            # reprise de la derni\u00e8re session comme au CLI
+            # reprise de la dernière session comme au CLI
             self.session_id = self.sessions.latest_id()
             if self.session_id:
                 try:
@@ -278,6 +280,24 @@ class GtkBackend:
         self.events.put({"type": "session_loaded", "session_id": sid,
                          "history_len": len(history)})
 
+    def delete_session(self, sid: str) -> None:
+        """Supprime une conversation. Si c'est la session courante, le contexte
+        du modèle est réinitialisé (nouvelle session vide)."""
+        self._run(self._adelete(sid))
+
+    async def _adelete(self, sid: str) -> None:
+        ok = self.sessions.delete(sid)
+        if sid == self.session_id:
+            # reset contexte : nouvelle session vide (comme Ctrl+N)
+            self.history.clear()
+            self.session_id = self.sessions.new_id()
+            self._save_session()
+            self.events.put({"type": "session_new", "session_id": self.session_id,
+                             "history_len": 0, "deleted": sid})
+        self.events.put({"type": "session_deleted", "session_id": sid, "ok": ok})
+        self.events.put({"type": "sessions_list",
+                         "sessions": self.sessions.list(limit=50)})
+
     def list_sessions(self) -> None:
         self._run(self._alist_sessions())
 
@@ -372,6 +392,43 @@ class GtkBackend:
 
     # ---------- voix ----------
 
+    def refresh_stt_status(self) -> None:
+        self._run(self._astt_status())
+
+    async def _astt_status(self) -> None:
+        from ..voice import voice_server_status
+        st = await voice_server_status("stt", self.cfg.voice.stt)
+        self.events.put({"type": "stt_status", "state": st.state, "host": st.host,
+                         "port": st.port, "detail": st.detail, "healthy": st.healthy,
+                         "protocol": self.cfg.voice.stt.protocol,
+                         "binary": self.cfg.voice.stt.binary,
+                         "model": self.cfg.voice.stt.model})
+
+    def start_stt_server(self) -> None:
+        self._run(self._astt_start())
+
+    async def _astt_start(self) -> None:
+        from ..voice import start_voice_server
+        st = await start_voice_server("stt", self.cfg.voice.stt)
+        self.events.put({"type": "stt_status", "state": st.state, "host": st.host,
+                         "port": st.port, "detail": st.detail, "healthy": st.healthy,
+                         "protocol": self.cfg.voice.stt.protocol,
+                         "binary": self.cfg.voice.stt.binary,
+                         "model": self.cfg.voice.stt.model})
+
+    def stop_stt_server(self) -> None:
+        self._run(self._astt_stop())
+
+    async def _astt_stop(self) -> None:
+        from ..voice import stop_voice_server
+        st = await stop_voice_server("stt", self.cfg.voice.stt)
+        self.events.put({"type": "stt_status", "state": st.state, "host": st.host,
+                         "port": st.port, "detail": st.detail, "healthy": st.healthy,
+                         "protocol": self.cfg.voice.stt.protocol,
+                         "binary": self.cfg.voice.stt.binary,
+                         "model": self.cfg.voice.stt.model})
+
+
     async def _transcribe_path(self, path, on_status=None) -> str:
         """Transcription d'un WAV via le serveur STT, toujours par la même
         cascade (STTClient : route batch -> chat multimodal -> WS /v1/realtime)."""
@@ -442,6 +499,8 @@ class GtkBackend:
             if seconds and seconds > 0:
                 path = await record_wav(seconds, vcfg)
             else:
+                # VAD auto-calibré en direct (1re seconde du flux = bruit de fond) :
+                # pas de mesure séparée, le début de parole n'est pas mangé.
                 path = await record_wav_vad(vcfg, max_seconds=60.0, on_status=_phase)
             text = await self._transcribe_path(path, on_status=_phase)
             self.events.put({"type": "stt_done", "text": text})
@@ -453,7 +512,7 @@ class GtkBackend:
                              "message": f"erreur interne STT : {type(exc).__name__}: {exc}"})
 
     def test_mic(self, device: str | None = None) -> None:
-        """Enregistrement de test (0.5 s) pour v\u00e9rifier l'autorisation micro."""
+        """Enregistrement de test (0.5 s) pour vérifier l'autorisation micro."""
         self._run(self._atest_mic(device))
 
     async def _atest_mic(self, device: str | None) -> None:
@@ -678,7 +737,7 @@ class GtkBackend:
     # ---------- réglages ----------
 
     def list_input_devices(self) -> None:
-        """Liste les cartes son d'entr\u00e9e (arecord -L) -> \u00e9v\u00e9nement mic_devices."""
+        """Liste les cartes son d'entrée (arecord -L) -> événement mic_devices."""
         self._run(self._alist_mic())
 
     @staticmethod
@@ -709,7 +768,7 @@ class GtkBackend:
         import re
         import shutil
         import subprocess
-        devices: list[tuple[str, str]] = [("default", "Micro par d\u00e9faut du syst\u00e8me")]
+        devices: list[tuple[str, str]] = [("default", "Micro par défaut du système")]
         error = ""
         if shutil.which("arecord"):
             try:
@@ -724,22 +783,22 @@ class GtkBackend:
                         devices.append((cur, cur))
                     elif cur and line.startswith((" ", "\t")):
                         desc = line.strip()
-                        # premi\u00e8re ligne descriptive = nom de la carte (ex. "HDA Intel PCH, ...")
+                        # première ligne descriptive = nom de la carte (ex. "HDA Intel PCH, ...")
                         if devices[-1][1] == cur and desc and not desc.startswith(
                                 ("Discard", "Direct", "Hardware", "Default", "Sysdefault")):
-                            devices[-1] = (cur, f"{cur} \u2014 {desc}")
+                            devices[-1] = (cur, f"{cur} — {desc}")
             except Exception as exc:  # noqa: BLE001
-                error = f"arecord -L a \u00e9chou\u00e9 : {exc}"
+                error = f"arecord -L a échoué : {exc}"
         else:
-            error = "arecord indisponible (alsa-utils non install\u00e9)"
-        # sources PipeWire en compl\u00e9ment (utile sans arecord, et pour choisir
+            error = "arecord indisponible (alsa-utils non installé)"
+        # sources PipeWire en complément (utile sans arecord, et pour choisir
         # explicitement une source : pactl list short sources)
         try:
             devices += self._pactl_sources()
         except Exception as exc:  # noqa: BLE001
             error = (error + " ; " if error else "") + f"pactl indisponible : {exc}"
         if len(devices) == 1 and error:
-            error += " \u2014 aucun micro d\u00e9tect\u00e9 (installe alsa-utils ou pipewire/pulseaudio)"
+            error += " — aucun micro détecté (installe alsa-utils ou pipewire/pulseaudio)"
         self.events.put({"type": "mic_devices", "devices": devices, "error": error})
 
     def apply_gpu(self, device: str) -> dict:

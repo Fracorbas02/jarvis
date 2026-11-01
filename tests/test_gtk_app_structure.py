@@ -1,9 +1,9 @@
-"""Test de structure de jarvis.gtk.app sans GTK install\u00e9.
+"""Test de structure de jarvis.gtk.app sans GTK installé.
 
 Un faux module `gi` (types factices) permet d'importer app.py et de valider :
-- les points d'entr\u00e9e (main, JarvisApp, JarvisWindow) ;
+- les points d'entrée (main, JarvisApp, JarvisWindow) ;
 - que main() parse --config et construit l'application ;
-- que JarvisWindow d\u00e9finit bien les handlers attendus (_on_launch, _dispatch\u2026).
+- que JarvisWindow définit bien les handlers attendus (_on_launch, _dispatch…).
 
 Lancement : python3 tests/test_gtk_app_structure.py
 """
@@ -45,7 +45,7 @@ def _fake_gi():
 def main() -> int:
     gi, repo = _fake_gi()
     with mock.patch.dict(sys.modules, {"gi": gi, "gi.repository": repo}):
-        # widgets.py charge du CSS au niveau module via _css() appel\u00e9 dans app
+        # widgets.py charge du CSS au niveau module via _css() appelé dans app
         import jarvis.gtk.app as gtk_app
 
         assert hasattr(gtk_app, "main")
@@ -60,7 +60,7 @@ def main() -> int:
                         "_toast", "_on_reset_context", "_do_reset", "_on_toggle_sidebar",
                         "_on_split_sidebar_changed", "_fill_conv_list", "_on_conv_row_activated",
                         "_dispatch", "_on_server_status", "_on_turn_done",
-                        "_replay_history", "_fill_tools_group"):
+                        "_replay_history", "_fill_tools_group", "_on_delete_conv"):
             assert hasattr(gtk_app.JarvisWindow, handler), handler
         import inspect
         src = inspect.getsource(gtk_app.JarvisWindow._fill_tools_group)

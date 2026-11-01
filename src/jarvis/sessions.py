@@ -72,3 +72,12 @@ class SessionStore:
     def latest_id(self) -> str | None:
         sessions = self.list(limit=1)
         return sessions[0]["id"] if sessions else None
+
+    def delete(self, sid: str) -> bool:
+        """Supprime le fichier de session. Retourne True si supprimé."""
+        path = self._path(sid)
+        try:
+            path.unlink()
+            return True
+        except OSError:
+            return False
