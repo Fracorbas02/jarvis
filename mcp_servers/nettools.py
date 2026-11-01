@@ -52,6 +52,18 @@ def _check_url_ssrf(url: str, allow_private: bool = False) -> str | None:
     return None
 
 
+_HOST_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9.:_%-]*")
+
+
+def _check_host(host: str) -> str | None:
+    """Valide un hôte/cible passé en argument positionnel à un binaire externe
+    (ping, dig, whois...) : jamais de valeur commençant par '-' (sinon prise
+    pour un flag : --help, --output=..., etc.), caractères sûrs uniquement."""
+    if not host or not _HOST_RE.fullmatch(host):
+        return f"ERREUR: hôte invalide ({host!r})."
+    return None
+
+
 def _run(cmd: list[str], timeout: float = 15.0) -> str:
     if shutil.which(cmd[0]) is None:
         return f"ERREUR: '{cmd[0]}' introuvable dans PATH"
@@ -68,14 +80,25 @@ def _run(cmd: list[str], timeout: float = 15.0) -> str:
 @mcp.tool()
 def ping(host: str, count: int = 4) -> str:
     """Ping ICMP vers un hôte. Retourne la sortie brute de ping."""
+    err = _check_host(host)
+    if err:
+        return err
     return _run(["ping", "-c", str(max(1, min(count, 10))), host])
 
 
 @mcp.tool()
 def dig(query: str, record: str = "A", server: str | None = None) -> str:
     """Requête DNS via dig. record: A, AAAA, MX, TXT, PTR... server: résolveur optionnel."""
+    err = _check_host(query)
+    if err:
+        return err
+    if not re.fullmatch(r"[A-Za-z0-9]{1,15}", record or ""):
+        return f"ERREUR: type d'enregistrement invalide ({record!r})."
     cmd = ["dig", "+noall", "+answer", query, record]
     if server:
+        serr = _check_host(server)
+        if serr:
+            return serr
         cmd.append(f"@{server}")
     return _run(cmd)
 
@@ -83,12 +106,18 @@ def dig(query: str, record: str = "A", server: str | None = None) -> str:
 @mcp.tool()
 def traceroute(host: str) -> str:
     """Traceroute vers un hôte."""
+    err = _check_host(host)
+    if err:
+        return err
     return _run(["traceroute", "-w", "2", "-q", "1", host], timeout=60.0)
 
 
 @mcp.tool()
 def whois(query: str) -> str:
     """WHOIS d'un domaine ou d'une IP (enregistrement, registrar, dates)."""
+    err = _check_host(query)
+    if err:
+        return err
     return _run(["whois", query], timeout=30.0)
 
 
@@ -122,6 +151,11 @@ def tls_info(host: str, port: int = 443) -> str:
     SANs, algorithme de signature. Utile pour surveiller l'expiration."""
     if shutil.which("openssl") is None:
         return "ERREUR: 'openssl' introuvable dans PATH"
+    err = _check_host(host)
+    if err:
+        return err
+    if not 1 <= port <= 65535:
+        return f"ERREUR: port invalide ({port})."
     try:
         proc = subprocess.run(
             ["openssl", "s_client", "-connect", f"{host}:{port}", "-servername", host],
@@ -163,7 +197,8 @@ def bandwidth_test(server: str, duration: int = 10) -> str:
     """Test de débit via iperf3 (client TCP, upload+download) vers un serveur
     iperf3 -s que tu contrôles. server: hôte OBLIGATOIRE (aucun serveur public
     n'est contacté par défaut). duration: secondes par sens (max 30)."""
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.:_-]*", server or ""):
+    err = _check_host(server or "")
+    if err or not server:
         return "ERREUR: server requis (hôte d'un iperf3 -s, ex: 192.168.1.10)."
     if shutil.which("iperf3") is None:
         return "ERREUR: 'iperf3' introuvable dans PATH"

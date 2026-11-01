@@ -7,6 +7,7 @@ from __future__ import annotations
 import difflib
 import json
 import re
+import signal
 
 try:
     from mcp.server.mcpserver import MCPServer as Server  # SDK MCP >= 2
@@ -69,11 +70,24 @@ def json_query(json_text: str, path: str = "") -> str:
     return str(value)
 
 
+_REGEX_TIMEOUT = 2.0  # secondes max d'exécution de la regex (anti-ReDoS)
+_REGEX_MAX_TEXT = 2_000  # texte réduit : un pattern catastrophique reste borné
+
+
+class _RegexTimeout(Exception):
+    pass
+
+
+def _regex_alarm(signum, frame):
+    raise _RegexTimeout()
+
+
 @mcp.tool()
 def regex_test(pattern: str, text: str, flags: str = "") -> str:
     """Teste une regex Python sur un texte : nombre de matchs, et pour chaque
     match les groupes capturés. flags: 'i' (insensible), 'm' (multiligne), 's'
-    (dotall), combinaisons 'im'. text tronqué à 20000 caractères."""
+    (dotall), combinaisons 'im'. text tronqué à 2000 caractères, exécution
+    plafonnée à 2 s (protection contre les regex à backtracking catastrophique)."""
     flag_map = {"i": re.IGNORECASE, "m": re.MULTILINE, "s": re.DOTALL}
     fl = 0
     for c in flags.lower():
@@ -81,12 +95,25 @@ def regex_test(pattern: str, text: str, flags: str = "") -> str:
             fl |= flag_map[c]
         else:
             return f"ERREUR: flag '{c}' inconnu (i, m, s)."
-    text = text[:_MAX]
+    text = text[:_REGEX_MAX_TEXT]
     try:
         rx = re.compile(pattern, fl)
     except re.error as exc:
         return f"ERREUR: regex invalide ({exc})"
-    matches = list(rx.finditer(text))
+    # finditer en boucle avec alarma SIGALRM : un pattern type (a+)+$ sur un
+    # texte long bloquerait sinon le process stdio indéfiniment (ReDoS)
+    try:
+        old = signal.signal(signal.SIGALRM, _regex_alarm)
+        signal.setitimer(signal.ITIMER_REAL, _REGEX_TIMEOUT)
+        matches = list(rx.finditer(text))
+    except _RegexTimeout:
+        return (f"ERREUR: regex interrompue après {_REGEX_TIMEOUT:.0f}s "
+                f"(backtracking trop coûteux — simplifie le pattern).")
+    except re.error as exc:
+        return f"ERREUR: regex invalide ({exc})"
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old)
     if not matches:
         return f"0 match pour {pattern!r}."
     out = [f"{len(matches)} match(s) pour {pattern!r}:"]

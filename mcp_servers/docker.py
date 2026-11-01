@@ -65,6 +65,10 @@ def container_logs(name: str, lines: int = 100, since: str = "1h") -> str:
     err = _check_name(name)
     if err:
         return err
+    # since part tel quel dans l'argv : on n'accepte qu'une fenêtre stricte
+    # (durée Go ou date ISO), jamais un flag ou une option déguisée
+    if not re.fullmatch(r"(?:\d+(?:\.\d+)?(?:ns|us|ms|s|m|h)|\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?)?|today|yesterday|all)", since or ""):
+        return f"ERREUR: since invalide ({since!r}) — ex: '10m', '1h', '2026-01-01', 'today'."
     lines = max(1, min(lines, 500))
     return _run(["logs", "--tail", str(lines), "--since", since, name], timeout=60.0)
 
