@@ -334,9 +334,14 @@ def _code_card(code: str, lang: str) -> Gtk.Widget:
     lbl.set_ellipsize(Pango.EllipsizeMode.NONE)
     lbl.set_single_line_mode(False)
     lbl.set_max_width_chars(-1)
-    # scroll horizontal si une ligne dépasse la largeur de la bulle
+    # scroll horizontal si une ligne dépasse la largeur de la bulle.
+    # propagate_natural_height + vscroll AUTOMATIC : la hauteur MINIMALE de la
+    # carte reste faible (le label ne wrappe pas, sinon min = hauteur totale du
+    # code -> warning "Trying to measure MessageBox ... needs at least N" en
+    # boucle), tout en prenant sa hauteur naturelle quand il y a la place.
     scroll = Gtk.ScrolledWindow(hexpand=True)
-    scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+    scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+    scroll.set_propagate_natural_height(True)
     scroll.set_child(lbl)
     card.append(scroll)
     return card
@@ -460,10 +465,15 @@ def _render_block(parent: Gtk.Box, b, link_defs: dict, footnotes: dict,
                 lbl.set_hexpand(True)  # la cellule remplit sa colonne, le texte wrappe
                 lbl.add_css_class("jarvis-md-th" if r == 0 else "jarvis-md-td")
                 grid.attach(lbl, c, r, 1, 1)
-        # jamais de scrollbar horizontale : le tableau tient dans la bulle,
-        # les cellules longues wrappent (largeur mini d'une colonne = plus long mot)
+        # ScrolledWindow horizontal NEVER (le tableau tient dans la bulle, les
+        # cellules wrappent) + vertical AUTOMATIC avec propagate_natural_height :
+        # la hauteur minimale reste faible (sinon un label wrappé mesuré à sa
+        # largeur min ~1 caractère donne une hauteur min délirante -> warning
+        # "Trying to measure MessageBox ... needs at least N" en boucle), et la
+        # hauteur naturelle = tableau complet wrappé.
         scroll = Gtk.ScrolledWindow(hexpand=True)
-        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.NEVER)
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_propagate_natural_height(True)
         scroll.set_child(grid)
         parent.append(scroll)
     elif b.kind == "hr":
