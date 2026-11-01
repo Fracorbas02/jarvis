@@ -430,7 +430,7 @@ def test_record_wav_vad_fin_de_parole() -> None:
         import tempfile
         out = Path(tempfile.mkdtemp()) / "vad.wav"
         p = _run(voice.record_wav_vad(cfg, out_path=out, max_seconds=60.0,
-                                      silence_seconds=0.25, silence_rms=300.0,
+                                      silence_seconds=0.25, silence_rms=800.0,
                                       min_seconds=0.5))
         import wave
         with wave.open(str(p)) as w:

@@ -994,7 +994,7 @@ async def record_wav(seconds: float, voice_cfg: VoiceConfig,
 async def record_wav_vad(voice_cfg: VoiceConfig, out_path: Path | None = None,
                          max_seconds: float = 60.0,
                          silence_seconds: float = 1.2,
-                         silence_rms: float = 300.0,
+                         silence_rms: float = 800.0,
                          min_seconds: float = 0.8,
                          on_chunk=None, on_status=None,
                          noise_floor: float | None = None) -> Path:
@@ -1051,11 +1051,14 @@ async def record_wav_vad(voice_cfg: VoiceConfig, out_path: Path | None = None,
     # parole) : pendant la 1re seconde, on estime le bruit de fond (RMS min des
     # blocs) et le seuil devient max(silence_rms, floor*2.5). Avant calibration,
     # seuil fixe. noise_floor fourni de l'extérieur a priorité.
+    # Seuil FIXE (pas d'auto-calib : le min des blocs sur 1 s tombe dans un trou
+    # de silence et effondre le seuil -> le VAD ne détecte plus jamais la fin).
+    # noise_floor fourni de l'extérieur reste prioritaire si présent.
     floor = noise_floor
     threshold = silence_rms
     if floor is not None:
         threshold = max(silence_rms, floor * 2.5)
-    calib_until = 1.0  # s
+    calib_until = 0.0
     calib_min = None
     try:
         deadline = asyncio.get_running_loop().time() + max_seconds
@@ -1071,8 +1074,9 @@ async def record_wav_vad(voice_cfg: VoiceConfig, out_path: Path | None = None,
                     pass
             rms = _pcm_rms(chunk)
             total += len(chunk) / 2 / SAMPLE_RATE
-            if total <= 3.0:
-                log.debug("vad bloc t=%.2f rms=%.0f seuil=%.0f heard=%s", total, rms, threshold, heard_speech)
+            if int(total * 2) != int((total - len(chunk) / 2 / SAMPLE_RATE) * 2):
+                log.debug("vad t=%.2f rms=%.0f seuil=%.0f heard=%s silent=%.2f",
+                          total, rms, threshold, heard_speech, silent)
             if floor is None and total <= calib_until:
                 calib_min = rms if calib_min is None else min(calib_min, rms)
                 if total >= calib_until:
@@ -1081,8 +1085,7 @@ async def record_wav_vad(voice_cfg: VoiceConfig, out_path: Path | None = None,
                     log.debug("vad auto-calib: floor=%.0f seuil=%.0f", floor, threshold)
             if rms >= threshold:
                 silent = 0.0
-                if rms >= threshold * 2:
-                    heard_speech = True
+                heard_speech = True
             else:
                 silent += len(chunk) / 2 / SAMPLE_RATE
             # on ne coupe que si on a entendu de la parole (sinon on attend max_seconds)
