@@ -257,6 +257,10 @@ class GtkBackend:
     def _save_session(self) -> None:
         if self.session_id is None:
             self.session_id = self.sessions.new_id()
+        if not self.history:
+            # pas de fichier pour une session sans message : elle n'apparaîtrait
+            # dans la sidebar que comme une entrée "(vide)" parasite
+            return
         try:
             self.sessions.save(self.session_id, self.history)
         except Exception as exc:  # noqa: BLE001
@@ -319,9 +323,15 @@ class GtkBackend:
         self._run(self._anew())
 
     async def _anew(self) -> None:
-        self.history.clear()
-        self.session_id = self.sessions.new_id()
-        self._save_session()
+        # lock + busy : pas de nouvelle session au milieu d'un tour (sinon
+        # l'historique du tour en cours serait écrasé par le history.clear())
+        async with self._lock:
+            if self.busy:
+                self.events.put({"type": "error", "message": "un tour est déjà en cours"})
+                return
+            self.history.clear()
+            self.session_id = self.sessions.new_id()
+            self._save_session()
         self.events.put({"type": "session_new", "session_id": self.session_id,
                          "history_len": 0})
 
@@ -329,13 +339,19 @@ class GtkBackend:
         self._run(self._aload(sid))
 
     async def _aload(self, sid: str) -> None:
-        try:
-            history = self.sessions.load(sid)
-        except Exception as exc:  # noqa: BLE001
-            self.events.put({"type": "error", "message": f"session illisible: {exc}"})
-            return
-        self.session_id = sid
-        self.history = history
+        # lock + busy : le chargement ne doit pas s'intercaler dans un tour
+        # (sinon le prompt de l'utilisateur serait ajouté à la Mauvaise session)
+        async with self._lock:
+            if self.busy:
+                self.events.put({"type": "error", "message": "un tour est déjà en cours"})
+                return
+            try:
+                history = self.sessions.load(sid)
+            except Exception as exc:  # noqa: BLE001
+                self.events.put({"type": "error", "message": f"session illisible: {exc}"})
+                return
+            self.session_id = sid
+            self.history = history
         self.events.put({"type": "session_loaded", "session_id": sid,
                          "history_len": len(history)})
 
@@ -345,23 +361,33 @@ class GtkBackend:
         self._run(self._adelete(sid))
 
     async def _adelete(self, sid: str) -> None:
-        ok = self.sessions.delete(sid)
-        if sid == self.session_id:
-            # reset contexte : nouvelle session vide (comme Ctrl+N)
-            self.history.clear()
-            self.session_id = self.sessions.new_id()
-            self._save_session()
-            self.events.put({"type": "session_new", "session_id": self.session_id,
-                             "history_len": 0, "deleted": sid})
-        self.events.put({"type": "session_deleted", "session_id": sid, "ok": ok})
-        self.events.put({"type": "sessions_list",
-                         "sessions": self.sessions.list(limit=50)})
+        async with self._lock:
+            if self.busy:
+                self.events.put({"type": "error", "message": "un tour est déjà en cours"})
+                return
+            ok = self.sessions.delete(sid)
+            if sid == self.session_id:
+                # reset contexte : nouvelle session vide (comme Ctrl+N)
+                self.history.clear()
+                self.session_id = self.sessions.new_id()
+                self._save_session()
+                self.events.put({"type": "session_new", "session_id": self.session_id,
+                                 "history_len": 0, "deleted": sid})
+            self.events.put({"type": "session_deleted", "session_id": sid, "ok": ok})
+            self.events.put({"type": "sessions_list",
+                             "sessions": self._listed_sessions()})
+
+    def _listed_sessions(self) -> list[dict]:
+        """Sessions affichées dans la sidebar : les sessions vides (count=0,
+        ex. restes "(vide)") sont masquées — supprimer la conversation courante
+        ne doit pas laisser une entrée vide derrière."""
+        return [s for s in self.sessions.list(limit=50) if s.get("count", 0) > 0]
 
     def list_sessions(self) -> None:
         self._run(self._alist_sessions())
 
     async def _alist_sessions(self) -> None:
-        self.events.put({"type": "sessions_list", "sessions": self.sessions.list(limit=50)})
+        self.events.put({"type": "sessions_list", "sessions": self._listed_sessions()})
 
     # ---------- serveur LLM ----------
 

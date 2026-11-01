@@ -68,6 +68,7 @@ class JarvisWindow(Adw.ApplicationWindow):
         self._assistant_box = None
         self._tool_lines: dict[str, Gtk.Label] = {}
         self._busy = False
+        self._loading = False  # chargement de conversation en cours (bloque l'envoi)
         self._status_state = "unknown"
         self._stt_state = "unknown"
         self._stt_state = "unknown"
@@ -1019,6 +1020,9 @@ class JarvisWindow(Adw.ApplicationWindow):
         self.info_popover.popup()
 
     def _on_new_session(self, *_args) -> None:
+        if self._busy:
+            self._toast("Termine le tour en cours avant de changer de conversation")
+            return
         self.backend.new_session()
 
     def _on_toggle_sidebar(self, btn) -> None:
@@ -1072,14 +1076,18 @@ class JarvisWindow(Adw.ApplicationWindow):
         if self._busy:
             self._toast("Termine le tour en cours avant de changer de conversation")
             return
+        # bloque l'envoi pendant le chargement : sinon un prompt envoyé entre le
+        # clic et le session_loaded partirait dans la conversation chargée (le
+        # backend) tout en étant effacé de l'UI par le clear() du session_loaded
+        self._loading = True
         self.backend.load_session(row.sid)
         self.split.set_show_sidebar(False)  # referme la sidebar après choix
 
     def _on_delete_conv(self, sid: str) -> None:
         """Supprime la conversation ; si c'était la courante, le backend reset le
-        contexte (nouvelle session vide) et l'UI est vidée via session_new."""
+        contexte (nouvelle session vide) et l'UI est vidée via session_new.
+        Le toast est affiché sur l'événement session_deleted (résultat réel)."""
         self.backend.delete_session(sid)
-        self._toast("Conversation supprimée")
 
     def _on_reset_context(self, _btn) -> None:
         which = self.reset_target.get_active_id() or "llm"
@@ -1115,6 +1123,9 @@ class JarvisWindow(Adw.ApplicationWindow):
     def _send_turn(self, text: str) -> None:
         if self._busy:
             self._toast("Un tour est déjà en cours")
+            return
+        if self._loading:
+            self._toast("Chargement de la conversation en cours…")
             return
         self.stack.set_visible_child_name("chat")
         self.messages.add(user_message(text))
@@ -1225,6 +1236,7 @@ class JarvisWindow(Adw.ApplicationWindow):
         elif t == "error":
             self.messages.add(error_message(event["message"]))
             self._busy = False
+            self._loading = False
             self._set_busy_ui(False)
         elif t == "stt_recording":
             self._set_chat_hint("Parle…" if not event.get("seconds") else f"Enregistrement… {event['seconds']:.0f}s")
@@ -1280,18 +1292,25 @@ class JarvisWindow(Adw.ApplicationWindow):
                         if event.get("ok")
                         else f"TTS API en erreur : {event.get('message', '')}")
         elif t == "session_new":
+            self._loading = False
             self.messages.clear()
             self._assistant_box = None
             self._toast("Nouvelle conversation")
             self.backend.list_sessions()
         elif t == "session_loaded":
+            self._loading = False
+            self._busy = False
+            self._set_busy_ui(False)
+            self._assistant_box = None  # l'ancienne bulle est retirée de l'UI par clear()
             self.messages.clear()
             self._replay_history()
             self.stack.set_visible_child_name("chat")
             self.backend.list_sessions()
             self.split.set_show_sidebar(False)  # referme la sidebar (notify resynchronise le bouton)
         elif t == "session_deleted":
-            if not event.get("ok"):
+            if event.get("ok"):
+                self._toast("Conversation supprimée")
+            else:
                 self._toast("Suppression impossible (fichier introuvable)")
         elif t == "sessions_list":
             self._fill_conv_list(event["sessions"])
