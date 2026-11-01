@@ -87,6 +87,11 @@ def main() -> int:
         code_src = inspect.getsource(gtk_widgets._code_card)
         assert "set_wrap(False)" in code_src and "WrapMode.NONE" in code_src
         assert "Gtk.PolicyType.AUTOMATIC" in code_src  # scroll horizontal
+        # bouton copier sur les bulles assistant + sélection souris dans les bulles
+        assert hasattr(gtk_widgets.MessageBox, "copy_content")
+        assert "jarvis-msg-copy" in init_src
+        css_src = inspect.getsource(gtk_widgets._css)
+        assert "user-select" in css_src
         # webview assistant : VISIBLE dès la création (hauteur mini 40px) — sinon la
         # bulle assistant disparaît si le 1er rendu markdown est vide/échoué
         assert "self.webview.set_visible(True)" in init_src

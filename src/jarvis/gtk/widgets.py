@@ -118,13 +118,19 @@ def _css() -> None:
         background-color: alpha(@accent_bg_color, 0.25);
         border: 1px solid alpha(@window_fg_color, 0.25);
         border-bottom: 2px solid alpha(@accent_bg_color, 0.8);
-        padding: 7px 12px;
+        padding: 4px 10px;
     }
     .jarvis-md-td {
         border: 1px solid alpha(@window_fg_color, 0.18);
-        padding: 6px 12px;
+        padding: 3px 10px;
     }
     .jarvis-md-table-wrap { border-radius: 10px; }
+    /* sélection souris possible sur tout le contenu des bulles (WebView exclue) */
+    .jarvis-msg-assistant .jarvis-bubble, .jarvis-msg-user .jarvis-bubble {
+        -gtk-user-select: text;
+    }
+    .jarvis-msg-copy { opacity: 0.55; }
+    .jarvis-msg-copy:hover { opacity: 1; }
     .jarvis-md-fn-flash { background-color: alpha(@accent_bg_color, 0.35);
                           border-radius: 6px; }
     .jarvis-md-hr { margin-top: 8px; margin-bottom: 8px;
@@ -444,6 +450,8 @@ def _render_block(parent: Gtk.Box, b, link_defs: dict, footnotes: dict,
                 lbl.set_halign({"l": Gtk.Align.START, "c": Gtk.Align.CENTER,
                                 "r": Gtk.Align.END}.get(a or "l", Gtk.Align.START))
                 lbl.set_hexpand(True)
+                lbl.set_max_width_chars(60)
+                lbl.set_ellipsize(Pango.EllipsizeMode.NONE)
                 lbl.add_css_class("jarvis-md-th" if r == 0 else "jarvis-md-td")
                 grid.attach(lbl, c, r, 1, 1)
         # wrapper arrondi + scroll horizontal si le tableau dépasse
@@ -551,6 +559,17 @@ class MessageBox(Gtk.Box):
 
         self.tools_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         bubble.append(self.tools_box)
+
+        # bouton copier (bulles assistant uniquement) : copie le texte brut markdown
+        if role == "assistant":
+            copy_btn = Gtk.Button(icon_name="edit-copy-symbolic",
+                                  tooltip_text="Copier la réponse",
+                                  valign=Gtk.Align.CENTER)
+            copy_btn.add_css_class("flat")
+            copy_btn.add_css_class("jarvis-msg-copy")
+            copy_btn.set_halign(Gtk.Align.END)
+            copy_btn.connect("clicked", lambda b: self.copy_content())
+            bubble.append(copy_btn)
 
         self.meta_label = Gtk.Label(xalign=0, wrap=True)
         self.meta_label.add_css_class("jarvis-meta")
@@ -769,6 +788,22 @@ class MessageBox(Gtk.Box):
             return
         self.reasoning_row.set_title(summary or "Raisonnement")
         self.reasoning_row.set_expanded(False)
+
+    def copy_content(self) -> None:
+        """Copie le contenu brut (markdown) de la bulle dans le presse-papiers."""
+        text = getattr(self, "_md_buffer", "") or ""
+        try:
+            cb = self.get_clipboard()
+            cb.set_text(text)
+        except Exception:  # noqa: BLE001 — fallback CLI
+            import subprocess
+            for cmd in (["wl-copy"], ["xclip", "-selection", "clipboard"],
+                        ["xsel", "--clipboard", "--input"]):
+                try:
+                    subprocess.run(cmd, input=text.encode(), timeout=3, check=True)
+                    break
+                except Exception:  # noqa: BLE001
+                    continue
 
     def add_tool_line(self, name: str, args: dict, ok: bool | None = None,
                       duration: float | None = None, result_preview: str = "") -> Gtk.Label:
