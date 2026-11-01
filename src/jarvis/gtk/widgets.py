@@ -137,6 +137,7 @@ def _css() -> None:
        ignorée avec une erreur "Theme parser error" au chargement du CSS) */
     .jarvis-msg-copy { opacity: 0.55; }
     .jarvis-msg-copy:hover { opacity: 1; }
+    .jarvis-msg-info { font-weight: 700; font-style: italic; }
     .jarvis-md-fn-flash { background-color: alpha(@accent_bg_color, 0.35);
                           border-radius: 6px; }
     .jarvis-md-hr { margin-top: 8px; margin-bottom: 8px;
@@ -578,11 +579,14 @@ class MessageBox(Gtk.Box):
         if role == "assistant":
             actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
             actions.set_halign(Gtk.Align.END)
-            self.info_btn = Gtk.Button(icon_name="info-symbolic",
+            # label "i" et pas une icône : "info-symbolic" n'existe pas dans
+            # tous les thèmes (absent d'Adwaita) -> bouton vide/invisible
+            self.info_btn = Gtk.Button(label="i",
                                        tooltip_text="Infos de la réponse (tokens, tok/s, durée)",
                                        valign=Gtk.Align.CENTER)
             self.info_btn.add_css_class("flat")
             self.info_btn.add_css_class("jarvis-msg-copy")
+            self.info_btn.add_css_class("jarvis-msg-info")
             self.info_btn.set_visible(False)  # affiché quand des stats sont connues
             self._info_pop = Gtk.Popover()
             self._info_lbl = Gtk.Label(xalign=0, wrap=True, selectable=True)
