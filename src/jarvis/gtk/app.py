@@ -327,7 +327,11 @@ class JarvisWindow(Adw.ApplicationWindow):
         self._entry_bar = bar
         bottom.append(bar)
         bottom.append(spacer_r)
-        bottom.connect("size-allocate", self._on_entry_bar_allocate)
+        # GTK4 : pas de signal "size-allocate" sur Gtk.Box -> on recalcule la largeur
+        # au map de la fenêtre et à chaque changement de taille de la fenêtre
+        self.root_window = None
+        bottom.connect("map", lambda b: self._update_entry_bar_width())
+        self.connect("notify::default-width", lambda *a: self._update_entry_bar_width())
         self.chat_mic = Gtk.Button(icon_name="audio-input-microphone-symbolic",
                                    tooltip_text="Parler à Jarvis (enregistre puis transcrit)")
         self.chat_mic.add_css_class("circular")
@@ -904,9 +908,13 @@ class JarvisWindow(Adw.ApplicationWindow):
         self._set_chat_hint("Parle… (fin de parole détectée automatiquement)")
         self.backend.stt_record_and_transcribe(0.0, device=getattr(self, "mic_device", "default"))
 
-    def _on_entry_bar_allocate(self, _widget, allocation) -> None:
-        """Fixe la largeur de la carte de saisie à 70% de la largeur de la page."""
-        w = max(320, int(allocation.width * 0.70))
+    def _update_entry_bar_width(self) -> None:
+        """Fixe la largeur de la carte de saisie à 70% de la largeur de la fenêtre."""
+        try:
+            w_page = self.get_width() or self.get_allocated_width() or 960
+        except Exception:  # noqa: BLE001
+            w_page = 960
+        w = max(320, int(w_page * 0.70))
         self._entry_bar.set_size_request(w, -1)
 
     def _on_entry_key(self, _ctrl, keyval, _keycode, state) -> bool:
