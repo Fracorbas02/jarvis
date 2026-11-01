@@ -120,6 +120,23 @@ async def amain() -> int:
         ev = backend.events.get_nowait()
         assert ev["type"] == "session_new" and ev["history_len"] == 0, ev
 
+        # suppression de session : session courante -> contexte reset (nouvelle
+        # session vide) + fichier supprimé + événements session_deleted/sessions_list
+        old_sid = backend.session_id
+        await backend._adelete(old_sid)
+        ev1 = backend.events.get_nowait()
+        assert ev1["type"] == "session_new" and ev1.get("deleted") == old_sid, ev1
+        assert backend.history == [] and backend.session_id != old_sid
+        ev2 = backend.events.get_nowait()
+        assert ev2["type"] == "session_deleted" and ev2["ok"], ev2
+        ev3 = backend.events.get_nowait()
+        assert ev3["type"] == "sessions_list", ev3
+        assert not backend.sessions._path(old_sid).exists()
+        # supprimer une session inconnue -> ok=False, pas de reset
+        await backend._adelete("nope-123")
+        e = backend.events.get_nowait()
+        assert e["type"] == "session_deleted" and not e["ok"], e
+
         # réglages UI : thème + ctx_size + gpu
         gtk_backend.save_ui_settings({"theme": "dark", "ctx_size": 32768})
         s = gtk_backend.load_ui_settings()
