@@ -418,7 +418,8 @@ class RealtimeSTTClient:
         else:
             header.append(0x80 | 127)
             header += _struct.pack(">Q", n)
-        mask = b"\x12\x34\x56\x78"
+        import os as _os
+        mask = _os.urandom(4)  # RFC 6455 : masque aléatoire par trame (client -> serveur)
         header += mask
         masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
         writer.write(bytes(header) + masked)

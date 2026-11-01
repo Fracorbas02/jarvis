@@ -96,12 +96,17 @@ class Agent:
                 fn = tc["function"]
                 name = fn["name"]
                 args: dict = {}
+                failed = False
                 try:
                     args = json.loads(fn.get("arguments") or "{}")
                 except json.JSONDecodeError as exc:
                     result = f"ERREUR: arguments JSON invalides: {exc}"
+                    failed = True
                 else:
-                    log.info("outil %s args=%s", name, args)
+                    # loggue le nom de l'outil seulement : les args peuvent contenir
+                    # des secrets (communauté SNMP, tokens...) et le log fichier est
+                    # en DEBUG dans ~/.cache/jarvis/jarvis.log
+                    log.info("outil %s appelé", name)
                     if on_tool_call:
                         on_tool_call(name, args)
                     start = time.perf_counter()
@@ -119,10 +124,14 @@ class Agent:
                         # comme résultat d'outil et peut réagir
                         log.warning("outil %s a levé %s: %s", name, type(exc).__name__, exc)
                         result = f"ERREUR: {type(exc).__name__}: {exc}"
+                        failed = True
                     duration = time.perf_counter() - start
+                    # ok ne se déduit PAS du contenu : un outil qui réussit peut
+                    # renvoyer un texte commençant par "ERREUR" (ex: whois sur un
+                    # domaine inconnu). Seule une exception (ou des args JSON
+                    # invalides) = échec.
                     if on_tool_result:
-                        on_tool_result(name, args,
-                                       not result.startswith("ERREUR"), duration, result)
+                        on_tool_result(name, args, not failed, duration, result)
                 trace.tool_calls.append((name, json.dumps(args, ensure_ascii=False)))
                 history.append({
                     "role": "tool",

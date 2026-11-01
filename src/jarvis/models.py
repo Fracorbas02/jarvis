@@ -122,11 +122,8 @@ def _iter_gguf(root: Path):
     if not root.is_dir():
         return
     for path in sorted(root.rglob("*.gguf")):
-        # le cache HF : modèles--org--name/snapshots/<hash>/fichier.gguf
-        try:
-            path.relative_to(root)
-        except ValueError:
-            continue
+        # un rglob part forcément de root : relative_to ne peut pas échouer,
+        # le try/except ValueError était mort — on yield directement
         yield path
 
 

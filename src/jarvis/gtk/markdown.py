@@ -618,6 +618,7 @@ def highlight_code(code: str, lang: str) -> str:
 # ---------- rendu des équations (matplotlib.mathtext -> PNG) ----------
 
 _MATH_CACHE: dict[str, bytes] = {}
+_MATH_CACHE_MAX = 200  # borné : éviction FIFO au-delà (streaming long)
 
 
 def render_math_png(tex: str, fontsize: float = 15.0, color: str = "#e6edf3") -> bytes | None:
@@ -652,6 +653,8 @@ def render_math_png(tex: str, fontsize: float = 15.0, color: str = "#e6edf3") ->
         fig.savefig(buf, format="png", transparent=True)
         data = buf.getvalue()
         if data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 100:
+            if len(_MATH_CACHE) >= _MATH_CACHE_MAX:
+                _MATH_CACHE.pop(next(iter(_MATH_CACHE)))  # éviction FIFO
             _MATH_CACHE[key] = data
             return data
     except Exception:  # noqa: BLE001 — formule invalide, matplotlib absent...

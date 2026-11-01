@@ -455,7 +455,7 @@ async def _cmd_ttsapi(cfg, console, args: str) -> None:
         return
     console.print(f"[dim]API {tts_api.base_url} · modèle {tts_api.model} · "
                   f"voix {tts_api.voice_id} · format {tts_api.response_format} · "
-                  f"clé: {'env' if __import__('os').environ.get('MISTRAL_API_KEY') else 'mistral.json'} ({len(load_api_key())} car.)[/]")
+                  f"clé: {'env' if __import__('os').environ.get('MISTRAL_API_KEY') else 'mistral.json'}[/]")
     try:
         t0 = time.monotonic()
         client = MistralTTSClient(load_api_key(), base_url=tts_api.base_url,

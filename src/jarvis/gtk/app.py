@@ -1060,10 +1060,19 @@ class JarvisWindow(Adw.ApplicationWindow):
                 self.messages.scroll_to_end()
         elif t == "tool_call":
             if self._assistant_box is not None:
-                self._tool_lines[event["name"]] = self._assistant_box.add_tool_line(
+                # clé = nom + occurrence : 2 appels du même outil dans un tour
+                # ne doivent pas écraser la 1re ligne (restée en ⚡ sinon)
+                n = len([k for k in self._tool_lines
+                         if k == event["name"] or k.startswith(event["name"] + "#")])
+                key = event["name"] if n == 0 else f'{event["name"]}#{n}'
+                self._tool_lines[key] = self._assistant_box.add_tool_line(
                     event["name"], event["args"])
         elif t == "tool_result":
-            lbl = self._tool_lines.pop(event["name"], None)
+            name = event["name"]
+            # retrouve la ligne la plus ancienne de cet outil encore ouverte
+            key = next((k for k in self._tool_lines
+                        if k == name or k.startswith(name + "#")), None)
+            lbl = self._tool_lines.pop(key, None) if key else None
             if lbl is not None and self._assistant_box is not None:
                 import json as _json
                 args_txt = _json.dumps(event["args"], ensure_ascii=False)
@@ -1159,6 +1168,7 @@ class JarvisWindow(Adw.ApplicationWindow):
             if trace.get("error"):
                 box.set_meta(trace["error"])
             box.collapse_reasoning("Raisonnement replié")
+            box.flush_text()  # re-rendu final même si le throttle n'est pas écoulé
         self._tool_lines.clear()
         self._busy = False
         self._set_busy_ui(False)

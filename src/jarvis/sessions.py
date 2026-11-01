@@ -20,6 +20,11 @@ class SessionStore:
         self.dir.mkdir(parents=True, exist_ok=True)
 
     def _path(self, sid: str) -> Path:
+        # hardening : un sid contenant /, \ ou .. permettrait de sortir du
+        # répertoire des sessions (path traversal) si une source externe
+        # (API, import) fournissait le sid un jour
+        if not sid or any(c in sid for c in "/\\") or ".." in sid:
+            raise ValueError(f"sid de session invalide: {sid!r}")
         return self.dir / f"{sid}.json"
 
     @staticmethod

@@ -21,6 +21,7 @@ Le raisonnement du modèle est repliable (Adw.ExpanderRow) et grisé/italique.
 from __future__ import annotations
 
 import sys
+import time as _time
 
 import gi
 
@@ -63,8 +64,10 @@ if WEBKIT_AVAILABLE:
 _HEADING_SIZE = {1: "xx-large", 2: "x-large", 3: "large", 4: "medium",
                  5: "small", 6: "small"}
 
-# cache mémoire des images téléchargées : url -> (bytes, content_type)
+# cache mémoire des images téléchargées : url -> (bytes, content_type), borné
 _IMAGE_CACHE: dict[str, tuple[bytes, str]] = {}
+_IMAGE_CACHE_MAX = 50  # éviction FIFO au-delà (pas de croissance infinie)
+_MD_RENDER_THROTTLE = 0.07  # secondes entre deux re-rendus markdown en streaming
 
 
 def _css() -> None:
@@ -194,11 +197,21 @@ def _load_image_async(url: str, pic: Gtk.Picture, fallback: Gtk.Label) -> None:
 
     def _job() -> None:
         try:
+            from ..netguard import check_url_ssrf
+            # même garde SSRF que les MCP fetch/rss : une URL d'image vient du
+            # LLM (réponse markdown) et ne doit pas pouvoir viser 169.254.169.254
+            # ou une IP privée/loopback
+            err = check_url_ssrf(url)
+            if err:
+                GLib.idle_add(_show_fail)
+                return
             import urllib.request
             req = urllib.request.Request(url, headers={"User-Agent": "jarvis/0.1"})
             with urllib.request.urlopen(req, timeout=15) as r:
                 data = r.read(8 * 1024 * 1024)  # max 8 Mo
                 ctype = r.headers.get("Content-Type", "")
+            if len(_IMAGE_CACHE) >= _IMAGE_CACHE_MAX:
+                _IMAGE_CACHE.pop(next(iter(_IMAGE_CACHE)))  # éviction FIFO
             _IMAGE_CACHE[url] = (data, ctype)
             GLib.idle_add(_show, data, ctype)
         except Exception:  # noqa: BLE001 — réseau coupé, 404, etc.
@@ -518,6 +531,7 @@ class MessageBox(Gtk.Box):
         bubble.set_hexpand(False)
         bubble.append(self.content_box)
         self._md_buffer = ""
+        self._md_last_render = 0.0  # throttle du re-rendu en streaming (~15 Hz)
         self.webview = None
         if role == "assistant" and WEBKIT_AVAILABLE:
             self.webview = self._make_webview()
@@ -566,9 +580,20 @@ class MessageBox(Gtk.Box):
     def append_text(self, fragment: str) -> None:
         """Ajoute un fragment streamé et re-rend tout le Markdown : les
         marqueurs/blocs qui se ferment en cours de route sont pris en compte
-        au fragment suivant."""
+        au fragment suivant. Re-rendu throttlé (~15 Hz comme la CLI) : reparser
+        tout le buffer à chaque token ferait ramer le thread GTK."""
         self._md_buffer += fragment
-        self._render_md(self._md_buffer)
+        now = _time.monotonic()
+        if now - self._md_last_render >= _MD_RENDER_THROTTLE:
+            self._md_last_render = now
+            self._render_md(self._md_buffer)
+
+    def flush_text(self) -> None:
+        """Force le re-rendu du buffer (fin de stream) même si le throttle
+        n'est pas écoulé."""
+        if self._md_buffer:
+            self._md_last_render = 0.0
+            self._render_md(self._md_buffer)
 
     def _render_md(self, text: str) -> None:
         if self.webview is not None:

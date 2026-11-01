@@ -149,9 +149,23 @@ def load_config(path: str | Path | None = None) -> Config:
         cfg.tts_api = TTSAPIConfig(
             **{k: v for k, v in raw_tts_api.items()
                if k in TTSAPIConfig.__dataclass_fields__})
-    for name, spec in raw.get("mcp", {}).get("servers", {}).items():
+    mcp_raw = raw.get("mcp", {})
+    servers_raw = mcp_raw.get("servers", {}) if isinstance(mcp_raw, dict) else {}
+    if not isinstance(servers_raw, dict):
+        raise tomllib.TOMLDecodeError(
+            f"[mcp] servers doit être une table ([mcp.servers.<nom>]...), "
+            f"reçu: {servers_raw!r}.")
+    for name, spec in servers_raw.items():
+        if not isinstance(spec, dict):
+            raise tomllib.TOMLDecodeError(
+                f"[mcp.servers.{name}] doit être une table avec 'command = [...]' "
+                f"(reçu: {spec!r}).")
         cmd = spec.get("command", [])
         if isinstance(cmd, str):
             cmd = [cmd]
+        if not isinstance(cmd, list) or not all(isinstance(c, str) for c in cmd):
+            raise tomllib.TOMLDecodeError(
+                f"[mcp.servers.{name}] command doit être une liste de chaînes "
+                f"(reçu: {cmd!r}).")
         cfg.mcp_servers[name] = list(cmd)
     return cfg

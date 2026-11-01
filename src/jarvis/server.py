@@ -98,6 +98,20 @@ async def start_server(model_path: str | Path, base_url: str,
         gpu_args = choice_args()
     except Exception:  # noqa: BLE001
         pass
+    # garde-fou : un host non-loopback exposerait llama-server sur le réseau
+    # sans clé API (son propre log prévient "no API key is set and CORS allows
+    # all origins"). On refuse, sauf override explicite JARVIS_ALLOW_PUBLIC_LLM=1.
+    import ipaddress as _ip
+    try:
+        _addr = _ip.ip_address(host)
+        public_ip = not (_addr.is_loopback or _addr.is_link_local or _addr.is_unspecified)
+    except ValueError:
+        public_ip = host not in ("localhost", "localhost.localdomain") and not host.endswith(".localhost")
+    if (public_ip or host in ("0.0.0.0", "::")) and not os.environ.get("JARVIS_ALLOW_PUBLIC_LLM"):
+        return ServerStatus("offline", host, port,
+                            detail=(f"host non-loopback refusé ({host}) : llama-server serait "
+                                    f"exposé sans clé API. Utilise 127.0.0.1, ou pose "
+                                    f"JARVIS_ALLOW_PUBLIC_LLM=1 si tu sais ce que tu fais."))
     argv = [
         "llama-server", "-m", str(model_path),
         "--host", host, "--port", str(port),
@@ -108,8 +122,13 @@ async def start_server(model_path: str | Path, base_url: str,
     log = open(_log_path, "ab", buffering=0)
     try:
         log.write(f"\n--- {argv} ---\n".encode())
+        # on ne loggue QUE les variables GPU ajoutées/modifiées, jamais os.environ
+        # complet : NVD_API_KEY/GITHUB_TOKEN/MISTRAL_API_KEY y finiraient en clair
         if env:
-            log.write(f"--- env: {env} ---\n".encode())
+            gpu_only = {k: v for k, v in env.items()
+                        if k not in os.environ or os.environ.get(k) != v}
+            if gpu_only:
+                log.write(f"--- env (GPU uniquement): {gpu_only} ---\n".encode())
         _last_model = str(model_path)
         _proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL,
                                  stdout=log, stderr=subprocess.STDOUT,
